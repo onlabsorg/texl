@@ -1,0 +1,12 @@
+[workspace]
+
+resolver = "3"
+
+members = [
+    "swan-core",
+    #"swan-cli",
+    #"swan-node",
+    "swan-js",
+    #"swan-py",
+]
+
