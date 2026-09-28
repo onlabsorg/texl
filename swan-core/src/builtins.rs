@@ -27,22 +27,12 @@ use crate::lexer::Lexer;
 use crate::parser::Parser;
 use crate::eval::eval;
 
+mod helpers;
+use helpers::*;
+
+mod math;
 
 
-
-// ----------------------------------------------------------------------------
-//  Macros
-// ----------------------------------------------------------------------------
-
-macro_rules! undef_unary {
-    ($op:expr, $val:expr) => {
-        Value::Undefined(Undef::UnaryOperation {
-            op: $op,
-            val: Box::new($val),
-            pos: 0,
-        })
-    };
-}
 
 
 
@@ -78,7 +68,7 @@ pub fn root_scope() -> Scope {
     scope.set("list"     , create_list_namespace(&scope));
     scope.set("nspace", create_nspace_namespace(&scope));
     scope.set("undef", create_undef_namespace(&scope));
-    scope.set("math"     , create_math_namespace(&scope));
+    scope.set("math"     , math::create_namespace(&scope));
     scope.set("time"     , create_time_namespace(&scope));
 
     // --- Builtin Constants ---
@@ -587,102 +577,6 @@ fn undef_from(val: Value) -> Value {
 
 
 
-// ----------------------------------------------------------------------------
-//  `math` built-in namespace
-// ----------------------------------------------------------------------------
-
-pub fn create_math_namespace(parent: &Scope) -> Value {
-    let math_scope = parent.new_child();
-
-    // --- single-argument math functions ---
-    math_scope.set("sqrt",  builtin_f64_1("math.sqrt",  f64::sqrt));
-    math_scope.set("abs",   builtin_f64_1("math.abs",   f64::abs));
-    math_scope.set("floor", builtin_f64_1("math.floor", f64::floor));
-    math_scope.set("ceil",  builtin_f64_1("math.ceil",  f64::ceil));
-    math_scope.set("round", builtin_f64_1("math.round", f64::round));
-    math_scope.set("trunc", builtin_f64_1("math.trunc", f64::trunc));
-    math_scope.set("sin",   builtin_f64_1("math.sin",   f64::sin));
-    math_scope.set("cos",   builtin_f64_1("math.cos",   f64::cos));
-    math_scope.set("tan",   builtin_f64_1("math.tan",   f64::tan));
-    math_scope.set("asin",  builtin_f64_1("math.asin",  f64::asin));
-    math_scope.set("acos",  builtin_f64_1("math.acos",  f64::acos));
-    math_scope.set("atan",  builtin_f64_1("math.atan",  f64::atan));
-    math_scope.set("sinh",  builtin_f64_1("math.sinh",  f64::sinh));
-    math_scope.set("cosh",  builtin_f64_1("math.cosh",  f64::cosh));
-    math_scope.set("tanh",  builtin_f64_1("math.tanh",  f64::tanh));
-    math_scope.set("asinh", builtin_f64_1("math.asinh", f64::asinh));
-    math_scope.set("acosh", builtin_f64_1("math.acosh", f64::acosh));
-    math_scope.set("atanh", builtin_f64_1("math.atanh", f64::atanh));
-    math_scope.set("exp",   builtin_f64_1("math.exp",   f64::exp));
-    math_scope.set("ln",    builtin_f64_1("math.ln",    f64::ln));
-    math_scope.set("log2",  builtin_f64_1("math.log2",  f64::log2));
-    math_scope.set("log10", builtin_f64_1("math.log10", f64::log10));
-
-    // --- two-argument math functions (curried higher-order functions: f(x) -> g(y)) ---
-    // pow(exp) -> g(base) => base.powf(exp). E.g. pow10 = math.pow 10; pow10 2 => 1024
-    math_scope.set("pow",   builtin_f64_curried("math.pow",   |exp, base| base.powf(exp)));
-    // log(base) -> g(x) => x.log(base). E.g. log10 = math.log 10; log10 100 => 2
-    math_scope.set("log",   builtin_f64_curried("math.log",   |base, x| x.log(base)));
-    // atan2(x) -> g(y) => y.atan2(x)
-    math_scope.set("atan2", builtin_f64_curried("math.atan2", |x, y| y.atan2(x)));
-    // hypot(x) -> g(y) => x.hypot(y)
-    math_scope.set("hypot", builtin_f64_curried("math.hypot", |x, y| x.hypot(y)));
-
-    // --- multi-argument math functions ---
-    math_scope.set("max", Value::Builtin(BuiltinFn::new("math.max", math_max)));
-    math_scope.set("min", Value::Builtin(BuiltinFn::new("math.min", math_min)));
-
-    // --- math constants ---
-    math_scope.set("PI",       Value::Numb(std::f64::consts::PI));
-    math_scope.set("E",        Value::Numb(std::f64::consts::E));
-    math_scope.set("INF",      Value::Numb(f64::INFINITY));
-    math_scope.set("INFINITY", Value::Numb(f64::INFINITY));
-
-    Value::Namespace(math_scope)
-}
-
-fn math_max(arg: Value) -> Value {
-    let mut count = 0;
-    let mut max_val = f64::NEG_INFINITY;
-    for item in arg.items() {
-        match item {
-            Value::Numb(n) => {
-                if n > max_val {
-                    max_val = n;
-                }
-                count += 1;
-            }
-            _ => return undef_unary!("math.max", arg),
-        }
-    }
-    if count == 0 {
-        undef_unary!("math.max", arg)
-    } else {
-        Value::Numb(max_val)
-    }
-}
-
-fn math_min(arg: Value) -> Value {
-    let mut count = 0;
-    let mut min_val = f64::INFINITY;
-    for item in arg.items() {
-        match item {
-            Value::Numb(n) => {
-                if n < min_val {
-                    min_val = n;
-                }
-                count += 1;
-            }
-            _ => return undef_unary!("math.min", arg),
-        }
-    }
-    if count == 0 {
-        undef_unary!("math.min", arg)
-    } else {
-        Value::Numb(min_val)
-    }
-}
-
 
 
 
@@ -854,61 +748,6 @@ fn time_week_number(val: Value) -> Value {
 // ----------------------------------------------------------------------------
 //  PRIVATE HELPERS
 // ----------------------------------------------------------------------------
-
-/// Normalizes a sequence of items:
-/// - 0 items -> `Value::Nothing`
-/// - 1 item  -> `items[0]`
-/// - >=2     -> `Value::Tuple(Rc::new(items))`
-fn normalize_tuple(mut items: Vec<Value>) -> Value {
-    match items.len() {
-        0 => Value::Nothing,
-        1 => items.pop().unwrap(),
-        _ => Value::Tuple(Rc::new(items)),
-    }
-}
-
-/// Build a `Value::Builtin` that wraps an `f64 -> f64` function.
-///
-/// Accepts a `Numb` and returns a `Numb`. Returns `Undefined` for any other
-/// input type.
-fn builtin_f64_1(name: &'static str, f: fn(f64) -> f64) -> Value {
-    Value::Builtin(BuiltinFn::new(name, move |arg| {
-        match arg {
-            Value::Numb(x) => {
-                let result = f(x);
-                // Propagate NaN (e.g. sqrt(-1)) as Undefined.
-                if result.is_nan() {
-                    undef_unary!(name, Value::Numb(x))
-                } else {
-                    Value::Numb(result)
-                }
-            }
-            other => undef_unary!(name, other),
-        }
-    }))
-}
-
-/// Build a `Value::Builtin` that wraps a curried higher-order `f64 -> f64 -> f64` function.
-///
-/// Calling `f(x)` returns a new function `g(y)` that computes `result(x, y)`.
-/// Returns `Undefined` if arguments are invalid or result is NaN.
-fn builtin_f64_curried(name: &'static str, f: fn(f64, f64) -> f64) -> Value {
-    Value::Builtin(BuiltinFn::new(name, move |arg1| {
-        Value::Builtin(BuiltinFn::new(name, move |arg2| {
-            match (&arg1, arg2) {
-                (Value::Numb(a), Value::Numb(b)) => {
-                    let result = f(*a, b);
-                    if result.is_nan() {
-                        undef_unary!(name, Value::Numb(b))
-                    } else {
-                        Value::Numb(result)
-                    }
-                }
-                (_, other) => undef_unary!(name, other),
-            }
-        }))
-    }))
-}
 
 /// Convert days since 1970-01-01 to (year, month, day) in civil Gregorian calendar.
 fn civil_from_days(days: i64) -> (i64, u32, u32) {
@@ -1196,7 +1035,7 @@ mod tests {
             );
 
             // 2. Parent on non-namespace yields Undefined
-            assert!(matches!(run("parent 42"), Value::Undefined(_)));
+            assert!(matches!(run("nspace.parent 42"), Value::Undefined(_)));
 
             // 3. The parent of the root scope should be null
             assert_eq!(
@@ -1222,60 +1061,6 @@ mod tests {
         }
     }
 
-    mod math_ns {
-        use super::*;
-
-        #[test]
-        fn test_sqrt_func() {
-            assert_eq!(run("math.sqrt 9"),  Value::Numb(3.0));
-            assert_eq!(run("math.sqrt 4"),  Value::Numb(2.0));
-        }
-
-        #[test]
-        fn test_abs_func() {
-            assert_eq!(run("math.abs(-5)"), Value::Numb(5.0));
-            assert_eq!(run("math.abs 3"),   Value::Numb(3.0));
-        }
-
-        #[test]
-        fn test_constants() {
-            assert_eq!(run("math.PI"),       Value::Numb(std::f64::consts::PI));
-            assert_eq!(run("math.E"),        Value::Numb(std::f64::consts::E));
-            assert_eq!(run("math.INF"),      Value::Numb(f64::INFINITY));
-            assert_eq!(run("math.INFINITY"), Value::Numb(f64::INFINITY));
-        }
-
-        #[test]
-        fn test_pow_higher_order() {
-            // pow(base, exp) should be pow10 = pow(10), where pow10(base) returns base to power of 10
-            assert_eq!(run("pow10 = math.pow 10, pow10 2"), Value::Numb(1024.0));
-            assert_eq!(run("sq = math.pow 2, sq 5"),        Value::Numb(25.0));
-            assert_eq!(run("math.pow 3 2"),                 Value::Numb(8.0));
-        }
-
-        #[test]
-        fn test_log_higher_order() {
-            assert_eq!(run("log10 = math.log 10, log10 100"), Value::Numb(2.0));
-            assert_eq!(run("math.log 2 8"),                   Value::Numb(3.0));
-        }
-
-        #[test]
-        fn test_hypot_and_atan2_higher_order() {
-            assert_eq!(run("h3 = math.hypot 3, h3 4"), Value::Numb(5.0));
-            assert_eq!(run("math.hypot 3 4"),          Value::Numb(5.0));
-        }
-
-        #[test]
-        fn test_max_and_min() {
-            assert_eq!(run("math.max(1, 22, 3, 4)"), Value::Numb(22.0));
-            assert_eq!(run("math.min(1, 22, 3, 4)"), Value::Numb(1.0));
-        }
-
-        #[test]
-        fn test_math_sqrt_of_negative_is_undef() {
-            assert!(matches!(run("math.sqrt -1"), Value::Undefined(_)));
-        }
-    }
 
     mod time_ns {
         use super::*;

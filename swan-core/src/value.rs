@@ -534,6 +534,37 @@ impl Value {
     pub fn pair(&self, other: &Value) -> Pairs {
         Pairs::new(self, other)
     }
+
+    pub fn normalize(&self) -> Self {
+        if matches!(self, Value::Tuple(_)) {
+            let flat_items: Vec<_> = self.items().collect();
+            match flat_items.len() {
+                0 => Value::Nothing,
+                1 => flat_items[0].clone(),
+                _ => Value::Tuple(Rc::new(flat_items)),
+            }
+        } else {
+            self.clone()
+        }
+    }
+
+    /// Maps a function `f: Value -> Value` over this `Value`:
+    /// - `Value::Nothing` -> `Value::Nothing`
+    /// - `Value::Tuple`   -> `Value::Tuple` containing `f(v1), f(v2), ..., f(vn)`
+    /// - Any other value  -> `f(self)`
+    pub fn map(&self, f: impl Fn(Value) -> Value + 'static) -> Value {
+        match self {
+            Value::Nothing => Value::Nothing,
+            Value::Tuple(items) => {
+                let mapped_items: Vec<Value> = items
+                    .iter()
+                    .map(|item| f(item.clone()))
+                    .collect();
+                Value::Tuple(Rc::new(mapped_items)).normalize()
+            }
+            _ => f(self.clone()),
+        }
+    }
 }
 
 impl From<Value> for bool {

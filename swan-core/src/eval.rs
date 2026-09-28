@@ -502,18 +502,22 @@ fn eval_lifting(name: Value, scope: &Scope, pos: usize) -> Value {
 /// - `Value::Func { ... }` — user-defined function (not yet implemented).
 /// - Anything else — returns `Undefined`.
 fn eval_apply(func: Value, arg: Value, pos: usize) -> Value {
-    // 1. Broadcast over Tuple on the left: applying each function in a tuple to `arg`
-    if matches!(func, Value::Tuple(_)) {
-        let results: Vec<Value> = func
-            .items()
-            .map(|f| eval_apply(f, arg.clone(), pos))
-            .collect();
-        return match results.len() {
-            0 => Value::Nothing,
-            1 => results[0].clone(),
-            _ => Value::Tuple(Rc::new(results)),
-        };
-    }
+    func.map(move |f| eval_apply_1(f, arg.clone(), pos))
+}
+
+fn eval_apply_1(func: Value, arg: Value, pos: usize) -> Value {
+    // // 1. Broadcast over Tuple on the left: applying each function in a tuple to `arg`
+    // if matches!(func, Value::Tuple(_)) {
+    //     let results: Vec<Value> = func
+    //         .items()
+    //         .map(|f| eval_apply(f, arg.clone(), pos))
+    //         .collect();
+    //     return match results.len() {
+    //         0 => Value::Nothing,
+    //         1 => results[0].clone(),
+    //         _ => Value::Tuple(Rc::new(results)),
+    //     };
+    // }
 
     // 2. Dispatch single-item application by type
     match func {
