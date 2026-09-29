@@ -35,11 +35,10 @@ pub(crate) use undef_unary;
 /// - 0 items -> `Value::Nothing`
 /// - 1 item  -> `items[0]`
 /// - >=2     -> `Value::Tuple(Rc::new(items))`
-pub fn normalize_tuple(mut items: Vec<Value>) -> Value {
+pub fn normalize_tuple(items: Vec<Value>) -> Value {
     match items.len() {
         0 => Value::Nothing,
-        1 => items.pop().unwrap(),
-        _ => Value::Tuple(Rc::new(items)),
+        _ => Value::Tuple(Rc::new(items)).normalize(),
     }
 }
 

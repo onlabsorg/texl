@@ -30,6 +30,7 @@ use crate::eval::eval;
 mod helpers;
 use helpers::*;
 
+mod text;
 mod nspace;
 mod undef;
 mod math;
@@ -66,7 +67,7 @@ pub fn root_scope() -> Scope {
     // --- Builtin Namespaces ---
     scope.set("bool"  , create_bool_namespace(&scope));
     scope.set("numb"  , create_numb_namespace(&scope));
-    scope.set("text"  , create_text_namespace(&scope));
+    scope.set("text"  , text::create_namespace(&scope));
     scope.set("list"  , create_list_namespace(&scope));
     scope.set("nspace", nspace::create_namespace(&scope));
     scope.set("undef" , undef::create_namespace(&scope));
@@ -187,203 +188,6 @@ fn numb_from(val: Value) -> Value {
         },
         _ => undef_unary!("numb.from", val),
     }
-}
-
-
-
-
-
-// ----------------------------------------------------------------------------
-//  `text` built-in namespace 
-// ----------------------------------------------------------------------------
-
-pub fn create_text_namespace(parent: &Scope) -> Value {
-    let text_scope = parent.new_child();
-    text_scope.set("from"     , Value::Builtin(BuiltinFn::new("text.from"     , text_from)));
-    text_scope.set("enum"     , Value::Builtin(BuiltinFn::new("text.enum"     , text_enum)));
-    text_scope.set("size"     , Value::Builtin(BuiltinFn::new("text.size"     , text_size)));
-    text_scope.set("find"     , Value::Builtin(BuiltinFn::new("text.find"     , text_find)));
-    text_scope.set("rfind"    , Value::Builtin(BuiltinFn::new("text.rfind"    , text_rfind)));
-    text_scope.set("lower"    , Value::Builtin(BuiltinFn::new("text.lower"    , text_lower)));
-    text_scope.set("upper"    , Value::Builtin(BuiltinFn::new("text.upper"    , text_upper)));
-    text_scope.set("trim"     , Value::Builtin(BuiltinFn::new("text.trim"     , text_trim)));
-    text_scope.set("trim_head", Value::Builtin(BuiltinFn::new("text.trim_head", text_trim_head)));
-    text_scope.set("trim_tail", Value::Builtin(BuiltinFn::new("text.trim_tail", text_trim_tail)));
-    text_scope.set("head"     , Value::Builtin(BuiltinFn::new("text.head"     , text_head)));
-    text_scope.set("tail"     , Value::Builtin(BuiltinFn::new("text.tail"     , text_tail)));
-    text_scope.set("split"    , Value::Builtin(BuiltinFn::new("text.split"    , text_split)));
-    text_scope.set("join"     , Value::Builtin(BuiltinFn::new("text.join"     , text_join)));
-    Value::Namespace(text_scope)
-}
-
-fn text_from(val: Value) -> Value {
-    let s: String = match &val {
-        Value::Text(s)  => return Value::Text(s.clone()),
-        Value::Numb(n)  => n.to_string(),
-        Value::Bool(b)  => if *b { "TRUE".into() } else { "FALSE".into() },
-        Value::Nothing  => String::new(),
-        _ => return undef_unary!("text.from", val),
-    };
-
-    Value::Text(s.into())
-}
-
-fn text_enum(val: Value) -> Value {
-    match val {
-        Value::Text(s) => {
-            let chars: Vec<Value> = s.chars().map(|c| Value::Text(c.to_string().into())).collect();
-            normalize_tuple(chars)
-        }
-        other => undef_unary!("text.enum", other),
-    }
-}
-
-fn text_size(val: Value) -> Value {
-    match val {
-        Value::Text(s) => Value::Numb(s.chars().count() as f64),
-        other => undef_unary!("text.size", other),
-    }
-}
-
-fn text_find(needle: Value) -> Value {
-    Value::Builtin(BuiltinFn::new("text.find", move |haystack| {
-        match (&needle, haystack) {
-            (Value::Text(n), Value::Text(h)) => match h.find(n.as_ref()) {
-                Some(byte_pos) => {
-                    let char_pos = h[..byte_pos].chars().count();
-                    Value::Numb(char_pos as f64)
-                }
-                None => Value::Numb(-1.0),
-            },
-            (_, other) => undef_unary!("text.find", other),
-        }
-    }))
-}
-
-fn text_rfind(needle: Value) -> Value {
-    Value::Builtin(BuiltinFn::new("text.rfind", move |haystack| {
-        match (&needle, haystack) {
-            (Value::Text(n), Value::Text(h)) => match h.rfind(n.as_ref()) {
-                Some(byte_pos) => {
-                    let char_pos = h[..byte_pos].chars().count();
-                    Value::Numb(char_pos as f64)
-                }
-                None => Value::Numb(-1.0),
-            },
-            (_, other) => undef_unary!("text.rfind", other),
-        }
-    }))
-}
-
-fn text_lower(val: Value) -> Value {
-    match val {
-        Value::Text(s) => Value::Text(s.to_lowercase().into()),
-        other => undef_unary!("text.lower", other),
-    }
-}
-
-fn text_upper(val: Value) -> Value {
-    match val {
-        Value::Text(s) => Value::Text(s.to_uppercase().into()),
-        other => undef_unary!("text.upper", other),
-    }
-}
-
-fn text_trim(val: Value) -> Value {
-    match val {
-        Value::Text(s) => Value::Text(s.trim().into()),
-        other => undef_unary!("text.trim", other),
-    }
-}
-
-fn text_trim_head(val: Value) -> Value {
-    match val {
-        Value::Text(s) => Value::Text(s.trim_start().into()),
-        other => undef_unary!("text.trim_head", other),
-    }
-}
-
-fn text_trim_tail(val: Value) -> Value {
-    match val {
-        Value::Text(s) => Value::Text(s.trim_end().into()),
-        other => undef_unary!("text.trim_tail", other),
-    }
-}
-
-fn text_head(n: Value) -> Value {
-    Value::Builtin(BuiltinFn::new("text.head", move |s| {
-        match (&n, s) {
-            (Value::Numb(n_val), Value::Text(s_val)) => {
-                let chars: Vec<char> = s_val.chars().collect();
-                let len = chars.len() as i64;
-                let n_idx = *n_val as i64;
-                let end = if n_idx >= 0 {
-                    n_idx.min(len) as usize
-                } else {
-                    (len + n_idx).max(0) as usize
-                };
-                let result: String = chars[..end].iter().collect();
-                Value::Text(result.into())
-            }
-            (_, other) => undef_unary!("text.head", other),
-        }
-    }))
-}
-
-fn text_tail(n: Value) -> Value {
-    Value::Builtin(BuiltinFn::new("text.tail", move |s| {
-        match (&n, s) {
-            (Value::Numb(n_val), Value::Text(s_val)) => {
-                let chars: Vec<char> = s_val.chars().collect();
-                let len = chars.len() as i64;
-                let n_idx = *n_val as i64;
-                let start = if n_idx >= 0 {
-                    n_idx.min(len) as usize
-                } else {
-                    (len + n_idx).max(0) as usize
-                };
-                let result: String = chars[start..].iter().collect();
-                Value::Text(result.into())
-            }
-            (_, other) => undef_unary!("text.tail", other),
-        }
-    }))
-}
-
-fn text_split(sep: Value) -> Value {
-    Value::Builtin(BuiltinFn::new("text.split", move |target| {
-        match (&sep, target) {
-            (Value::Text(s1), Value::Text(s2)) => {
-                let parts: Vec<Value> = s2
-                    .split(s1.as_ref())
-                    .map(|p| Value::Text(p.into()))
-                    .collect();
-                normalize_tuple(parts)
-            }
-            (_, other) => undef_unary!("text.split", other),
-        }
-    }))
-}
-
-fn text_join(sep: Value) -> Value {
-    Value::Builtin(BuiltinFn::new("text.join", move |items| {
-        match &sep {
-            Value::Text(s1) => {
-                let strings: Vec<String> = items
-                    .items()
-                    .map(|it| match it {
-                        Value::Text(t) => t.to_string(),
-                        Value::Numb(n) => n.to_string(),
-                        Value::Bool(b) => if b { "TRUE".into() } else { "FALSE".into() },
-                        Value::Nothing => String::new(),
-                        other => format!("{:?}", other),
-                    })
-                    .collect();
-                Value::Text(strings.join(s1.as_ref()).into())
-            }
-            _ => undef_unary!("text.join", items),
-        }
-    }))
 }
 
 
@@ -836,72 +640,6 @@ mod tests {
             assert_eq!(run("numb.from(bool.TRUE)") , Value::Numb(1.0));
             assert_eq!(run("numb.from(bool.FALSE)"), Value::Numb(0.0));
             assert_eq!(run(r#"numb.from "42""#)    , Value::Numb(42.0));
-        }
-    }
-
-    mod text_ns {
-        use super::*;
-
-        #[test]
-        fn test_builtin_text() {
-            assert_eq!(run("text.from 42"),          Value::Text("42".into()));
-            assert_eq!(run("text.from(bool.TRUE)"),  Value::Text("TRUE".into()));
-            assert_eq!(run("text.from(bool.FALSE)"), Value::Text("FALSE".into()));
-        }
-
-        #[test]
-        fn test_size() {
-            assert_eq!(run(r#"text.size "abc""#), Value::Numb(3.0));
-            assert_eq!(run(r#"text.size """#),    Value::Numb(0.0));
-        }
-
-        #[test]
-        fn test_find_and_rfind() {
-            assert_eq!(run(r#"text.find "bc" "abcdef""#), Value::Numb(1.0));
-            assert_eq!(run(r#"text.find "xyz" "abcdef""#), Value::Numb(-1.0));
-            assert_eq!(run(r#"text.rfind "a" "abracadabra""#), Value::Numb(10.0));
-        }
-
-        #[test]
-        fn test_case_and_trim() {
-            assert_eq!(run(r#"text.lower "AbC""#),       Value::Text("abc".into()));
-            assert_eq!(run(r#"text.upper "AbC""#),       Value::Text("ABC".into()));
-            assert_eq!(run(r#"text.trim "   abc   ""#),  Value::Text("abc".into()));
-            assert_eq!(run(r#"text.trim_head "  abc ""#),Value::Text("abc ".into()));
-            assert_eq!(run(r#"text.trim_tail "  abc ""#),Value::Text("  abc".into()));
-        }
-
-        #[test]
-        fn test_head_and_tail() {
-            assert_eq!(run(r#"text.head 3 "abcdef""#),   Value::Text("abc".into()));
-            assert_eq!(run(r#"text.head (-2) "abcdef""#),Value::Text("abcd".into()));
-            assert_eq!(run(r#"text.tail 2 "abcdef""#),   Value::Text("cdef".into()));
-            assert_eq!(run(r#"text.tail (-2) "abcdef""#),Value::Text("ef".into()));
-        }
-
-        #[test]
-        fn test_split_and_join() {
-            assert_eq!(
-                run(r#"text.split ":" "a:b:c""#),
-                Value::Tuple(Rc::new(vec![
-                    Value::Text("a".into()),
-                    Value::Text("b".into()),
-                    Value::Text("c".into()),
-                ]))
-            );
-            assert_eq!(run(r#"text.join ":" ("a", "b", "c")"#), Value::Text("a:b:c".into()));
-        }
-
-        #[test]
-        fn test_enum() {
-            assert_eq!(
-                run(r#"text.enum "abc""#),
-                Value::Tuple(Rc::new(vec![
-                    Value::Text("a".into()),
-                    Value::Text("b".into()),
-                    Value::Text("c".into()),
-                ]))
-            );
         }
     }
 
