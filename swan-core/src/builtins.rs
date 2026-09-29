@@ -30,6 +30,7 @@ use crate::eval::eval;
 mod helpers;
 use helpers::*;
 
+mod bool;
 mod numb;
 mod text;
 mod nspace;
@@ -66,7 +67,7 @@ pub fn root_scope() -> Scope {
     let scope = Scope::new();
 
     // --- Builtin Namespaces ---
-    scope.set("bool"  , create_bool_namespace(&scope));
+    scope.set("bool"  , bool::create_namespace(&scope));
     scope.set("numb"  , numb::create_namespace(&scope));
     scope.set("text"  , text::create_namespace(&scope));
     scope.set("list"  , create_list_namespace(&scope));
@@ -143,26 +144,6 @@ fn root_parse(arg: Value) -> Value {
     }
 }
 
-
-
-
-
-
-// ----------------------------------------------------------------------------
-//  `bool` built-in namespace
-// ----------------------------------------------------------------------------
-
-pub fn create_bool_namespace(parent: &Scope) -> Value {
-    let bool_scope = parent.new_child();
-    bool_scope.set("TRUE" , Value::Bool(true));
-    bool_scope.set("FALSE", Value::Bool(false));
-    bool_scope.set("from" , Value::Builtin(BuiltinFn::new("bool.from", bool_from)));
-    Value::Namespace(bool_scope)
-}
-
-fn bool_from(val: Value) -> Value {
-    Value::Bool(bool::from(val))
-}
 
 
 
@@ -542,64 +523,41 @@ mod tests {
         eval(&ast, &scope)
     }
 
-    mod root_builtins {
-        use super::*;
-
-        #[test]
-        fn test_type() {
-            assert_eq!(run("type(1 == 1)"), Value::Text("Bool".into()));
-            assert_eq!(run("type 10"), Value::Text("Numb".into()));
-            assert_eq!(run(r#"type "abc""#), Value::Text("Text".into()));
-            assert_eq!(run("type [1, 2]"), Value::Text("List".into()));
-            assert_eq!(run("type {a: 1}"), Value::Text("Namespace".into()));
-            assert_eq!(run("type(x -> x)"), Value::Text("Func".into()));
-            assert_eq!(run("type()"), Value::Nothing);
-            assert_eq!(
-                run(r#"type(10, "abc", [1])"#),
-                Value::Tuple(Rc::new(vec![
-                    Value::Text("Numb".into()),
-                    Value::Text("Text".into()),
-                    Value::Text("List".into()),
-                ]))
-            );
-        }
-
-        #[test]
-        fn test_parse() {
-            // Basic dynamic evaluation with scope
-            assert_eq!(
-                run(r#"eval_fn = parse "a + b", eval_fn { a = 10, b = 20 }"#),
-                Value::Numb(30.0)
-            );
-
-            // Dynamic evaluation returning a function/closure
-            assert_eq!(
-                run(r#"double = (parse "x -> x * 2") {}, double 5"#),
-                Value::Numb(10.0)
-            );
-
-            // Invalid argument type returns Undefined
-            assert!(matches!(run("parse 123"), Value::Undefined(_)));
-        }
+    #[test]
+    fn test_type() {
+        assert_eq!(run("type(1 == 1)"), Value::Text("Bool".into()));
+        assert_eq!(run("type 10"), Value::Text("Numb".into()));
+        assert_eq!(run(r#"type "abc""#), Value::Text("Text".into()));
+        assert_eq!(run("type [1, 2]"), Value::Text("List".into()));
+        assert_eq!(run("type {a: 1}"), Value::Text("Namespace".into()));
+        assert_eq!(run("type(x -> x)"), Value::Text("Func".into()));
+        assert_eq!(run("type()"), Value::Nothing);
+        assert_eq!(
+            run(r#"type(10, "abc", [1])"#),
+            Value::Tuple(Rc::new(vec![
+                Value::Text("Numb".into()),
+                Value::Text("Text".into()),
+                Value::Text("List".into()),
+            ]))
+        );
     }
 
-    mod bool_ns {
-        use super::*;
+    #[test]
+    fn test_parse() {
+        // Basic dynamic evaluation with scope
+        assert_eq!(
+            run(r#"eval_fn = parse "a + b", eval_fn { a = 10, b = 20 }"#),
+            Value::Numb(30.0)
+        );
 
-        #[test]
-        fn test_true_false_constants() {
-            assert_eq!(run("bool.TRUE"),  Value::Bool(true));
-            assert_eq!(run("bool.FALSE"), Value::Bool(false));
-        }
+        // Dynamic evaluation returning a function/closure
+        assert_eq!(
+            run(r#"double = (parse "x -> x * 2") {}, double 5"#),
+            Value::Numb(10.0)
+        );
 
-        #[test]
-        fn test_from_function() {
-            assert_eq!(run("bool.from 1"),   Value::Bool(true));
-            assert_eq!(run("bool.from 0"),   Value::Bool(false));
-            assert_eq!(run("bool.from(bool.TRUE)"), Value::Bool(true));
-            assert_eq!(run("bool.from(1,0,0,1)"), Value::Bool(true));
-            assert_eq!(run("bool.from(0,0,0,0)"), Value::Bool(false));
-        }
+        // Invalid argument type returns Undefined
+        assert!(matches!(run("parse 123"), Value::Undefined(_)));
     }
 
     mod list_ns {

@@ -570,12 +570,15 @@ impl Value {
 impl From<Value> for bool {
     fn from(val: Value) -> Self {
         match val {
-            Value::Nothing => false,
-            Value::Bool(b) => b,
-            Value::Numb(n) => n != 0.0,
-            Value::Text(t) => !t.is_empty(),
-            Value::List(v) => !v.is_empty(),
+            Value::Nothing      => false,
+            Value::Bool(b)      => b,
+            Value::Numb(n)      => n != 0.0,
+            Value::Text(t)      => !t.is_empty(),
+            Value::List(v)      => !v.is_empty(),
+            Value::Func{..}     => true,
+            Value::Builtin(_)   => true,
             Value::Undefined(_) => false,
+            Value::Namespace(s) => s.0.borrow().bindings.len() > 0,
             Value::Tuple(_) => {
                 // Returns true if AT LEAST ONE item in the tuple converts to true.
                 // If ALL items map to false, `.any()` returns false.
