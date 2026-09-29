@@ -153,7 +153,7 @@ fn math_min(arg: Value) -> Value {
 /// - Accepts a single [`Value::Numb`] operand.
 /// - Propagates `NaN` results (e.g., `math.sqrt(-1.0)`) or invalid argument types as `Value::Undefined`.
 fn builtin_f64_1(name: &'static str, f: fn(f64) -> f64) -> Value {
-    auto_tuple_1(name, move |arg| {
+    map_1(name, move |arg| {
         match arg {
             Value::Numb(x) => {
                 let result = f(x);
@@ -174,7 +174,7 @@ fn builtin_f64_1(name: &'static str, f: fn(f64) -> f64) -> Value {
 /// Calling `f(x)` produces a second function `g(y)` that computes `result(x, y)`.
 /// Returns `Value::Undefined` if either argument is non-numeric or if the result evaluates to `NaN`.
 fn builtin_f64_curried(name: &'static str, f: fn(f64, f64) -> f64) -> Value {
-    auto_tuple_curried(name, move |arg1, arg2| {
+    map_curried(name, move |arg1, arg2| {
 
         match (&arg1, arg2) {
             (Value::Numb(a), Value::Numb(b)) => {

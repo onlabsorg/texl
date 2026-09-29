@@ -30,6 +30,7 @@ use crate::eval::eval;
 mod helpers;
 use helpers::*;
 
+mod nspace;
 mod math;
 
 
@@ -62,14 +63,14 @@ pub fn root_scope() -> Scope {
     let scope = Scope::new();
 
     // --- Builtin Namespaces ---
-    scope.set("bool"     , create_bool_namespace(&scope));
-    scope.set("numb"     , create_numb_namespace(&scope));
-    scope.set("text"     , create_text_namespace(&scope));
-    scope.set("list"     , create_list_namespace(&scope));
-    scope.set("nspace", create_nspace_namespace(&scope));
-    scope.set("undef", create_undef_namespace(&scope));
-    scope.set("math"     , math::create_namespace(&scope));
-    scope.set("time"     , create_time_namespace(&scope));
+    scope.set("bool"  , create_bool_namespace(&scope));
+    scope.set("numb"  , create_numb_namespace(&scope));
+    scope.set("text"  , create_text_namespace(&scope));
+    scope.set("list"  , create_list_namespace(&scope));
+    scope.set("nspace", nspace::create_namespace(&scope));
+    scope.set("undef" , create_undef_namespace(&scope));
+    scope.set("math"  , math::create_namespace(&scope));
+    scope.set("time"  , create_time_namespace(&scope));
 
     // --- Builtin Constants ---
     scope.set("TRUE" , Value::Bool(true));
@@ -498,62 +499,6 @@ fn list_tail(n: Value) -> Value {
 
 
 
-
-// ----------------------------------------------------------------------------
-//  `nspace` built-in namespace
-// ----------------------------------------------------------------------------
-
-pub fn create_nspace_namespace(parent: &Scope) -> Value {
-    let nspace_scope = parent.new_child();
-    nspace_scope.set("enum"  , Value::Builtin(BuiltinFn::new("nspace.enum"  , nspace_enum)));
-    nspace_scope.set("size"  , Value::Builtin(BuiltinFn::new("nspace.size"  , nspace_size)));
-    nspace_scope.set("parent", Value::Builtin(BuiltinFn::new("nspace.parent", nspace_parent)));
-    Value::Namespace(nspace_scope)
-}
-
-fn nspace_enum(val: Value) -> Value {
-    match val {
-        Value::Namespace(scope) => {
-            let mut keys: Vec<Value> = scope
-                .0
-                .borrow()
-                .bindings
-                .keys()
-                .map(|k| Value::Text(k.clone().into()))
-                .collect();
-            keys.sort_by(|a, b| match (a, b) {
-                (Value::Text(s1), Value::Text(s2)) => s1.cmp(s2),
-                _ => std::cmp::Ordering::Equal,
-            });
-            normalize_tuple(keys)
-        }
-        other => undef_unary!("nspace.enum", other),
-    }
-}
-
-fn nspace_size(val: Value) -> Value {
-    match val {
-        Value::Namespace(scope) => {
-            let count = scope.0.borrow().bindings.len();
-            Value::Numb(count as f64)
-        }
-        other => undef_unary!("nspace.size", other),
-    }
-}
-
-fn nspace_parent (val: Value) -> Value {
-    match val {
-        Value::Namespace(scope) => {
-            // Check if the underlying Scope has a parent scope
-            let parent_scope = scope.0.borrow().parent.clone();
-            match parent_scope {
-                Some(p) => Value::Namespace(p),
-                None => Value::Nothing,
-            }
-        }
-        other => undef_unary!("nspace.parent", other),
-    }
-}
 
 
 
@@ -1009,38 +954,6 @@ mod tests {
             assert_eq!(
                 run("list.enum [10, 20]"),
                 Value::Tuple(Rc::new(vec![Value::Numb(10.0), Value::Numb(20.0)]))
-            );
-        }
-    }
-
-    mod nspace_ns {
-        use super::*;
-
-        #[test]
-        fn test_size_and_enum() {
-            assert_eq!(run("nspace.size {a: 1, b: 2}"), Value::Numb(2.0));
-            assert_eq!(
-                run("nspace.enum {a: 1, b: 2}"),
-                Value::Tuple(Rc::new(vec![Value::Text("a".into()), Value::Text("b".into())]))
-            );
-        }
-
-        #[test]
-        fn test_parent() {
-
-            // 1. Parent of a child namespace literal { ... } created inside another scope
-            assert_eq!(
-                run("ns = {a = 1}, child = ns.{b = 2}, nspace.parent child == ns"),
-                Value::Bool(true)
-            );
-
-            // 2. Parent on non-namespace yields Undefined
-            assert!(matches!(run("nspace.parent 42"), Value::Undefined(_)));
-
-            // 3. The parent of the root scope should be null
-            assert_eq!(
-                run("nspace.parent(nspace.parent(nspace.parent{}))"),
-                Value::Nothing
             );
         }
     }
