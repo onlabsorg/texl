@@ -30,6 +30,7 @@ use crate::eval::eval;
 mod helpers;
 use helpers::*;
 
+mod numb;
 mod text;
 mod nspace;
 mod undef;
@@ -66,7 +67,7 @@ pub fn root_scope() -> Scope {
 
     // --- Builtin Namespaces ---
     scope.set("bool"  , create_bool_namespace(&scope));
-    scope.set("numb"  , create_numb_namespace(&scope));
+    scope.set("numb"  , numb::create_namespace(&scope));
     scope.set("text"  , text::create_namespace(&scope));
     scope.set("list"  , create_list_namespace(&scope));
     scope.set("nspace", nspace::create_namespace(&scope));
@@ -162,35 +163,6 @@ pub fn create_bool_namespace(parent: &Scope) -> Value {
 fn bool_from(val: Value) -> Value {
     Value::Bool(bool::from(val))
 }
-
-
-
-
-
-// ----------------------------------------------------------------------------
-//  `numb` built-in namespace 
-// ----------------------------------------------------------------------------
-
-pub fn create_numb_namespace(parent: &Scope) -> Value {
-    let numb_scope = parent.new_child();
-    numb_scope.set("from" , Value::Builtin(BuiltinFn::new("numb.from", numb_from)));
-    Value::Namespace(numb_scope)
-}
-
-fn numb_from(val: Value) -> Value {
-    match &val {
-        Value::Nothing  => Value::Numb(0.0),
-        Value::Numb(n)  => Value::Numb(*n),
-        Value::Bool(b)  => Value::Numb(if *b { 1.0 } else { 0.0 }),
-        Value::Text(s)  => match s.parse::<f64>() {
-            Ok(n)  => Value::Numb(n),
-            Err(_) => undef_unary!("numb.from", val),
-        },
-        _ => undef_unary!("numb.from", val),
-    }
-}
-
-
 
 
 
@@ -627,19 +599,6 @@ mod tests {
             assert_eq!(run("bool.from(bool.TRUE)"), Value::Bool(true));
             assert_eq!(run("bool.from(1,0,0,1)"), Value::Bool(true));
             assert_eq!(run("bool.from(0,0,0,0)"), Value::Bool(false));
-        }
-    }
-
-    mod numb_ns {
-        use super::*;
-
-        #[test]
-        fn test_from_func() {
-            assert_eq!(run("numb.from()")          , Value::Numb(0.0));
-            assert_eq!(run("numb.from(1.5)")       , Value::Numb(1.5));
-            assert_eq!(run("numb.from(bool.TRUE)") , Value::Numb(1.0));
-            assert_eq!(run("numb.from(bool.FALSE)"), Value::Numb(0.0));
-            assert_eq!(run(r#"numb.from "42""#)    , Value::Numb(42.0));
         }
     }
 
