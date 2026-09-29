@@ -31,6 +31,7 @@ mod helpers;
 use helpers::*;
 
 mod nspace;
+mod undef;
 mod math;
 
 
@@ -68,7 +69,7 @@ pub fn root_scope() -> Scope {
     scope.set("text"  , create_text_namespace(&scope));
     scope.set("list"  , create_list_namespace(&scope));
     scope.set("nspace", nspace::create_namespace(&scope));
-    scope.set("undef" , create_undef_namespace(&scope));
+    scope.set("undef" , undef::create_namespace(&scope));
     scope.set("math"  , math::create_namespace(&scope));
     scope.set("time"  , create_time_namespace(&scope));
 
@@ -503,20 +504,6 @@ fn list_tail(n: Value) -> Value {
 
 
 
-
-// ----------------------------------------------------------------------------
-//  `undef` built-in namespace
-// ----------------------------------------------------------------------------
-
-pub fn create_undef_namespace(parent: &Scope) -> Value {
-    let undef_scope = parent.new_child();
-    undef_scope.set("from", Value::Builtin(BuiltinFn::new("undef.from", undef_from)));
-    Value::Namespace(undef_scope)
-}
-
-fn undef_from(val: Value) -> Value {
-    Value::Undefined(Undef::Value(Box::new(val)))
-}
 
 
 
@@ -958,21 +945,6 @@ mod tests {
         }
     }
 
-    mod undef_ns {
-        use super::*;
-
-        #[test]
-        fn test_udef_from() {
-            assert_eq!(
-                run("undef.from 10"), 
-                Value::Undefined(Undef::Value(Box::new(Value::Numb(10.0))))
-            );
-            assert_eq!(
-                run("undef.from \"abc\""), 
-                Value::Undefined(Undef::Value(Box::new(Value::Text("abc".into()))))
-            );
-        }
-    }
 
 
     mod time_ns {
