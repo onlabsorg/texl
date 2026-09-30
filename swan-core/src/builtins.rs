@@ -1,34 +1,34 @@
 // src/builtins.rs
 //
-// Built-in functions and namespaces that are pre-loaded into the root scope.
+// Purpose: this module builds the root scope and defines the built-ins that
+// live directly in it (`type`, `parse`, `TRUE`, `FALSE`). Every other
+// built-in lives in a submodule that exposes `create_namespace(&Scope) -> Value`.
 //
-// # How to add a new built-in function
+// Adding a root-level function:
+//   1. Write `fn my_fn(arg: Value) -> Value`.
+//   2. Register it in `root_scope()` with `scope.set("my_fn", map_1("my_fn", my_fn))`.
+//      `map_1` makes it map over tuples and pass `Nothing` through.
 //
-//   1. Write a plain Rust function `fn my_fn(arg: Value) -> Value { ... }`.
-//   2. Wrap it: `Value::Builtin(BuiltinFn::new("my_fn", my_fn))`.
-//   3. `scope.set("my_fn", ...)` in `root_scope()`, or insert it into one of
-//      the namespace builders (`math_namespace()`, etc.).
+// Adding a function to a namespace: put it in the matching submodule (`numb`,
+// `text`, `time`, …) and register it in that module's `create_namespace`.
 //
-// # Multi-argument functions / Curried Higher-Order Functions
+// Multi-argument functions: these are curried. Use `map_curried` from `helpers`,
+// so `math.pow 10` returns a function that takes the second argument.
 //
-//   Functions of type f(x, y) that require two parameters are implemented as
-//   higher-order functions f(x) that return a g(y) function.
-//   For example: `pow10 = math.pow 10`, `pow10 2` returns 1024.
-//
-// # Error convention
-//
-//   Never panic. Return `Value::Undefined(Undef::UnaryOperation { ... })` for
-//   type errors. Use the function's own `&'static str` name as the `op` field
-//   so the caller can identify the source of the error.
+// Errors: never panic. Return `Undefined` through the `undef_unary!` macro (or
+// its binary counterpart in `helpers`), using the function's own name as the
+// `op` label.
 
 use crate::value::{BuiltinFn, Scope, Undef, Value};
 use crate::lexer::Lexer;
 use crate::parser::Parser;
 use crate::eval::eval;
 
+// Shared helpers and macros (map_1, map_curried, undef_unary!, ...).
 mod helpers;
 use helpers::*;
 
+// One submodule per built-in namespace; each exposes create_namespace().
 mod bool_;
 mod numb;
 mod text;
@@ -37,10 +37,6 @@ mod nspace;
 mod undef;
 mod math;
 mod time;
-
-
-
-
 
 
 
@@ -65,9 +61,10 @@ mod time;
 /// assert_eq!(eval(&ast, &scope), swan_core::value::Value::Numb(3.0));
 /// ```
 pub fn root_scope() -> Scope {
+    // Built-ins are installed in this base scope.
     let scope = Scope::new();
 
-    // --- Builtin Namespaces ---
+    // Each namespace is registered under its own name, e.g. `math.sqrt`.
     scope.set("bool"  , bool_::create_namespace(&scope));
     scope.set("numb"  , numb::create_namespace(&scope));
     scope.set("text"  , text::create_namespace(&scope));
@@ -77,19 +74,16 @@ pub fn root_scope() -> Scope {
     scope.set("math"  , math::create_namespace(&scope));
     scope.set("time"  , time::create_namespace(&scope));
 
-    // --- Builtin Constants ---
     scope.set("TRUE" , Value::Bool(true));
     scope.set("FALSE", Value::Bool(false));
 
-    // --- Builtin Functions ---
-    scope.set("type" , Value::Builtin(BuiltinFn::new("type" , root_type)));
-    scope.set("parse", Value::Builtin(BuiltinFn::new("parse", root_parse)));
+    scope.set("type" , map_1("type" , type_function));
+    scope.set("parse", map_1("parse", parse_function));
 
-    // --- Return empty child ---
+    // Returns a fresh empty child scope. User code then defines and shadows
+    // names in the child and cannot overwrite the built-ins stored in the parent.
     scope.new_child()
 }
-
-
 
 
 
@@ -97,22 +91,12 @@ pub fn root_scope() -> Scope {
 //  built-in functions
 // ----------------------------------------------------------------------------
 
-fn root_type(val: Value) -> Value {
-    match val {
-        Value::Nothing => Value::Nothing,
-        Value::Tuple(items) => {
-            let types: Vec<Value> = items
-                .iter()
-                .map(|it| Value::Text(type_name(it).into()))
-                .collect();
-            normalize_tuple(types)
-        }
-        other => Value::Text(type_name(&other).into()),
-    }
-}
-
-fn type_name(val: &Value) -> &'static str {
-    match val {
+/// Builtin `type`: returns the type name of its argument as a `Text`.
+///
+/// Wrapped with `map_1`, so `type()` is `Nothing` and `type(a, b)` gives a
+/// tuple of type names. Both `Func` and `Builtin` values report `"Func"`.
+fn type_function(val: Value) -> Value {
+    let n = match val {
         Value::Nothing => "Nothing",
         Value::Bool(_) => "Bool",
         Value::Numb(_) => "Numb",
@@ -122,18 +106,26 @@ fn type_name(val: &Value) -> &'static str {
         Value::Func { .. } | Value::Builtin(_) => "Func",
         Value::Undefined(_) => "Undefined",
         Value::Tuple(_) => "Tuple",
-        val => panic!("Unknown value type: {:?}", val),
-    }
+        Value::Name(_) => "Name",
+    };
+    Value::Text(n.into())
 }
 
-/// Builtin `parse` function: takes a string expression `S` and returns an `eval` function.
-fn root_parse(arg: Value) -> Value {
+/// Builtin `parse` function:
+///   - takes a `Text` containing source code and parses it immediately.
+///   - returns a builtin function named `"eval"`.
+///   - that function takes a `Namespace` and evaluates the captured AST in
+///     that namespace as its scope.
+///   - a non-`Text` argument to `parse` gives `Undefined`, labelled `"parse"`.
+///   - a non-`Namespace` argument to the returned function gives `Undefined`,
+///     labelled `"eval"`.
+fn parse_function(arg: Value) -> Value {
     match arg {
         Value::Text(source) => {
             let mut parser = Parser::new(Lexer::new(&source));
             let ast = parser.parse();
 
-            // Return an `eval` function capturing the parsed AST node
+            // The closure takes ownership of the AST.
             Value::Builtin(BuiltinFn::new("eval", move |ns_arg| {
                 match ns_arg {
                     Value::Namespace(scope) => eval(&ast, &scope),
@@ -147,13 +139,6 @@ fn root_parse(arg: Value) -> Value {
 
 
 
-
-
-
-
-
-
-
 // ----------------------------------------------------------------------------
 //  Tests
 // ----------------------------------------------------------------------------
@@ -162,10 +147,8 @@ fn root_parse(arg: Value) -> Value {
 mod tests {
     use super::*;
     use std::rc::Rc;
-    use crate::eval::eval;
-    use crate::lexer::Lexer;
-    use crate::parser::Parser;
 
+    /// Evaluates `src` in a fresh root scope.
     fn run(src: &str) -> Value {
         let scope = root_scope();
         let mut parser = Parser::new(Lexer::new(src));
@@ -175,13 +158,19 @@ mod tests {
 
     #[test]
     fn test_type() {
+        // Item
         assert_eq!(run("type(1 == 1)"), Value::Text("Bool".into()));
         assert_eq!(run("type 10"), Value::Text("Numb".into()));
         assert_eq!(run(r#"type "abc""#), Value::Text("Text".into()));
         assert_eq!(run("type [1, 2]"), Value::Text("List".into()));
         assert_eq!(run("type {a: 1}"), Value::Text("Namespace".into()));
         assert_eq!(run("type(x -> x)"), Value::Text("Func".into()));
+        assert_eq!(run("type type"), Value::Text("Func".into()));
+
+        // Nothing
         assert_eq!(run("type()"), Value::Nothing);
+
+        // Tuple
         assert_eq!(
             run(r#"type(10, "abc", [1])"#),
             Value::Tuple(Rc::new(vec![
@@ -194,16 +183,28 @@ mod tests {
 
     #[test]
     fn test_parse() {
-        // Basic dynamic evaluation with scope
+        // Evaluation with a scope argument
         assert_eq!(
             run(r#"eval_fn = parse "a + b", eval_fn { a = 10, b = 20 }"#),
             Value::Numb(30.0)
         );
 
-        // Dynamic evaluation returning a function/closure
+        // Returns a function/closure
         assert_eq!(
             run(r#"double = (parse "x -> x * 2") {}, double 5"#),
             Value::Numb(10.0)
+        );
+
+        // Nothing
+        assert_eq!(run("parse()"), Value::Nothing);
+
+        // Tuple
+        assert_eq!(
+            run(r#"(f,g) = parse("2*x", "3*x"), f{x:10}, g{x:20}"#),
+            Value::Tuple(Rc::new(vec![
+                Value::Numb(20.0),
+                Value::Numb(60.0),
+            ])),
         );
 
         // Invalid argument type returns Undefined
