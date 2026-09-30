@@ -35,6 +35,16 @@ The content is organized as follows:
 # Directory Structure
 ````
 src/
+  builtins/
+    bool_.rs
+    helpers.rs
+    list.rs
+    math.rs
+    nspace.rs
+    numb.rs
+    text.rs
+    time.rs
+    undef.rs
   ast.rs
   builtins.rs
   eval.rs
@@ -48,6 +58,3316 @@ README.md
 ````
 
 # Files
+
+## File: src/builtins/bool_.rs
+````rust
+//! The `bool` built-in namespace.
+//!
+//! Provides:
+//! - `bool.TRUE` / `bool.FALSE`: the boolean constants.
+//! - `bool.from`: converts a value to a `Bool`, element-wise over tuples.
+//! - `bool.any`:  `true` if at least one item of its argument is truthy.
+//! - `bool.all`:  `true` if every item of its argument is truthy.
+//!
+//! Truthiness itself is defined by `impl From<Value> for bool`.
+use crate::value::{BuiltinFn, Scope, Value};
+use super::helpers::*;
+
+
+
+// ----------------------------------------------------------------------------
+//  `bool` built-in namespace
+// ----------------------------------------------------------------------------
+
+/// Builds the `bool` namespace as a child of `parent`.
+///
+/// `from` is wrapped with `map_1`, so it maps over tuples and returns a tuple
+/// of booleans. `any` and `all` are plain `BuiltinFn`s because they reduce
+/// their whole argument to a single `Bool`.
+pub fn create_namespace(parent: &Scope) -> Value {
+    let bool_scope = parent.new_child();
+    bool_scope.set("TRUE" , Value::Bool(true));
+    bool_scope.set("FALSE", Value::Bool(false));
+    bool_scope.set("from" , map_1("bool.from", bool_from));
+    bool_scope.set("any"  , Value::Builtin(BuiltinFn::new("bool.any", bool_any)));
+    bool_scope.set("all"  , Value::Builtin(BuiltinFn::new("bool.all", bool_all)));
+    Value::Namespace(bool_scope)
+}
+
+/// `bool.from x`: converts a single value to `Bool` using its truthiness.
+/// Tuple and `Nothing` handling is done by the `map_1` wrapper.
+fn bool_from(val: Value) -> Value {
+    Value::Bool(bool::from(val))
+}
+
+/// `bool.any xs`: `true` if at least one item of `xs` is truthy.
+/// `Nothing` has no items, so `bool.any()` is `false`.
+fn bool_any(val: Value) -> Value {
+    Value::Bool(val.items().any(bool::from))
+}
+
+/// `bool.all xs`: `true` if every item of `xs` is truthy.
+/// `Nothing` has no items, so `bool.all()` is vacuously `true`.
+fn bool_all(val: Value) -> Value {
+    Value::Bool(val.items().all(bool::from))
+}
+
+
+
+// ----------------------------------------------------------------------------
+//  Unit tests
+// ----------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::rc::Rc;
+    use crate::eval::eval;
+    use crate::lexer::Lexer;
+    use crate::parser::Parser;
+
+    /// Minimal root scope: the `bool` namespace plus the global boolean
+    /// constants. Returns a child scope, mirroring how user code is evaluated.
+    fn root_scope() -> Scope {
+        let scope = Scope::new();
+        scope.set("bool" , create_namespace(&scope));
+        scope.set("TRUE" , Value::Bool(true));
+        scope.set("FALSE", Value::Bool(false));
+        scope.new_child()
+    }
+
+    /// Lexes, parses and evaluates `src` in a fresh test scope.
+    fn run(src: &str) -> Value {
+        let scope = root_scope();
+        let mut parser = Parser::new(Lexer::new(src));
+        let ast = parser.parse();
+        eval(&ast, &scope)
+    }
+
+    #[test]
+    fn test_constants() {
+        assert_eq!(run("bool.TRUE"),  Value::Bool(true));
+        assert_eq!(run("bool.FALSE"), Value::Bool(false));
+    }
+
+    #[test]
+    fn test_from() {
+
+        // Bool
+        assert_eq!(run("bool.from(TRUE)"),  Value::Bool(true));
+
+        // Numb
+        assert_eq!(run("bool.from 1"),      Value::Bool(true));
+        assert_eq!(run("bool.from 0"),      Value::Bool(false));
+
+        // Text
+        assert_eq!(run("bool.from \"abc\""),Value::Bool(true));
+        assert_eq!(run("bool.from \"\""),   Value::Bool(false));
+
+        // List
+        assert_eq!(run("bool.from [1,2,3]"),Value::Bool(true));
+        assert_eq!(run("bool.from []"),     Value::Bool(false));
+
+        // Namespace
+        assert_eq!(run("bool.from {a:1}"),  Value::Bool(true));
+        assert_eq!(run("bool.from {}"),     Value::Bool(false));
+        
+        // Func
+        assert_eq!(run("bool.from(x->2*x)"),Value::Bool(true));
+        assert_eq!(run("bool.from(bool.from)"), Value::Bool(true));
+
+        // Nothing
+        assert_eq!(run("bool.from()"),      Value::Nothing);
+
+        // Tuple: converted element-wise, not reduced
+        assert_eq!(
+            run("bool.from(1, [])"), 
+            Value::Tuple(Rc::new(vec![
+                Value::Bool(true),
+                Value::Bool(false),
+            ])),
+        );
+    }
+
+    #[test]
+    fn test_any() {
+
+        // Bool
+        assert_eq!(run("bool.any(TRUE)"), Value::Bool(true));
+
+        // Numb
+        assert_eq!(run("bool.any 1"),     Value::Bool(true));
+        assert_eq!(run("bool.any 0"),     Value::Bool(false));
+
+        // Text
+        assert_eq!(run("bool.any \"abc\""), Value::Bool(true));
+        assert_eq!(run("bool.any \"\""),   Value::Bool(false));
+
+        // List
+        assert_eq!(run("bool.any [1,2,3]"), Value::Bool(true));
+        assert_eq!(run("bool.any []"),      Value::Bool(false));
+
+        // Namespace
+        assert_eq!(run("bool.any {a:1}"),  Value::Bool(true));
+        assert_eq!(run("bool.any {}"),     Value::Bool(false));
+        
+        // Func
+        assert_eq!(run("bool.any(x->2*x)"), Value::Bool(true));
+        assert_eq!(run("bool.any(bool.any)"), Value::Bool(true));
+
+        // Nothing: no items, so no truthy item
+        assert_eq!(run("bool.any()"), Value::Bool(false));
+
+        // Tuple: items are inspected individually
+        assert_eq!(run("bool.any(1,0,0,1)"), Value::Bool(true));
+        assert_eq!(run("bool.any(0,0,0,0)"), Value::Bool(false));
+        assert_eq!(run("bool.any(0,0,1)"), Value::Bool(true));
+    }
+
+    #[test]
+    fn test_all() {
+
+        // Bool
+        assert_eq!(run("bool.all(TRUE)"), Value::Bool(true));
+
+        // Numb
+        assert_eq!(run("bool.all 1"),     Value::Bool(true));
+        assert_eq!(run("bool.all 0"),     Value::Bool(false));
+
+        // Text
+        assert_eq!(run("bool.all \"abc\""), Value::Bool(true));
+        assert_eq!(run("bool.all \"\""),   Value::Bool(false));
+
+        // List
+        assert_eq!(run("bool.all [1,2,3]"), Value::Bool(true));
+        assert_eq!(run("bool.all []"),      Value::Bool(false));
+
+        // Namespace
+        assert_eq!(run("bool.all {a:1}"),  Value::Bool(true));
+        assert_eq!(run("bool.all {}"),     Value::Bool(false));
+        
+        // Func
+        assert_eq!(run("bool.all(x->2*x)"), Value::Bool(true));
+        assert_eq!(run("bool.all(bool.all)"), Value::Bool(true));
+
+        // Nothing: no items, so vacuously true
+        assert_eq!(run("bool.all()"), Value::Bool(true));
+
+        // Tuple: items are inspected individually
+        assert_eq!(run("bool.all(1,0,0,1)"), Value::Bool(false));
+        assert_eq!(run("bool.all(0,0,0,0)"), Value::Bool(false));
+        assert_eq!(run("bool.all(1,1,1,1)"), Value::Bool(true));
+        assert_eq!(run("bool.all(1,1,0)"), Value::Bool(false));
+    }
+}
+````
+
+## File: src/builtins/helpers.rs
+````rust
+use std::rc::Rc;
+use crate::value::{BuiltinFn, Value};
+
+
+
+// ----------------------------------------------------------------------------
+//  Macros
+// ----------------------------------------------------------------------------
+
+#[macro_export]
+macro_rules! undef_unary {
+    ($op:expr, $val:expr) => {
+        Value::Undefined(Undef::UnaryOperation {
+            op: $op,
+            val: Box::new($val),
+            pos: 0,
+        })
+    };
+}
+
+pub(crate) use undef_unary;
+
+
+
+
+
+
+// ----------------------------------------------------------------------------
+//  PRIVATE HELPERS
+// ----------------------------------------------------------------------------
+
+/// Normalizes a sequence of items:
+/// - 0 items -> `Value::Nothing`
+/// - 1 item  -> `items[0]`
+/// - >=2     -> `Value::Tuple(Rc::new(items))`
+pub fn normalize_tuple(items: Vec<Value>) -> Value {
+    match items.len() {
+        0 => Value::Nothing,
+        _ => Value::Tuple(Rc::new(items)).normalize(),
+    }
+}
+
+/// Wraps a single-argument built-in function `fn(Value) -> Value` so that
+/// if applied to a `Tuple`, it maps over each element and returns a `Tuple`.
+pub fn map_1(name: &'static str, f: impl Fn(Value) -> Value + 'static + Clone) -> Value {
+    Value::Builtin(BuiltinFn::new(name, move |arg| arg.map(f.clone())))
+}
+
+/// Wraps a curried 2-argument built-in function so that if given tuples,
+/// it pairs the tuple elements using `arg1.pair(&arg2)` and returns a mapped `Tuple`.
+pub fn map_curried(
+    name: &'static str,
+    f: impl Fn(Value, Value) -> Value + 'static + Copy,
+) -> Value {
+    map_1(name, move |arg1| {
+        map_1(name, move |arg2| f(arg1.clone(), arg2))
+    })
+}
+````
+
+## File: src/builtins/list.rs
+````rust
+//! The `list` built-in namespace.
+//!
+//! Every function here is wrapped with [`map_1`] or [`map_curried`], so it is
+//! automatically mapped element-wise over tuple arguments, and `Nothing`
+//! arguments yield `Nothing`. The plain Rust functions below therefore only
+//! need to handle a single (non-tuple) argument (or pair of arguments).
+//! Arguments of the wrong type produce `Value::Undefined`.
+
+use std::rc::Rc;
+use crate::value::{Scope, Undef, Value};
+use super::helpers::*;
+
+
+
+// ----------------------------------------------------------------------------
+//  `list` built-in namespace
+// ----------------------------------------------------------------------------
+
+/// Builds the `list` namespace as a child scope of `parent`.
+pub fn create_namespace(parent: &Scope) -> Value {
+    let list_scope = parent.new_child();
+
+    // Unary functions: list -> value
+    list_scope.set("size"   , map_1("list.size"   , list_size));
+    list_scope.set("enum"   , map_1("list.enum"   , list_enum));
+    list_scope.set("reverse", map_1("list.reverse", list_reverse));
+
+    // Curried functions: (item | count) -> list -> value
+    list_scope.set("find"   , map_curried("list.find"   , list_find));
+    list_scope.set("rfind"  , map_curried("list.rfind"  , list_rfind));
+    list_scope.set("head"   , map_curried("list.head"   , list_head));
+    list_scope.set("tail"   , map_curried("list.tail"   , list_tail));
+
+    Value::Namespace(list_scope)
+}
+
+/// Returns the number of elements in a list. Undefined for non-lists.
+fn list_size(val: Value) -> Value {
+    match val {
+        Value::List(l) => Value::Numb(l.len() as f64),
+        other => undef_unary!("list.size", other),
+    }
+}
+
+/// Expands a list into a tuple of its elements (an empty list gives `Nothing`, a one-element list gives that element). Undefined for non-lists.
+fn list_enum(val: Value) -> Value {
+    match val {
+        Value::List(l) => normalize_tuple(l.as_ref().clone()),
+        other => undef_unary!("list.enum", other),
+    }
+}
+
+/// Returns a new list with the elements in reverse order. Undefined for non-lists.
+fn list_reverse(val: Value) -> Value {
+    match val {
+        Value::List(l) => {
+            let mut rev = l.as_ref().clone();
+            rev.reverse();
+            Value::List(Rc::new(rev))
+        }
+        other => undef_unary!("list.reverse", other),
+    }
+}
+
+/// Returns the index of the first element equal to `item`, or `-1` if absent.
+/// Undefined if `list` is not a list.
+fn list_find(item: Value, list: Value) -> Value {
+    match list {
+        Value::List(l) => Value::Numb(
+            l.iter().position(|x| x == &item).map_or(-1.0, |i| i as f64)
+        ),
+        other => undef_unary!("list.find", other),
+    }
+}
+
+/// Returns the index of the last element equal to `item`, or `-1` if absent.
+/// Undefined if `list` is not a list.
+fn list_rfind(item: Value, list: Value) -> Value {
+    match list {
+        Value::List(l) => Value::Numb(
+            l.iter().rposition(|x| x == &item).map_or(-1.0, |i| i as f64)
+        ),
+        other => undef_unary!("list.rfind", other),
+    }
+}
+
+/// Resolves a signed element count `n` against a list of length `len`.
+///
+/// - `n >= 0`: the count is clamped to `len`.
+/// - `n < 0`: counts back from the end, i.e. `len + n`, clamped to `0`.
+///
+/// Fractional counts are truncated toward zero (and `NaN` becomes `0`).
+fn resolve_count(n: f64, len: usize) -> usize {
+    let len = len as i64;
+    let n = n as i64;
+    if n >= 0 {
+        n.min(len) as usize
+    } else {
+        (len + n).max(0) as usize
+    }
+}
+
+/// Returns the first `n` elements of a list as a new list.
+/// A negative `n` drops the last `|n|` elements instead.
+/// Undefined unless `n` is a number and `list` is a list.
+fn list_head(n: Value, list: Value) -> Value {
+    match (&n, list) {
+        (Value::Numb(n), Value::List(l)) => {
+            let end = resolve_count(*n, l.len());
+            Value::List(Rc::new(l[..end].to_vec()))
+        }
+        (_, other) => undef_unary!("list.head", other),
+    }
+}
+
+/// Returns the list without its first `n` elements.
+/// A negative `n` keeps only the last `|n|` elements instead.
+/// Undefined unless `n` is a number and `list` is a list.
+fn list_tail(n: Value, list: Value) -> Value {
+    match (&n, list) {
+        (Value::Numb(n), Value::List(l)) => {
+            let start = resolve_count(*n, l.len());
+            Value::List(Rc::new(l[start..].to_vec()))
+        }
+        (_, other) => undef_unary!("list.tail", other),
+    }
+}
+
+
+
+// ----------------------------------------------------------------------------
+//  UNIT TESTS
+// ----------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::eval::eval;
+    use crate::lexer::Lexer;
+    use crate::parser::Parser;
+
+    /// Creates a scope containing the `list` namespace and the `TRUE`/`FALSE` constants, evaluated in a child scope like real user code.
+    fn root_scope() -> Scope {
+        let scope = Scope::new();
+        scope.set("list" , create_namespace(&scope));
+        scope.set("TRUE" , Value::Bool(true));
+        scope.set("FALSE", Value::Bool(false));
+        scope.new_child()
+    }
+
+    /// Parses and evaluates `src` in a fresh test scope.
+    fn run(src: &str) -> Value {
+        let scope = root_scope();
+        let mut parser = Parser::new(Lexer::new(src));
+        let ast = parser.parse();
+        eval(&ast, &scope)
+    }
+
+    #[test]
+    fn list_size() {
+
+        // List
+        assert_eq!(run("list.size [1,2,3]"), Value::Numb(3.0));
+        assert_eq!(run("list.size []     "), Value::Numb(0.0));
+
+        // Nothing (also when paired with a non-list, since Nothing short-circuits)
+        assert_eq!(run("list.size()"), Value::Nothing);
+
+        // Tuple
+        assert_eq!(
+            run("list.size([1,2,3], [4,5,6,7,8])"), 
+            Value::Tuple(Rc::new(vec![
+                Value::Numb(3.0),
+                Value::Numb(5.0),
+            ]))
+        );
+
+        // Others
+        assert!(matches!(run("list.size 123"), Value::Undefined(_)));
+    }
+
+    #[test]
+    fn list_enum() {
+
+        // List
+        assert_eq!(
+            run("list.enum [1,2,3]"),
+            Value::Tuple(Rc::new(vec![
+                Value::Numb(1.0),
+                Value::Numb(2.0),
+                Value::Numb(3.0),
+            ]))
+        );
+
+        // Nothing (also when paired with a non-list, since Nothing short-circuits)
+        assert_eq!(run("list.enum()"), Value::Nothing);
+
+        // Tuple
+        assert_eq!(
+            run("list.enum([1,2,3], [4,5])"), 
+            Value::Tuple(Rc::new(vec![
+                Value::Numb(1.0),
+                Value::Numb(2.0),
+                Value::Numb(3.0),
+                Value::Numb(4.0),
+                Value::Numb(5.0),
+            ]))
+        );
+
+        // Others
+        assert!(matches!(run("list.enum 123"), Value::Undefined(_)));
+    }
+
+    #[test]
+    fn list_reverse() {
+        
+        // List
+        assert_eq!(
+            run("list.reverse[3,2,1]"),
+            Value::List(Rc::new(vec![
+                Value::Numb(1.0),
+                Value::Numb(2.0),
+                Value::Numb(3.0),
+            ]))
+        );
+        
+        // Nothing (also when paired with a non-list, since Nothing short-circuits)
+        assert_eq!(run("list.reverse()"), Value::Nothing);
+
+        // Tuple
+        assert_eq!(
+            run("list.reverse([1,2], [3,4])"),
+            Value::Tuple(Rc::new(vec![
+                Value::List(Rc::new(vec![Value::Numb(2.0), Value::Numb(1.0)])),
+                Value::List(Rc::new(vec![Value::Numb(4.0), Value::Numb(3.0)])),
+            ]))
+        );
+
+        // Others
+        assert!(matches!(run("list.reverse 123"), Value::Undefined(_)));
+    }
+
+    #[test]
+    fn list_find() {
+
+        // List
+        assert_eq!(run("list.find 2 [1,2,3,4,1,2,3,4]"), Value::Numb(1.0));
+        assert_eq!(run("list.find 7 [1,2,3,4,1,2,3,4]"), Value::Numb(-1.0));
+        assert_eq!(run("list.find 1 []"), Value::Numb(-1.0));
+
+        // Nothing (also when paired with a non-list, since Nothing short-circuits)
+        assert_eq!(run("list.find ()"), Value::Nothing);
+        assert_eq!(run("list.find () \"abc\""), Value::Nothing);
+        assert_eq!(run("list.find () ()"), Value::Nothing);
+
+        // Tuple - List: each item/count is applied to the same list
+        assert_eq!(
+            run("list.find (2,4) [1,2,3,4,5,1,2,3,4,5]"), 
+            Value::Tuple(Rc::new(vec![
+                Value::Numb(1.0),
+                Value::Numb(3.0),
+            ]))
+        );
+
+        // Tuple - Tuple: items/counts are paired with lists; results are flattened in order
+        assert_eq!(
+            run("list.find (2,4) ([1,2,3,4,5,1,2,3,4,5], [2,4,6,2,4,6])"), 
+            Value::Tuple(Rc::new(vec![
+                Value::Numb(1.0),
+                Value::Numb(0.0),
+                Value::Numb(3.0),
+                Value::Numb(1.0),
+            ]))
+        );
+
+        // Others
+        assert!(matches!(run("list.find 123 123"), Value::Undefined(_)));
+    }
+
+    #[test]
+    fn list_rfind() {
+
+        // List
+        assert_eq!(run("list.rfind 2 [1,2,3,4,1,2,3,4]"), Value::Numb(5.0));
+        assert_eq!(run("list.rfind 7 [1,2,3,4,1,2,3,4]"), Value::Numb(-1.0));
+        assert_eq!(run("list.rfind 1 []"), Value::Numb(-1.0));
+
+        // Nothing (also when paired with a non-list, since Nothing short-circuits)
+        assert_eq!(run("list.rfind ()"), Value::Nothing);
+        assert_eq!(run("list.rfind () \"abc\""), Value::Nothing);
+        assert_eq!(run("list.rfind () ()"), Value::Nothing);
+
+        // Tuple - List: each item/count is applied to the same list
+        assert_eq!(
+            run("list.rfind (2,4) [1,2,3,4,5,1,2,3,4,5]"), 
+            Value::Tuple(Rc::new(vec![
+                Value::Numb(6.0),
+                Value::Numb(8.0),
+            ]))
+        );
+
+        // Tuple - Tuple: items/counts are paired with lists; results are flattened in order
+        assert_eq!(
+            run("list.rfind (2,4) ([1,2,3,4,5,1,2,3,4,5], [2,4,6,2,4,6])"), 
+            Value::Tuple(Rc::new(vec![
+                Value::Numb(6.0),
+                Value::Numb(3.0),
+                Value::Numb(8.0),
+                Value::Numb(4.0),
+            ]))
+        );
+
+        // Others
+        assert!(matches!(run("list.rfind 123 123"), Value::Undefined(_)));
+    }
+
+    #[test]
+    fn list_head() {
+
+        // Numb - List
+        assert_eq!(
+            run("list.head 3 [1,2,3,4,5,6]"), 
+            Value::List(Rc::new(vec![
+                Value::Numb(1.0),
+                Value::Numb(2.0),
+                Value::Numb(3.0),
+            ]))
+        );
+        assert_eq!(
+            run("list.head 0 [1,2,3,4,5,6]"), 
+            Value::List(Rc::new(vec![]))
+        );
+        assert_eq!(
+            run("list.head(-2) [1,2,3,4,5,6]"), 
+            Value::List(Rc::new(vec![
+                Value::Numb(1.0),
+                Value::Numb(2.0),
+                Value::Numb(3.0),
+                Value::Numb(4.0),
+            ]))
+        );
+        // Counts beyond the list length are clamped
+        assert_eq!(
+            run("list.head 10 [1,2,3]"),
+            Value::List(Rc::new(vec![Value::Numb(1.0), Value::Numb(2.0), Value::Numb(3.0)]))
+        );
+        assert_eq!(run("list.head(-10) [1,2,3]"), Value::List(Rc::new(vec![])));
+
+        // Nothing (also when paired with a non-list, since Nothing short-circuits)
+        assert_eq!(run("list.head ()"), Value::Nothing);
+        assert_eq!(run("list.head () [1,2,3]"), Value::Nothing);
+        assert_eq!(run("list.head () ()"), Value::Nothing);
+
+        // Tuple - List: each item/count is applied to the same list
+        assert_eq!(
+            run("list.head (2, 3) [1,2,3,4,5,6]"), 
+            Value::Tuple(Rc::new(vec![
+                Value::List(Rc::new(vec![
+                    Value::Numb(1.0),
+                    Value::Numb(2.0),
+                ])),
+                Value::List(Rc::new(vec![
+                    Value::Numb(1.0),
+                    Value::Numb(2.0),
+                    Value::Numb(3.0),
+                ])),
+            ]))
+        );
+
+        // Tuple - Tuple: items/counts are paired with lists; results are flattened in order
+        assert_eq!(
+            run("list.head (2, 3) ([1,2,3,4,5], [6,7,8,9])"), 
+            Value::Tuple(Rc::new(vec![
+                Value::List(Rc::new(vec![
+                    Value::Numb(1.0),
+                    Value::Numb(2.0),
+                ])),
+                Value::List(Rc::new(vec![
+                    Value::Numb(6.0),
+                    Value::Numb(7.0),
+                ])),
+                Value::List(Rc::new(vec![
+                    Value::Numb(1.0),
+                    Value::Numb(2.0),
+                    Value::Numb(3.0),
+                ])),
+                Value::List(Rc::new(vec![
+                    Value::Numb(6.0),
+                    Value::Numb(7.0),
+                    Value::Numb(8.0),
+                ])),
+            ]))
+        );
+
+        // Others
+        assert!(matches!(run("list.head 123 456"), Value::Undefined(_)));
+        assert!(matches!(run("list.head TRUE 123"), Value::Undefined(_)));
+    }
+
+    #[test]
+    fn list_tail() {
+
+        // Numb - List
+        assert_eq!(
+            run("list.tail 4 [1,2,3,4,5,6]"), 
+            Value::List(Rc::new(vec![
+                Value::Numb(5.0),
+                Value::Numb(6.0),
+            ]))
+        );
+        assert_eq!(
+            run("list.tail 0 [1,2,3,4,5,6]"), 
+            Value::List(Rc::new(vec![
+                Value::Numb(1.0),
+                Value::Numb(2.0),
+                Value::Numb(3.0),
+                Value::Numb(4.0),
+                Value::Numb(5.0),
+                Value::Numb(6.0),
+            ]))
+        );
+        assert_eq!(
+            run("list.tail(-2) [1,2,3,4,5,6]"), 
+            Value::List(Rc::new(vec![
+                Value::Numb(5.0),
+                Value::Numb(6.0),
+            ]))
+        );
+        // Counts beyond the list length are clamped
+        assert_eq!(run("list.tail 10 [1,2,3]"), Value::List(Rc::new(vec![])));
+        assert_eq!(
+            run("list.tail(-10) [1,2,3]"),
+            Value::List(Rc::new(vec![Value::Numb(1.0), Value::Numb(2.0), Value::Numb(3.0)]))
+        );
+
+        // Nothing (also when paired with a non-list, since Nothing short-circuits)
+        assert_eq!(run("list.tail ()"), Value::Nothing);
+        assert_eq!(run("list.tail () [1,2,3]"), Value::Nothing);
+        assert_eq!(run("list.tail () ()"), Value::Nothing);
+
+        // Tuple - List: each item/count is applied to the same list
+        assert_eq!(
+            run("list.tail (5, 4) [1,2,3,4,5,6]"), 
+            Value::Tuple(Rc::new(vec![
+                Value::List(Rc::new(vec![
+                    Value::Numb(6.0),
+                ])),
+                Value::List(Rc::new(vec![
+                    Value::Numb(5.0),
+                    Value::Numb(6.0),
+                ])),
+            ]))
+        );
+
+        // Tuple - Tuple: items/counts are paired with lists; results are flattened in order
+        assert_eq!(
+            run("list.tail (3, 2) ([1,2,3,4,5], [6,7,8,9,10])"), 
+            Value::Tuple(Rc::new(vec![
+                Value::List(Rc::new(vec![
+                    Value::Numb(4.0),
+                    Value::Numb(5.0),
+                ])),
+                Value::List(Rc::new(vec![
+                    Value::Numb(9.0),
+                    Value::Numb(10.0),
+                ])),
+                Value::List(Rc::new(vec![
+                    Value::Numb(3.0),
+                    Value::Numb(4.0),
+                    Value::Numb(5.0),
+                ])),
+                Value::List(Rc::new(vec![
+                    Value::Numb(8.0),
+                    Value::Numb(9.0),
+                    Value::Numb(10.0),
+                ])),
+            ]))
+        );
+
+        // Others
+        assert!(matches!(run("list.tail 123 456"), Value::Undefined(_)));
+        assert!(matches!(run("list.tail TRUE 123"), Value::Undefined(_)));
+    }
+}
+````
+
+## File: src/builtins/math.rs
+````rust
+use crate::value::{BuiltinFn, Scope, Undef, Value};
+
+use super::helpers::*;
+
+
+
+// ----------------------------------------------------------------------------
+//  `math` built-in namespace
+// ----------------------------------------------------------------------------
+
+/// Constructs and populates the `math` built-in namespace.
+///
+/// Returns a [`Value::Namespace`] scope containing trigonometric, logarithmic,
+/// exponential, rounding, and utility functions, alongside fundamental constants.
+///
+/// # Curried Two-Argument Functions
+/// Functions expecting two arguments (such as `pow`, `log`, `atan2`, `hypot`) are
+/// implemented as curried higher-order functions $f(x) \to g(y)$. Calling $f(x)$
+/// returns a callable closure expecting $y$.
+///
+/// # Example
+/// ```text
+/// pow10 = math.pow 10;
+/// pow10 2  # returns 1024.0 (2 ^ 10)
+/// ```
+pub fn create_namespace(parent: &Scope) -> Value {
+    let math_scope = parent.new_child();
+
+    // --- Single-argument math functions (f64 -> f64) ---
+    math_scope.set("sqrt",  builtin_f64_1("math.sqrt",  f64::sqrt));
+    math_scope.set("abs",   builtin_f64_1("math.abs",   f64::abs));
+    math_scope.set("floor", builtin_f64_1("math.floor", f64::floor));
+    math_scope.set("ceil",  builtin_f64_1("math.ceil",  f64::ceil));
+    math_scope.set("round", builtin_f64_1("math.round", f64::round));
+    math_scope.set("trunc", builtin_f64_1("math.trunc", f64::trunc));
+
+    // Trigonometric functions
+    math_scope.set("sin",   builtin_f64_1("math.sin",   f64::sin));
+    math_scope.set("cos",   builtin_f64_1("math.cos",   f64::cos));
+    math_scope.set("tan",   builtin_f64_1("math.tan",   f64::tan));
+    math_scope.set("asin",  builtin_f64_1("math.asin",  f64::asin));
+    math_scope.set("acos",  builtin_f64_1("math.acos",  f64::acos));
+    math_scope.set("atan",  builtin_f64_1("math.atan",  f64::atan));
+
+    // Hyperbolic functions
+    math_scope.set("sinh",  builtin_f64_1("math.sinh",  f64::sinh));
+    math_scope.set("cosh",  builtin_f64_1("math.cosh",  f64::cosh));
+    math_scope.set("tanh",  builtin_f64_1("math.tanh",  f64::tanh));
+    math_scope.set("asinh", builtin_f64_1("math.asinh", f64::asinh));
+    math_scope.set("acosh", builtin_f64_1("math.acosh", f64::acosh));
+    math_scope.set("atanh", builtin_f64_1("math.atanh", f64::atanh));
+
+    // Exponentials and Logarithms
+    math_scope.set("exp",   builtin_f64_1("math.exp",   f64::exp));
+    math_scope.set("ln",    builtin_f64_1("math.ln",    f64::ln));
+    math_scope.set("log2",  builtin_f64_1("math.log2",  f64::log2));
+    math_scope.set("log10", builtin_f64_1("math.log10", f64::log10));
+
+    // --- Curried two-argument math functions (f64 -> f64 -> f64) ---
+    // `pow`:  pow(exp) -> g(base) => base.powf(exp)
+    math_scope.set("pow",   builtin_f64_curried("math.pow",   |exp, base| base.powf(exp)));
+    // `log`:  log(base) -> g(x) => x.log(base)
+    math_scope.set("log",   builtin_f64_curried("math.log",   |base, x| x.log(base)));
+    // `atan2`: atan2(x) -> g(y) => y.atan2(x)
+    math_scope.set("atan2", builtin_f64_curried("math.atan2", |x, y| y.atan2(x)));
+    // `hypot`: hypot(x) -> g(y) => x.hypot(y)
+    math_scope.set("hypot", builtin_f64_curried("math.hypot", |x, y| x.hypot(y)));
+
+    // --- Variadic / Multi-argument math functions ---
+    math_scope.set("max", Value::Builtin(BuiltinFn::new("math.max", math_max)));
+    math_scope.set("min", Value::Builtin(BuiltinFn::new("math.min", math_min)));
+
+    // --- Mathematical constants ---
+    math_scope.set("PI",       Value::Numb(std::f64::consts::PI));
+    math_scope.set("E",        Value::Numb(std::f64::consts::E));
+    math_scope.set("INF",      Value::Numb(f64::INFINITY));
+    math_scope.set("INFINITY", Value::Numb(f64::INFINITY));
+
+    Value::Namespace(math_scope)
+}
+
+/// Evaluates `math.max` over a single scalar or a tuple of numeric values.
+///
+/// Iterates over all values yielded by `arg.items()`. Returns the maximum number.
+///
+/// # Errors
+/// Returns `Value::Undefined` if:
+/// - Any element in `arg` is not a `Value::Numb`.
+/// - The input tuple/argument yields zero elements.
+fn math_max(arg: Value) -> Value {
+    let mut count = 0;
+    let mut max_val = f64::NEG_INFINITY;
+
+    for item in arg.items() {
+        match item {
+            Value::Numb(n) => {
+                if n > max_val {
+                    max_val = n;
+                }
+                count += 1;
+            }
+            _ => return undef_unary!("math.max", arg),
+        }
+    }
+
+    if count == 0 {
+        undef_unary!("math.max", arg)
+    } else {
+        Value::Numb(max_val)
+    }
+}
+
+/// Evaluates `math.min` over a single scalar or a tuple of numeric values.
+///
+/// Iterates over all values yielded by `arg.items()`. Returns the minimum number.
+///
+/// # Errors
+/// Returns `Value::Undefined` if:
+/// - Any element in `arg` is not a `Value::Numb`.
+/// - The input tuple/argument yields zero elements.
+fn math_min(arg: Value) -> Value {
+    let mut count = 0;
+    let mut min_val = f64::INFINITY;
+
+    for item in arg.items() {
+        match item {
+            Value::Numb(n) => {
+                if n < min_val {
+                    min_val = n;
+                }
+                count += 1;
+            }
+            _ => return undef_unary!("math.min", arg),
+        }
+    }
+
+    if count == 0 {
+        undef_unary!("math.min", arg)
+    } else {
+        Value::Numb(min_val)
+    }
+}
+
+
+
+// ----------------------------------------------------------------------------
+//  PRIVATE HELPERS FOR MATH BUILT-INS
+// ----------------------------------------------------------------------------
+
+/// Wraps a standard single-argument float function (`f64 -> f64`) into a [`Value::Builtin`].
+///
+/// - Accepts a single [`Value::Numb`] operand.
+/// - Propagates `NaN` results (e.g., `math.sqrt(-1.0)`) or invalid argument types as `Value::Undefined`.
+fn builtin_f64_1(name: &'static str, f: fn(f64) -> f64) -> Value {
+    map_1(name, move |arg| {
+        match arg {
+            Value::Numb(x) => {
+                let result = f(x);
+                // Propagate NaN (e.g. sqrt(-1)) as Undefined.
+                if result.is_nan() {
+                    undef_unary!(name, Value::Numb(x))
+                } else {
+                    Value::Numb(result)
+                }
+            }
+            other => undef_unary!(name, other),
+        }
+    })
+}
+
+/// Wraps a curried float function (`f64 -> f64 -> f64`) into a nested [`Value::Builtin`].
+///
+/// Calling `f(x)` produces a second function `g(y)` that computes `result(x, y)`.
+/// Returns `Value::Undefined` if either argument is non-numeric or if the result evaluates to `NaN`.
+fn builtin_f64_curried(name: &'static str, f: fn(f64, f64) -> f64) -> Value {
+    map_curried(name, move |arg1, arg2| {
+
+        match (&arg1, arg2) {
+            (Value::Numb(a), Value::Numb(b)) => {
+                let result = f(*a, b);
+                if result.is_nan() {
+                    undef_unary!(name, Value::Numb(b))
+                } else {
+                    Value::Numb(result)
+                }
+            }
+            (_, other) => undef_unary!(name, other),
+        }
+    })
+}
+
+
+
+// ----------------------------------------------------------------------------
+//  UNIT TESTS
+// ----------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::rc::Rc;
+    use crate::eval::eval;
+    use crate::lexer::Lexer;
+    use crate::parser::Parser;
+
+    fn root_scope() -> Scope {
+        let scope = Scope::new();
+        scope.set("math" , create_namespace(&scope));
+        scope.set("TRUE" , Value::Bool(true));
+        scope.set("FALSE", Value::Bool(false));
+        scope.new_child()
+    }
+
+    fn run(src: &str) -> Value {
+        let scope = root_scope();
+        let mut parser = Parser::new(Lexer::new(src));
+        let ast = parser.parse();
+        eval(&ast, &scope)
+    }
+
+
+    // ---------------------------------------------------------------------
+    //  Single-argument functions (builtin_f64_1)
+    // ---------------------------------------------------------------------
+
+    #[test]
+    fn test_sqrt() {
+
+        // Numbers
+        assert_eq!(run("math.sqrt 9"), Value::Numb(3.0));
+        assert_eq!(run("math.sqrt 4"), Value::Numb(2.0));
+
+        // Undefined
+        assert_eq!(run("math.sqrt(-1)")    , undef_unary!("math.sqrt", Value::Numb(-1.0)));
+        assert_eq!(run("math.sqrt TRUE")   , undef_unary!("math.sqrt", Value::Bool(true)));
+        assert_eq!(run("math.sqrt \"abc\""), undef_unary!("math.sqrt", Value::Text("abc".into())));
+
+        // Nothing
+        assert_eq!(run("math.sqrt()"), Value::Nothing);
+
+        // Tuples
+        assert_eq!(run("math.sqrt(9,4)"), Value::Tuple(Rc::new(vec![
+            Value::Numb(3.0),
+            Value::Numb(2.0),
+        ])));
+    }
+
+    #[test]
+    fn test_abs() {
+
+        // Numbers
+        assert_eq!(run("math.abs(-5)"), Value::Numb(5.0));
+        assert_eq!(run("math.abs 3"),   Value::Numb(3.0));
+
+        // Undefined
+        assert_eq!(run("math.abs TRUE")   , undef_unary!("math.abs", Value::Bool(true)));
+        assert_eq!(run("math.abs \"abc\""), undef_unary!("math.abs", Value::Text("abc".into())));
+
+        // Nothing
+        assert_eq!(run("math.abs()"), Value::Nothing);
+
+        // Tuple
+        assert_eq!(run("math.abs(-5,3)"), Value::Tuple(Rc::new(vec![
+            Value::Numb(5.0),
+            Value::Numb(3.0),
+        ])));
+    }
+
+    #[test]
+    fn test_floor() {
+        // Numb
+        assert_eq!(run("math.floor 3.7"), Value::Numb(3.0));
+        assert_eq!(run("math.floor(-3.2)"), Value::Numb(-4.0));
+
+        // Undefined (type error)
+        assert!(matches!(run(r#"math.floor "3.7""#), Value::Undefined(_)));
+
+        // Nothing
+        assert!(matches!(run("math.floor()"), Value::Nothing));
+
+        // Tuple
+        assert_eq!(
+            run("math.floor(1.2, 3.8)"),
+            Value::Tuple(Rc::new(vec![Value::Numb(1.0), Value::Numb(3.0)]))
+        );
+    }
+
+    #[test]
+    fn test_ceil() {
+        // Numb
+        assert_eq!(run("math.ceil 3.2"), Value::Numb(4.0));
+        assert_eq!(run("math.ceil(-3.7)"), Value::Numb(-3.0));
+
+        // Undefined (type error)
+        assert!(matches!(run("math.ceil [1, 2]"), Value::Undefined(_)));
+
+        // Nothing
+        assert!(matches!(run("math.ceil()"), Value::Nothing));
+
+        // Tuple
+        assert_eq!(
+            run("math.ceil(1.2, 3.8)"),
+            Value::Tuple(Rc::new(vec![Value::Numb(2.0), Value::Numb(4.0)]))
+        );
+    }
+
+    #[test]
+    fn test_round() {
+        // Numb
+        assert_eq!(run("math.round 3.5"), Value::Numb(4.0));
+        assert_eq!(run("math.round 3.2"), Value::Numb(3.0));
+
+        // Undefined (type error)
+        assert!(matches!(run("math.round {x: 1}"), Value::Undefined(_)));
+
+        // Nothing
+        assert!(matches!(run("math.round()"), Value::Nothing));
+
+        // Tuple
+        assert_eq!(
+            run("math.round(1.2, 3.8)"),
+            Value::Tuple(Rc::new(vec![Value::Numb(1.0), Value::Numb(4.0)]))
+        );
+    }
+
+    #[test]
+    fn test_trunc() {
+        // Numb
+        assert_eq!(run("math.trunc 3.7"), Value::Numb(3.0));
+        assert_eq!(run("math.trunc(-3.7)"), Value::Numb(-3.0));
+
+        // Undefined (type error)
+        assert!(matches!(run("math.trunc(bool.TRUE)"), Value::Undefined(_)));
+
+        // Nothing
+        assert!(matches!(run("math.trunc()"), Value::Nothing));
+
+        // Tuple
+        assert_eq!(
+            run("math.trunc(1.9, -2.9)"),
+            Value::Tuple(Rc::new(vec![Value::Numb(1.0), Value::Numb(-2.0)]))
+        );
+    }
+
+    #[test]
+    fn test_sin() {
+        // Numb
+        assert_eq!(run("math.sin 0"), Value::Numb(0.0));
+
+        // Undefined (type error)
+        assert!(matches!(run(r#"math.sin "zero""#), Value::Undefined(_)));
+
+        // Nothing
+        assert!(matches!(run("math.sin()"), Value::Nothing));
+
+        // Tuple
+        assert_eq!(
+            run("math.sin(0, 0)"),
+            Value::Tuple(Rc::new(vec![Value::Numb(0.0), Value::Numb(0.0)]))
+        );
+    }
+
+    #[test]
+    fn test_cos() {
+        // Numb
+        assert_eq!(run("math.cos 0"), Value::Numb(1.0));
+
+        // Undefined (type error)
+        assert!(matches!(run(r#"math.cos "zero""#), Value::Undefined(_)));
+
+        // Nothing
+        assert!(matches!(run("math.cos()"), Value::Nothing));
+
+        // Tuple
+        assert_eq!(
+            run("math.cos(0, 0)"),
+            Value::Tuple(Rc::new(vec![Value::Numb(1.0), Value::Numb(1.0)]))
+        );
+    }
+
+    #[test]
+    fn test_tan() {
+        // Numb
+        assert_eq!(run("math.tan 0"), Value::Numb(0.0));
+
+        // Undefined (type error)
+        assert!(matches!(run(r#"math.tan "zero""#), Value::Undefined(_)));
+
+        // Nothing
+        assert!(matches!(run("math.tan()"), Value::Nothing));
+
+        // Tuple
+        assert_eq!(
+            run("math.tan(0, 0)"),
+            Value::Tuple(Rc::new(vec![Value::Numb(0.0), Value::Numb(0.0)]))
+        );
+    }
+
+    #[test]
+    fn test_asin() {
+        // Numb
+        assert_eq!(run("math.asin 0"), Value::Numb(0.0));
+
+        // Undefined (out of domain / type error)
+        assert!(matches!(run("math.asin 2"), Value::Undefined(_)));
+        assert!(matches!(run(r#"math.asin "0""#), Value::Undefined(_)));
+
+        // Nothing
+        assert!(matches!(run("math.asin()"), Value::Nothing));
+
+        // Tuple
+        assert_eq!(
+            run("math.asin(0, 0)"),
+            Value::Tuple(Rc::new(vec![Value::Numb(0.0), Value::Numb(0.0)]))
+        );
+    }
+
+    #[test]
+    fn test_acos() {
+        // Numb
+        assert_eq!(run("math.acos 1"), Value::Numb(0.0));
+
+        // Undefined (out of domain / type error)
+        assert!(matches!(run("math.acos 2"), Value::Undefined(_)));
+        assert!(matches!(run(r#"math.acos "1""#), Value::Undefined(_)));
+
+        // Nothing
+        assert!(matches!(run("math.acos()"), Value::Nothing));
+
+        // Tuple
+        assert_eq!(
+            run("math.acos(1, 1)"),
+            Value::Tuple(Rc::new(vec![Value::Numb(0.0), Value::Numb(0.0)]))
+        );
+    }
+
+    #[test]
+    fn test_atan() {
+        // Numb
+        assert_eq!(run("math.atan 0"), Value::Numb(0.0));
+
+        // Undefined (type error)
+        assert!(matches!(run(r#"math.atan "0""#), Value::Undefined(_)));
+
+        // Nothing
+        assert!(matches!(run("math.atan()"), Value::Nothing));
+
+        // Tuple
+        assert_eq!(
+            run("math.atan(0, 0)"),
+            Value::Tuple(Rc::new(vec![Value::Numb(0.0), Value::Numb(0.0)]))
+        );
+    }
+
+    #[test]
+    fn test_sinh() {
+        // Numb
+        assert_eq!(run("math.sinh 0"), Value::Numb(0.0));
+
+        // Undefined (type error)
+        assert!(matches!(run(r#"math.sinh "0""#), Value::Undefined(_)));
+
+        // Nothing
+        assert!(matches!(run("math.sinh()"), Value::Nothing));
+
+        // Tuple
+        assert_eq!(
+            run("math.sinh(0, 0)"),
+            Value::Tuple(Rc::new(vec![Value::Numb(0.0), Value::Numb(0.0)]))
+        );
+    }
+
+    #[test]
+    fn test_cosh() {
+        // Numb
+        assert_eq!(run("math.cosh 0"), Value::Numb(1.0));
+
+        // Undefined (type error)
+        assert!(matches!(run(r#"math.cosh "0""#), Value::Undefined(_)));
+
+        // Nothing
+        assert!(matches!(run("math.cosh()"), Value::Nothing));
+
+        // Tuple
+        assert_eq!(
+            run("math.cosh(0, 0)"),
+            Value::Tuple(Rc::new(vec![Value::Numb(1.0), Value::Numb(1.0)]))
+        );
+    }
+
+    #[test]
+    fn test_tanh() {
+        // Numb
+        assert_eq!(run("math.tanh 0"), Value::Numb(0.0));
+
+        // Undefined (type error)
+        assert!(matches!(run(r#"math.tanh "0""#), Value::Undefined(_)));
+
+        // Nothing
+        assert!(matches!(run("math.tanh()"), Value::Nothing));
+
+        // Tuple
+        assert_eq!(
+            run("math.tanh(0, 0)"),
+            Value::Tuple(Rc::new(vec![Value::Numb(0.0), Value::Numb(0.0)]))
+        );
+    }
+
+    #[test]
+    fn test_asinh() {
+        // Numb
+        assert_eq!(run("math.asinh 0"), Value::Numb(0.0));
+
+        // Undefined (type error)
+        assert!(matches!(run(r#"math.asinh "0""#), Value::Undefined(_)));
+
+        // Nothing
+        assert!(matches!(run("math.asinh()"), Value::Nothing));
+
+        // Tuple
+        assert_eq!(
+            run("math.asinh(0, 0)"),
+            Value::Tuple(Rc::new(vec![Value::Numb(0.0), Value::Numb(0.0)]))
+        );
+    }
+
+    #[test]
+    fn test_acosh() {
+        // Numb
+        assert_eq!(run("math.acosh 1"), Value::Numb(0.0));
+
+        // Undefined (out of domain / type error)
+        assert!(matches!(run("math.acosh 0.5"), Value::Undefined(_)));
+        assert!(matches!(run(r#"math.acosh "1""#), Value::Undefined(_)));
+
+        // Nothing
+        assert!(matches!(run("math.acosh()"), Value::Nothing));
+
+        // Tuple
+        assert_eq!(
+            run("math.acosh(1, 1)"),
+            Value::Tuple(Rc::new(vec![Value::Numb(0.0), Value::Numb(0.0)]))
+        );
+    }
+
+    #[test]
+    fn test_atanh() {
+        // Numb
+        assert_eq!(run("math.atanh 0"), Value::Numb(0.0));
+
+        // Undefined (out of domain / type error)
+        assert!(matches!(run("math.atanh 2"), Value::Undefined(_)));
+        assert!(matches!(run(r#"math.atanh "0""#), Value::Undefined(_)));
+
+        // Nothing
+        assert!(matches!(run("math.atanh()"), Value::Nothing));
+
+        // Tuple
+        assert_eq!(
+            run("math.atanh(0, 0)"),
+            Value::Tuple(Rc::new(vec![Value::Numb(0.0), Value::Numb(0.0)]))
+        );
+    }
+
+    #[test]
+    fn test_exp() {
+        // Numb
+        assert_eq!(run("math.exp 0"), Value::Numb(1.0));
+
+        // Undefined (type error)
+        assert!(matches!(run(r#"math.exp "0""#), Value::Undefined(_)));
+
+        // Nothing
+        assert!(matches!(run("math.exp()"), Value::Nothing));
+
+        // Tuple
+        assert_eq!(
+            run("math.exp(0, 0)"),
+            Value::Tuple(Rc::new(vec![Value::Numb(1.0), Value::Numb(1.0)]))
+        );
+    }
+
+    #[test]
+    fn test_ln() {
+        // Numb
+        assert_eq!(run("math.ln(math.E)"), Value::Numb(1.0));
+
+        // Undefined (out of domain / type error)
+        assert!(matches!(run("math.ln(-1)"), Value::Undefined(_)));
+        assert!(matches!(run(r#"math.ln "e""#), Value::Undefined(_)));
+
+        // Nothing
+        assert!(matches!(run("math.ln()"), Value::Nothing));
+
+        // Tuple
+        assert_eq!(
+            run("math.ln(math.E, math.E)"),
+            Value::Tuple(Rc::new(vec![Value::Numb(1.0), Value::Numb(1.0)]))
+        );
+    }
+
+    #[test]
+    fn test_log2() {
+        // Numb
+        assert_eq!(run("math.log2 8"), Value::Numb(3.0));
+
+        // Undefined (out of domain / type error)
+        assert!(matches!(run("math.log2(-1)"), Value::Undefined(_)));
+        assert!(matches!(run(r#"math.log2 "8""#), Value::Undefined(_)));
+
+        // Nothing
+        assert!(matches!(run("math.log2()"), Value::Nothing));
+
+        // Tuple
+        assert_eq!(
+            run("math.log2(8, 16)"),
+            Value::Tuple(Rc::new(vec![Value::Numb(3.0), Value::Numb(4.0)]))
+        );
+    }
+
+    #[test]
+    fn test_log10() {
+        // Numb
+        assert_eq!(run("math.log10 100"), Value::Numb(2.0));
+
+        // Undefined (out of domain / type error)
+        assert!(matches!(run("math.log10(-1)"), Value::Undefined(_)));
+        assert!(matches!(run(r#"math.log10 "100""#), Value::Undefined(_)));
+
+        // Nothing
+        assert!(matches!(run("math.log10()"), Value::Nothing));
+
+        // Tuple
+        assert_eq!(
+            run("math.log10(100, 1000)"),
+            Value::Tuple(Rc::new(vec![Value::Numb(2.0), Value::Numb(3.0)]))
+        );
+    }
+
+
+    // ---------------------------------------------------------------------
+    //  Curried higher-order functions (builtin_f64_curried)
+    // ---------------------------------------------------------------------
+
+    #[test]
+    fn test_pow() {
+
+        // Numbers
+        assert_eq!(run("pow10 = math.pow 10, pow10 2"), Value::Numb(1024.0));
+        assert_eq!(run("sq = math.pow 2, sq 5"),        Value::Numb(25.0));
+        assert_eq!(run("math.pow 3 2"),                 Value::Numb(8.0));
+
+        // Undefined
+        assert_eq!(run("math.pow TRUE 3")   , undef_unary!("math.pow", Value::Numb(3.0)));
+        assert_eq!(run("math.pow \"abc\" 3"), undef_unary!("math.pow", Value::Numb(3.0)));
+
+        // Nothing
+        assert_eq!(run("math.pow()"), Value::Nothing);
+
+        // Tuples
+        assert_eq!(run("math.pow(3, 4) 2"), Value::Tuple(Rc::new(vec![
+            Value::Numb(8.0),
+            Value::Numb(16.0),
+        ])));
+        assert_eq!(run("math.pow(3, 4) (2, 5)"), Value::Tuple(Rc::new(vec![
+            Value::Numb(  8.0), 
+            Value::Numb(125.0),
+            Value::Numb( 16.0), 
+            Value::Numb(625.0),
+        ])));
+    }
+
+    #[test]
+    fn test_log() {
+
+        // Numbers
+        assert_eq!(run("log10 = math.log 10, log10 100"), Value::Numb(2.0));
+        assert_eq!(run("math.log 2 8"),                   Value::Numb(3.0));
+
+        // Undefined
+        assert_eq!(run("math.log TRUE 3")   , undef_unary!("math.log", Value::Numb(3.0)));
+        assert_eq!(run("math.log \"abc\" 3"), undef_unary!("math.log", Value::Numb(3.0)));
+
+        // Nothing
+        assert_eq!(run("math.log()"), Value::Nothing);
+
+        // Tuples
+        assert_eq!(run("math.log(10, 100) 10000"), Value::Tuple(Rc::new(vec![
+            Value::Numb(4.0),
+            Value::Numb(2.0),
+        ])));
+        assert_eq!(run("math.log(10, 100) (100, 10000)"), Value::Tuple(Rc::new(vec![
+            Value::Numb(2.0), 
+            Value::Numb(4.0),
+            Value::Numb(1.0), 
+            Value::Numb(2.0),
+        ])));
+    }
+
+    #[test]
+    fn test_atan2() {
+        // Numb
+        assert_eq!(
+            run("atan_x = math.atan2 0, atan_x 1"),
+            Value::Numb(std::f64::consts::FRAC_PI_2)
+        );
+        assert_eq!(run("math.atan2 1 0"), Value::Numb(0.0));
+
+        // Undefined (type errors)
+        assert!(matches!(run(r#"math.atan2 "0" 1"#), Value::Undefined(_)));
+        assert!(matches!(run(r#"math.atan2 0 "1""#), Value::Undefined(_)));
+
+        // Nothing
+        assert!(matches!(run("math.atan2 0 ()"), Value::Nothing));
+        assert!(matches!(run("math.atan2 () 1"), Value::Nothing));
+
+        // Tuple
+        assert_eq!(
+            run("math.atan2 1 (0, 0)"),
+            Value::Tuple(Rc::new(vec![Value::Numb(0.0), Value::Numb(0.0)]))
+        );
+    }
+
+    #[test]
+    fn test_hypot() {
+        // Numb
+        assert_eq!(run("h3 = math.hypot 3, h3 4"), Value::Numb(5.0));
+        assert_eq!(run("math.hypot 3 4"), Value::Numb(5.0));
+
+        // Undefined (type errors)
+        assert!(matches!(run(r#"math.hypot "3" 4"#), Value::Undefined(_)));
+        assert!(matches!(run(r#"math.hypot 3 "4""#), Value::Undefined(_)));
+
+        // Nothing
+        assert!(matches!(run("math.hypot 3 ()"), Value::Nothing));
+        assert!(matches!(run("math.hypot () 4"), Value::Nothing));
+
+        // Tuple
+        assert_eq!(
+            run("math.hypot 3 (4, 4)"),
+            Value::Tuple(Rc::new(vec![Value::Numb(5.0), Value::Numb(5.0)]))
+        );
+    }
+
+
+    // ---------------------------------------------------------------------
+    //  Multi-argument functions
+    // ---------------------------------------------------------------------
+
+    #[test]
+    fn test_max() {
+        // Numb / Tuple
+        assert_eq!(run("math.max(1, 22, 3, 4)"), Value::Numb(22.0));
+        assert_eq!(run("math.max 42"), Value::Numb(42.0));
+        assert_eq!(run("math.max(-10, -5, -20)"), Value::Numb(-5.0));
+
+        // Undefined (type error / empty)
+        assert!(matches!(run(r#"math.max(1, "two", 3)"#), Value::Undefined(_)));
+
+        // Nothing (0 items -> Undefined)
+        assert!(matches!(run("math.max()"), Value::Undefined(_)));
+    }
+
+    #[test]
+    fn test_min() {
+        // Numb / Tuple
+        assert_eq!(run("math.min(1, 22, 3, 4)"), Value::Numb(1.0));
+        assert_eq!(run("math.min 42"), Value::Numb(42.0));
+        assert_eq!(run("math.min(-10, -5, -20)"), Value::Numb(-20.0));
+
+        // Undefined (type error / empty)
+        assert!(matches!(run(r#"math.min(1, [2], 3)"#), Value::Undefined(_)));
+
+        // Nothing (0 items -> Undefined)
+        assert!(matches!(run("math.min()"), Value::Undefined(_)));
+    }
+
+
+    // ---------------------------------------------------------------------
+    //  Constants
+    // ---------------------------------------------------------------------
+
+    #[test]
+    fn test_constants() {
+        assert_eq!(run("math.PI"), Value::Numb(std::f64::consts::PI));
+        assert_eq!(run("math.E"), Value::Numb(std::f64::consts::E));
+        assert_eq!(run("math.INF"), Value::Numb(f64::INFINITY));
+        assert_eq!(run("math.INFINITY"), Value::Numb(f64::INFINITY));
+    }
+}
+````
+
+## File: src/builtins/nspace.rs
+````rust
+//! The built-in `nspace` namespace: functions that inspect namespace values.
+//!
+//! | Function        | Result                                                          |
+//! |-----------------|-----------------------------------------------------------------|
+//! | `nspace.enum`   | The sorted names bound *locally* in a namespace, as text        |
+//! | `nspace.size`   | The number of bindings defined *locally* in a namespace        |
+//! | `nspace.parent` | The enclosing namespace, or `Nothing` if there is none         |
+//!
+//! All functions are wrapped with `map_1`, so they map over tuples, return
+//! `Nothing` for `Nothing`, and return `Undefined` for non-namespace arguments.
+
+use crate::value::{Scope, Undef, Value};
+use super::helpers::*;
+
+
+
+// ----------------------------------------------------------------------------
+//  `nspace` built-in namespace
+// ----------------------------------------------------------------------------
+
+/// Builds the `nspace` namespace value.
+///
+/// The namespace is a child of `parent`, so builtins defined in `parent`
+/// remain visible from inside it.
+pub fn create_namespace(parent: &Scope) -> Value {
+    let nspace_scope = parent.new_child();
+    nspace_scope.set("enum"  , map_1("nspace.enum"  , nspace_enum));
+    nspace_scope.set("size"  , map_1("nspace.size"  , nspace_size));
+    nspace_scope.set("parent", map_1("nspace.parent", nspace_parent));
+    Value::Namespace(nspace_scope)
+}
+
+/// Returns the names bound locally in a namespace (inherited names are excluded),
+/// as text values sorted alphabetically (byte-wise, so uppercase sorts before lowercase).
+///
+/// - empty namespace -> `Nothing`
+/// - one binding     -> a single `Text`
+/// - several         -> a `Tuple` of `Text`
+/// - non-namespace   -> `Undefined`
+fn nspace_enum(val: Value) -> Value {
+    match val {
+        Value::Namespace(scope) => {
+            let mut keys: Vec<String> = scope
+                .0
+                .borrow()
+                .bindings
+                .keys()
+                .cloned()
+                .collect();
+            keys.sort();
+            normalize_tuple(
+                keys.into_iter().map(|k| Value::Text(k.into())).collect()
+            )
+        }
+        other => undef_unary!("nspace.enum", other),
+    }
+}
+
+/// Returns the number of bindings defined locally in a namespace
+/// (bindings inherited from parent scopes are not counted).
+/// Non-namespace values yield `Undefined`.
+fn nspace_size(val: Value) -> Value {
+    match val {
+        Value::Namespace(scope) => {
+            let count = scope.0.borrow().bindings.len();
+            Value::Numb(count as f64)
+        }
+        other => undef_unary!("nspace.size", other),
+    }
+}
+
+/// Returns the enclosing namespace of `val`, or `Nothing` if it has no parent
+/// (i.e. it is the outermost scope). Non-namespace values yield `Undefined`.
+fn nspace_parent(val: Value) -> Value {
+    match val {
+        Value::Namespace(scope) => {
+            // Clone the parent handle so the RefCell borrow is released immediately.
+            let parent_scope = scope.0.borrow().parent.clone();
+            match parent_scope {
+                Some(p) => Value::Namespace(p),
+                None => Value::Nothing,
+            }
+        }
+        other => undef_unary!("nspace.parent", other),
+    }
+}
+
+
+
+// ----------------------------------------------------------------------------
+//  UNIT TESTS
+// ----------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::rc::Rc;
+    use crate::eval::eval;
+    use crate::lexer::Lexer;
+    use crate::parser::Parser;
+
+    fn root_scope() -> Scope {
+        let scope = Scope::new();
+        scope.set("nspace", create_namespace(&scope));
+        scope.set("TRUE"  , Value::Bool(true));
+        scope.set("FALSE" , Value::Bool(false));
+        scope.new_child()
+    }
+
+    fn run(src: &str) -> Value {
+        let scope = root_scope();
+        let mut parser = Parser::new(Lexer::new(src));
+        let ast = parser.parse();
+        eval(&ast, &scope)
+    }
+
+    fn is_undefined(v: &Value) -> bool {
+        matches!(v, Value::Undefined(_))
+    }
+
+    fn text(s: &str) -> Value {
+        Value::Text(s.into())
+    }
+
+    #[test]
+    fn test_size() {
+        assert_eq!(run("nspace.size {a: 1, b: 2}"), Value::Numb(2.0));
+        assert_eq!(run("nspace.size()"), Value::Nothing);
+        assert_eq!(
+            run("nspace.size({a:1, b:2}, {c:3, d:4, e:5})"), 
+            Value::Tuple(Rc::new(vec![Value::Numb(2.0), Value::Numb(3.0)]))
+        );
+        assert_eq!(run("nspace.size {}"), Value::Numb(0.0));
+        assert!(is_undefined(&run("nspace.size 42")));
+        // The builtin namespace holds exactly: enum, parent, size
+        assert_eq!(run("nspace.size nspace"), Value::Numb(3.0));
+        // Mixed tuple: the non-namespace element becomes Undefined, the rest still map
+        match run("nspace.size(1, {a:1})") {
+            Value::Tuple(items) => {
+                assert!(is_undefined(&items[0]));
+                assert_eq!(items[1], Value::Numb(1.0));
+            }
+            other => panic!("expected tuple, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_enum() {
+        assert_eq!(
+            run("nspace.enum {a: 1, b: 2}"),
+            Value::Tuple(Rc::new(vec![Value::Text("a".into()), Value::Text("b".into())]))
+        );
+        assert_eq!(run("nspace.enum()"), Value::Nothing);
+        assert_eq!(
+            run("nspace.enum({a:1, b:2}, {c:3})"),
+            Value::Tuple(Rc::new(vec![
+                    Value::Text("a".into()), 
+                    Value::Text("b".into()),
+                    Value::Text("c".into()),
+            ]))
+        );
+        // empty -> Nothing; single key -> plain Text, not a 1-tuple
+        assert_eq!(run("nspace.enum {}"), Value::Nothing);
+        assert_eq!(run("nspace.enum {a: 1}"), text("a"));
+        // keys are sorted regardless of definition order
+        assert_eq!(
+            run("nspace.enum {b: 1, a: 2}"),
+            Value::Tuple(Rc::new(vec![text("a"), text("b")]))
+        );
+        // non-namespace -> Undefined
+        assert!(is_undefined(&run("nspace.enum 42")));
+        // only local names are listed, not inherited ones
+        assert_eq!(run("nspace.enum {}"), Value::Nothing);
+        // the builtin namespace lists its own functions, sorted
+        assert_eq!(
+            run("nspace.enum nspace"),
+            Value::Tuple(Rc::new(vec![text("enum"), text("parent"), text("size")]))
+        );
+    }
+
+    #[test]
+    fn test_parent() {
+
+        // 1. Parent of a child namespace literal { ... } created inside another scope
+        assert_eq!(
+            run("ns = {a = 1}, child = ns.{b = 2}, nspace.parent child == ns"),
+            Value::Bool(true)
+        );
+
+        // 2. Parent on non-namespace yields Undefined
+        assert!(matches!(run("nspace.parent 42"), Value::Undefined(_)));
+
+        // 3. The parent of the root scope should be null
+        assert_eq!(
+            run("nspace.parent(nspace.parent(nspace.parent{}))"),
+            Value::Nothing
+        );
+        // nspace.parent nspace is the scope holding nspace/TRUE/FALSE
+        // (uppercase names sort before lowercase)
+        assert_eq!(
+            run("nspace.enum(nspace.parent nspace)"),
+            Value::Tuple(Rc::new(vec![text("FALSE"), text("TRUE"), text("nspace")]))
+        );
+        // Nothing in -> Nothing out
+        assert_eq!(run("nspace.parent()"), Value::Nothing);
+
+        // Tuples
+        assert_eq!(
+            run("(a,b) = nspace.parent(14, nspace.{}), a, b == nspace"), 
+            Value::Tuple(Rc::new(vec![
+                    undef_unary!("nspace.parent", Value::Numb(14.0)),
+                    Value::Bool(true)
+            ]))
+        );
+    }
+
+    #[test]
+    fn test_direct_size_and_enum() {
+        let scope = Scope::new();
+        assert_eq!(nspace_size(Value::Namespace(scope.clone())), Value::Numb(0.0));
+        assert_eq!(nspace_enum(Value::Namespace(scope.clone())), Value::Nothing);
+
+        scope.set("y", Value::Numb(1.0));
+        scope.set("x", Value::Numb(2.0));
+        assert_eq!(nspace_size(Value::Namespace(scope.clone())), Value::Numb(2.0));
+        assert_eq!(
+            nspace_enum(Value::Namespace(scope)),
+            Value::Tuple(Rc::new(vec![text("x"), text("y")]))
+        );
+    }
+
+    #[test]
+    fn test_direct_locality() {
+        // Inherited bindings must not be counted or listed
+        let parent = Scope::new();
+        parent.set("p", Value::Numb(1.0));
+        let child = parent.new_child();
+        child.set("c", Value::Numb(2.0));
+        assert_eq!(nspace_size(Value::Namespace(child.clone())), Value::Numb(1.0));
+        assert_eq!(nspace_enum(Value::Namespace(child)), text("c"));
+    }
+
+    #[test]
+    fn test_direct_parent() {
+        let parent = Scope::new();
+        let child = parent.new_child();
+        assert_eq!(
+            nspace_parent(Value::Namespace(child)),
+            Value::Namespace(parent.clone())
+        );
+        // A top-level scope has no parent
+        assert_eq!(nspace_parent(Value::Namespace(parent)), Value::Nothing);
+    }
+
+    #[test]
+    fn test_non_namespace_arguments_are_undefined() {
+        for v in [Value::Numb(1.0), Value::Bool(true), text("s")] {
+            assert!(is_undefined(&nspace_size(v.clone())));
+            assert!(is_undefined(&nspace_enum(v.clone())));
+            assert!(is_undefined(&nspace_parent(v)));
+        }
+    }
+}
+````
+
+## File: src/builtins/numb.rs
+````rust
+//! The `numb` built-in namespace.
+//!
+//! Currently contains a single function:
+//!
+//! - `numb.from(x)` converts a `Bool` or `Text` (or a `Numb`, unchanged) to a `Numb`.
+//!
+//! ```text
+//! numb.from(TRUE)       -> 1
+//! numb.from("42")       -> 42
+//! numb.from(TRUE, "42") -> (1, 42)
+//! numb.from("abc")      -> undefined
+//! ```
+
+// `Undef` is kept in scope because `undef_unary!` may expand to code that refers to it.
+use crate::value::{Scope, Undef, Value};
+use super::helpers::*;
+
+
+
+// ----------------------------------------------------------------------------
+//  Namespace construction
+// ----------------------------------------------------------------------------
+
+/// Builds the `numb` namespace value.
+///
+/// The namespace scope is a child of `parent`, so root-scope names stay
+/// visible inside it.
+pub fn create_namespace(parent: &Scope) -> Value {
+    let numb_scope = parent.new_child();
+    // Unary function: `map_1` applies it to each item of the argument.
+    numb_scope.set("from", map_1("numb.from", numb_from));
+    Value::Namespace(numb_scope)
+}
+
+
+
+// ----------------------------------------------------------------------------
+//  numb.from
+// ----------------------------------------------------------------------------
+
+/// Converts a single (non-tuple) value to a number.
+///
+/// - `Numb`  -> returned unchanged.
+/// - `Bool`  -> `1.0` for `TRUE`, `0.0` for `FALSE`.
+/// - `Text`  -> parsed with Rust's `f64::from_str`. This accepts forms such
+///              as `"42"`, `"-3.5"` and `"1e3"`. It does not accept surrounding
+///              whitespace, and it also accepts `"inf"` and `"NaN"`.
+/// - anything else, or text that fails to parse -> `Undefined`.
+///
+/// `Nothing` and tuples are handled by `map_1` before this function is
+/// called, so `val` is always a single item.
+fn numb_from(val: Value) -> Value {
+    match &val {
+        Value::Numb(n) => Value::Numb(*n),
+        Value::Bool(b) => Value::Numb(if *b { 1.0 } else { 0.0 }),
+        Value::Text(s) => match s.parse::<f64>() {
+            Ok(n)  => Value::Numb(n),
+            Err(_) => undef_unary!("numb.from", val), // not a valid number literal
+        },
+        _ => undef_unary!("numb.from", val),          // unsupported type
+    }
+}
+
+
+
+// ----------------------------------------------------------------------------
+//  Unit tests
+// ----------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::rc::Rc;
+    use crate::eval::eval;
+    use crate::lexer::Lexer;
+    use crate::parser::Parser;
+
+    /// Minimal root scope: the `numb` namespace plus the boolean constants.
+    /// Returns a child scope, mirroring how user code is evaluated.
+    fn root_scope() -> Scope {
+        let scope = Scope::new();
+        scope.set("numb" , create_namespace(&scope));
+        scope.set("TRUE" , Value::Bool(true));
+        scope.set("FALSE", Value::Bool(false));
+        scope.new_child()
+    }
+
+    /// Lexes, parses and evaluates `src` in a fresh test scope.
+    fn run(src: &str) -> Value {
+        let scope = root_scope();
+        let mut parser = Parser::new(Lexer::new(src));
+        let ast = parser.parse();
+        eval(&ast, &scope)
+    }
+
+    #[test]
+    fn test_from() {
+
+        // Bool
+        assert_eq!(run("numb.from(TRUE)") , Value::Numb(1.0));
+        assert_eq!(run("numb.from(FALSE)"), Value::Numb(0.0));
+
+        // Numb
+        assert_eq!(run("numb.from(1.5)"), Value::Numb(1.5));
+
+        // Text
+        assert_eq!(run(r#"numb.from "42""#)   , Value::Numb(42.0));
+        assert_eq!(run(r#"numb.from "-3.5""#) , Value::Numb(-3.5));
+        assert_eq!(run(r#"numb.from "1e3""#)  , Value::Numb(1000.0));
+        assert!(matches!(run(r#"numb.from " 42""#), Value::Undefined(_)));
+
+        // Invalid Text
+        assert!(matches!(run(r#"numb.from "abc""#), Value::Undefined(_)));
+        assert!(matches!(run(r#"numb.from """#)   , Value::Undefined(_)));
+
+        // Nothing
+        assert_eq!(run("numb.from()"), Value::Nothing);
+
+        // Tuple
+        assert_eq!(
+            run(r#"numb.from(TRUE, "42")"#),
+            Value::Tuple(Rc::new(vec![
+                Value::Numb(1.0),
+                Value::Numb(42.0),
+            ]))
+        );
+
+        // Others
+        assert!(matches!(run("numb.from []"), Value::Undefined(_)));
+    }
+}
+````
+
+## File: src/builtins/text.rs
+````rust
+//! The `text` built-in namespace.
+//!
+//! Every function is applied element-wise over tuples (via `map_1` / `map_curried`),
+//! so `Nothing` maps to `Nothing` and tuples map to tuples. Arguments of the wrong
+//! type produce `Value::Undefined`. All positions and lengths count Unicode
+//! characters, not bytes.
+
+use crate::value::{BuiltinFn, Scope, Undef, Value};
+use super::helpers::*;
+
+
+// ----------------------------------------------------------------------------
+//  `text` built-in namespace 
+// ----------------------------------------------------------------------------
+
+/// Builds the `text` namespace and returns it as a `Value::Namespace`.
+///
+/// The namespace scope is a child of `parent`, so root-scope names stay visible inside it.
+pub fn create_namespace(parent: &Scope) -> Value {
+    let text_scope = parent.new_child();
+
+    // Unary functions: map over each item of the argument.
+    text_scope.set("from"     , map_1("text.from"     , text_from));
+    text_scope.set("size"     , map_1("text.size"     , text_size));
+    text_scope.set("enum"     , map_1("text.enum"     , text_enum));
+    text_scope.set("lower"    , map_1("text.lower"    , text_lower));
+    text_scope.set("upper"    , map_1("text.upper"    , text_upper));
+    text_scope.set("trim"     , map_1("text.trim"     , text_trim));
+    text_scope.set("trim_head", map_1("text.trim_head", text_trim_head));
+    text_scope.set("trim_tail", map_1("text.trim_tail", text_trim_tail));
+
+    // Curried binary functions: (needle/count/separator) first, then the target text.
+    text_scope.set("find"     , map_curried("text.find" , text_find));
+    text_scope.set("rfind"    , map_curried("text.rfind", text_rfind));
+    text_scope.set("head"     , map_curried("text.head" , text_head));
+    text_scope.set("tail"     , map_curried("text.tail" , text_tail));
+    text_scope.set("split"    , map_curried("text.split", text_split));
+    // `join` uses map_1 (not map_curried) on purpose: the separator is mapped, but the
+    // returned function receives the whole tuple of items to join.
+    text_scope.set("join"     , map_1("text.join"     , text_join));
+
+    Value::Namespace(text_scope)
+}
+
+// ----------------------------------------------------------------------------
+//  Conversion / inspection
+// ----------------------------------------------------------------------------
+
+/// Converts a scalar to its text form (`TRUE`/`FALSE`, number, `[[List of N]]`, `[[Func]]`, `[[Undefined]]`, `[[Namespace of N]]`). Text passes through unchanged; anything else is Undefined.
+fn text_from(val: Value) -> Value {
+    let s: String = match &val {
+        Value::Bool(b) => {
+            if *b { "TRUE".into() } else { "FALSE".into() }
+        }
+        Value::Numb(n) => {
+            n.to_string()
+        }
+        Value::Text(s) => {
+            return Value::Text(s.clone())
+        }
+        Value::List(l) => {
+            format!("[[List of {}]]", l.len())
+        }
+        Value::Func{..} | Value::Builtin(_) => {
+            "[[Func]]".to_string()
+        }
+        Value::Undefined(_) => {
+            "[[Undefined]]".to_string()
+        }
+        Value::Namespace(scope) => {
+            format!("[[Namespace of {}]]", scope.0.borrow().bindings.len())
+        }
+        // Bool/Numb/Text/etc. handled above; Nothing and Tuple never reach here (handled by map_1).
+        _ => return undef_unary!("text.from", val),
+    };
+
+    Value::Text(s.into())
+}
+
+/// Number of characters in the text.
+fn text_size(val: Value) -> Value {
+    match val {
+        Value::Text(s) => Value::Numb(s.chars().count() as f64),
+        other => undef_unary!("text.size", other),
+    }
+}
+
+/// Splits the text into a tuple of single-character texts.
+fn text_enum(val: Value) -> Value {
+    match val {
+        Value::Text(s) => {
+            let chars: Vec<Value> = s.chars().map(|c| Value::Text(c.to_string().into())).collect();
+            normalize_tuple(chars)
+        }
+        other => undef_unary!("text.enum", other),
+    }
+}
+
+// ----------------------------------------------------------------------------
+//  Case and whitespace
+// ----------------------------------------------------------------------------
+
+/// Lower-cases the text.
+fn text_lower(val: Value) -> Value {
+    match val {
+        Value::Text(s) => Value::Text(s.to_lowercase().into()),
+        other => undef_unary!("text.lower", other),
+    }
+}
+
+/// Upper-cases the text.
+fn text_upper(val: Value) -> Value {
+    match val {
+        Value::Text(s) => Value::Text(s.to_uppercase().into()),
+        other => undef_unary!("text.upper", other),
+    }
+}
+
+/// Removes whitespace from both ends of the text.
+fn text_trim(val: Value) -> Value {
+    match val {
+        Value::Text(s) => Value::Text(s.trim().into()),
+        other => undef_unary!("text.trim", other),
+    }
+}
+
+/// Removes whitespace from the start of the text.
+fn text_trim_head(val: Value) -> Value {
+    match val {
+        Value::Text(s) => Value::Text(s.trim_start().into()),
+        other => undef_unary!("text.trim_head", other),
+    }
+}
+
+/// Removes whitespace from the end of the text.
+fn text_trim_tail(val: Value) -> Value {
+    match val {
+        Value::Text(s) => Value::Text(s.trim_end().into()),
+        other => undef_unary!("text.trim_tail", other),
+    }
+}
+
+// ----------------------------------------------------------------------------
+//  Searching
+// ----------------------------------------------------------------------------
+
+/// Converts an optional byte offset within `haystack` into a character index
+/// (`Value::Numb`), or `-1` when there was no match.
+fn char_position(haystack: &str, byte_pos: Option<usize>) -> Value {
+    match byte_pos {
+        Some(b) => Value::Numb(haystack[..b].chars().count() as f64),
+        None => Value::Numb(-1.0),
+    }
+}
+
+/// Character index of the first occurrence of `needle` in `haystack`, or -1 if absent. Only `haystack` is reported in the Undefined result if either argument is not Text.
+fn text_find(needle: Value, haystack: Value) -> Value {
+    match (&needle, haystack) {
+        (Value::Text(n), Value::Text(h)) => char_position(&h, h.find(n.as_ref())),
+        (_, other) => undef_unary!("text.find", other),
+    }
+}
+
+/// Character index of the last occurrence of `needle` in `haystack`, or -1 if absent. Only `haystack` is reported in the Undefined result if either argument is not Text.
+fn text_rfind(needle: Value, haystack: Value) -> Value {
+    match (&needle, haystack) {
+        (Value::Text(n), Value::Text(h)) => char_position(&h, h.rfind(n.as_ref())),
+        (_, other) => undef_unary!("text.rfind", other),
+    }
+}
+
+// ----------------------------------------------------------------------------
+//  Slicing
+// ----------------------------------------------------------------------------
+
+/// Resolves a signed character count `n` against a text of `len` characters
+/// into a boundary index in `0..=len`.
+/// - `n >= 0`: `n`, clamped to `len` (counted from the start)
+/// - `n < 0`:  `len + n`, clamped to `0` (counted back from the end)
+fn boundary_index(n: f64, len: usize) -> usize {
+    let (len, n) = (len as i64, n as i64);
+    if n >= 0 { n.min(len) as usize } else { (len + n).max(0) as usize }
+}
+
+/// First `n` characters; a negative `n` drops the last `|n|` characters instead.
+fn text_head(n: Value, s: Value) -> Value {
+    match (&n, s) {
+        (Value::Numb(n_val), Value::Text(s_val)) => {
+            let chars: Vec<char> = s_val.chars().collect();
+            let end = boundary_index(*n_val, chars.len());
+            let result: String = chars[..end].iter().collect();
+            Value::Text(result.into())
+        }
+        (_, other) => undef_unary!("text.head", other),
+    }
+}
+
+/// Text from character index `n` onward; a negative `n` keeps only the last `|n|` characters.
+fn text_tail(n: Value, s: Value) -> Value {
+    match (&n, s) {
+        (Value::Numb(n_val), Value::Text(s_val)) => {
+            let chars: Vec<char> = s_val.chars().collect();
+            let start = boundary_index(*n_val, chars.len());
+            let result: String = chars[start..].iter().collect();
+            Value::Text(result.into())
+        }
+        (_, other) => undef_unary!("text.tail", other),
+    }
+}
+
+// ----------------------------------------------------------------------------
+//  Split / join
+// ----------------------------------------------------------------------------
+
+/// Splits `target` on every occurrence of `sep`, returning a tuple of parts (a single Text if `sep` does not occur).
+fn text_split(sep: Value, target: Value) -> Value {
+    match (&sep, target) {
+        (Value::Text(s1), Value::Text(s2)) => {
+            let parts: Vec<Value> = s2
+                .split(s1.as_ref())
+                .map(|p| Value::Text(p.into()))
+                .collect();
+            normalize_tuple(parts)
+        }
+        (_, other) => undef_unary!("text.split", other),
+    }
+}
+
+/// Curried: `text.join sep items` joins all Text items with `sep`. Returns Undefined if `sep` is not Text or if any item is not Text.
+fn text_join(sep: Value) -> Value {
+    Value::Builtin(BuiltinFn::new("text.join", move |items| {
+        match &sep {
+            Value::Text(s1) => {
+                // Validate and collect first, so one non-Text item aborts the whole join.
+                let mut strings: Vec<String> = Vec::new();
+                for item in items.items() {
+                    match item {
+                        Value::Text(t) => strings.push(t.to_string()),
+                        other => return undef_unary!("text.join", other), // `return` exits the whole builtin closure, not just the loop.
+                    }
+                }
+                Value::Text(strings.join(s1.as_ref()).into())
+            }
+            _ => undef_unary!("text.join", items),
+        }
+    }))
+}
+
+
+// ----------------------------------------------------------------------------
+//  UNIT TESTS
+// ----------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::rc::Rc;
+    use crate::eval::eval;
+    use crate::lexer::Lexer;
+    use crate::parser::Parser;
+
+    fn root_scope() -> Scope {
+        let scope = Scope::new();
+        scope.set("text", create_namespace(&scope));
+        scope.set("TRUE", Value::Bool(true));
+        scope.set("FALSE", Value::Bool(false));
+        scope.new_child()
+    }
+
+    fn run(src: &str) -> Value {
+        let scope = root_scope();
+        let mut parser = Parser::new(Lexer::new(src));
+        let ast = parser.parse();
+        eval(&ast, &scope)
+    }
+
+    #[test]
+    fn text_from() {
+
+        // Number
+        assert_eq!(run("text.from 42"), Value::Text("42".into()));
+
+        // Bool
+        assert_eq!(run("text.from(TRUE)"), Value::Text("TRUE".into()));
+        assert_eq!(run("text.from(FALSE)"), Value::Text("FALSE".into()));
+
+        // Text
+        assert_eq!(run("text.from \"abc\""), Value::Text("abc".into()));
+
+        // List
+        assert_eq!(run("text.from[10,20,30,40]"), Value::Text("[[List of 4]]".into()));
+        
+        // Namespace
+        assert_eq!(run("text.from{a:1, b:2, c:3}"), Value::Text("[[Namespace of 3]]".into()));
+
+        // Func
+        assert_eq!(run("text.from(x -> 2*x)"), Value::Text("[[Func]]".into()));
+        assert_eq!(run("text.from(text.from)"), Value::Text("[[Func]]".into()));
+
+        // Undefined
+        assert_eq!(run("text.from([] - [])"), Value::Text("[[Undefined]]".into()));
+
+        // Nothing
+        assert_eq!(run("text.from()"), Value::Nothing);
+
+        // Tuple
+        assert_eq!(
+            run("text.from(21, TRUE)"),
+            Value::Tuple(Rc::new(vec![
+                Value::Text("21".into()),
+                Value::Text("TRUE".into()),
+            ])),
+        );
+    }
+
+    #[test]
+    fn text_size() {
+
+        // Text
+        assert_eq!(run("text.size \"abc\""), Value::Numb(3.0));
+        assert_eq!(run("text.size \"\"   "), Value::Numb(0.0));
+
+        // Nothing
+        assert_eq!(run("text.size()"), Value::Nothing);
+
+        // Tuple
+        assert_eq!(
+            run("text.size(\"abc\", \"defgh\")"), 
+            Value::Tuple(Rc::new(vec![
+                Value::Numb(3.0),
+                Value::Numb(5.0),
+            ]))
+        );
+
+        // Others
+        assert!(matches!(run("text.size 123"), Value::Undefined(_)));
+    }
+
+    #[test]
+    fn text_enum() {
+
+        // Text
+        assert_eq!(
+            run(r#"text.enum "abc""#),
+            Value::Tuple(Rc::new(vec![
+                Value::Text("a".into()),
+                Value::Text("b".into()),
+                Value::Text("c".into()),
+            ]))
+        );
+
+        // Nothing
+        assert_eq!(run("text.enum()"), Value::Nothing);
+
+        // Tuple
+        assert_eq!(
+            run("text.enum(\"abc\", \"de\")"), 
+            Value::Tuple(Rc::new(vec![
+                Value::Text("a".into()),
+                Value::Text("b".into()),
+                Value::Text("c".into()),
+                Value::Text("d".into()),
+                Value::Text("e".into()),
+            ]))
+        );
+
+        // Others
+        assert!(matches!(run("text.enum 123"), Value::Undefined(_)));
+    }
+
+    #[test]
+    fn text_lower() {
+
+        // Text
+        assert_eq!(run("text.lower \"ABC\""), Value::Text("abc".into()));
+        assert_eq!(run("text.lower \"aBc\""), Value::Text("abc".into()));
+        assert_eq!(run("text.lower \"abc\""), Value::Text("abc".into()));
+
+        // Nothing
+        assert_eq!(run("text.lower()"), Value::Nothing);
+
+        // Tuple
+        assert_eq!(
+            run("text.lower(\"ABC\", \"DEF\")"), 
+            Value::Tuple(Rc::new(vec![
+                Value::Text("abc".into()),
+                Value::Text("def".into()),
+            ]))
+        );
+
+        // Others
+        assert!(matches!(run("text.lower 123"), Value::Undefined(_)));
+    }
+
+    #[test]
+    fn text_upper() {
+
+        // Text
+        assert_eq!(run("text.upper \"ABC\""), Value::Text("ABC".into()));
+        assert_eq!(run("text.upper \"aBc\""), Value::Text("ABC".into()));
+        assert_eq!(run("text.upper \"abc\""), Value::Text("ABC".into()));
+
+        // Nothing
+        assert_eq!(run("text.upper()"), Value::Nothing);
+
+        // Tuple
+        assert_eq!(
+            run("text.upper(\"abc\", \"def\")"), 
+            Value::Tuple(Rc::new(vec![
+                Value::Text("ABC".into()),
+                Value::Text("DEF".into()),
+            ]))
+        );
+
+        // Others
+        assert!(matches!(run("text.upper 123"), Value::Undefined(_)));
+    }
+
+    #[test]
+    fn text_trim() {
+
+        // Text
+        assert_eq!(run("text.trim \"  abc  \""), Value::Text("abc".into()));
+        assert_eq!(run("text.trim \"    abc\""), Value::Text("abc".into()));
+        assert_eq!(run("text.trim \"abc    \""), Value::Text("abc".into()));
+        assert_eq!(run("text.trim \"abc\""), Value::Text("abc".into()));
+
+        // Nothing
+        assert_eq!(run("text.trim()"), Value::Nothing);
+
+        // Tuple
+        assert_eq!(
+            run("text.trim(\"  abc  \", \"  def  \")"), 
+            Value::Tuple(Rc::new(vec![
+                Value::Text("abc".into()),
+                Value::Text("def".into()),
+            ]))
+        );
+
+        // Others
+        assert!(matches!(run("text.trim 123"), Value::Undefined(_)));
+    }
+
+    #[test]
+    fn text_trim_head() {
+
+        // Text
+        assert_eq!(run("text.trim_head \"  abc  \""), Value::Text("abc  ".into()));
+        assert_eq!(run("text.trim_head \"    abc\""), Value::Text("abc".into()));
+        assert_eq!(run("text.trim_head \"abc    \""), Value::Text("abc    ".into()));
+        assert_eq!(run("text.trim_head \"abc\""), Value::Text("abc".into()));
+
+        // Nothing
+        assert_eq!(run("text.trim_head()"), Value::Nothing);
+
+        // Tuple
+        assert_eq!(
+            run("text.trim_head(\"  abc  \", \"  def  \")"), 
+            Value::Tuple(Rc::new(vec![
+                Value::Text("abc  ".into()),
+                Value::Text("def  ".into()),
+            ]))
+        );
+
+        // Others
+        assert!(matches!(run("text.trim_head 123"), Value::Undefined(_)));
+    }
+
+    #[test]
+    fn text_trim_tail() {
+
+        // Text
+        assert_eq!(run("text.trim_tail \"  abc  \""), Value::Text("  abc".into()));
+        assert_eq!(run("text.trim_tail \"    abc\""), Value::Text("    abc".into()));
+        assert_eq!(run("text.trim_tail \"abc    \""), Value::Text("abc".into()));
+        assert_eq!(run("text.trim_tail \"abc\""), Value::Text("abc".into()));
+
+        // Nothing
+        assert_eq!(run("text.trim_tail()"), Value::Nothing);
+
+        // Tuple
+        assert_eq!(
+            run("text.trim_tail(\"  abc  \", \"  def  \")"), 
+            Value::Tuple(Rc::new(vec![
+                Value::Text("  abc".into()),
+                Value::Text("  def".into()),
+            ]))
+        );
+
+        // Others
+        assert!(matches!(run("text.trim_tail 123"), Value::Undefined(_)));
+    }
+
+    #[test]
+    fn text_find() {
+
+        // Text
+        assert_eq!(run(r#"text.find "bc" "abcdefabcd""#), Value::Numb(1.0));
+        assert_eq!(run(r#"text.find "xyz" "abcdefabcd""#), Value::Numb(-1.0));
+
+        // Nothing
+        assert_eq!(run("text.find ()"), Value::Nothing);
+        assert_eq!(run("text.find () \"abc\""), Value::Nothing);
+        assert_eq!(run("text.find () ()"), Value::Nothing);
+
+        // Tuple - Text
+        assert_eq!(
+            run("text.find (\"b\", \"d\") \"abcdefabcdef\""), 
+            Value::Tuple(Rc::new(vec![
+                Value::Numb(1.0),
+                Value::Numb(3.0),
+            ]))
+        );
+
+        // Tuple - Tuple
+        assert_eq!(
+            run("text.find (\"b\", \"d\") (\"abcdefabcdef\", \"aaaaabcccd\")"), 
+            Value::Tuple(Rc::new(vec![
+                Value::Numb(1.0),
+                Value::Numb(5.0),
+                Value::Numb(3.0),
+                Value::Numb(9.0),
+            ]))
+        );
+
+        // Others
+        assert!(matches!(run("text.find 123 \"abc\""), Value::Undefined(_)));
+        assert!(matches!(run("text.find \"abc\" 123"), Value::Undefined(_)));
+    }
+
+    #[test]
+    fn text_rfind() {
+
+        // Text - Text
+        assert_eq!(run(r#"text.rfind "bc" "abcdefabcd""#), Value::Numb(7.0));
+        assert_eq!(run(r#"text.rfind "xyz" "abcdefabcd""#), Value::Numb(-1.0));
+
+        // Nothing
+        assert_eq!(run("text.rfind ()"), Value::Nothing);
+        assert_eq!(run("text.rfind () \"abc\""), Value::Nothing);
+        assert_eq!(run("text.rfind () ()"), Value::Nothing);
+
+        // Tuple - Text
+        assert_eq!(
+            run("text.rfind (\"b\", \"d\") \"abcdefabcdef\""), 
+            Value::Tuple(Rc::new(vec![
+                Value::Numb(7.0),
+                Value::Numb(9.0),
+            ]))
+        );
+
+        // Tuple - Tuple
+        assert_eq!(
+            run("text.rfind (\"b\", \"d\") (\"abcdefabcdef\", \"aaaaabcccd\")"), 
+            Value::Tuple(Rc::new(vec![
+                Value::Numb(7.0),
+                Value::Numb(5.0),
+                Value::Numb(9.0),
+                Value::Numb(9.0),
+            ]))
+        );
+
+        // Others
+        assert!(matches!(run("text.rfind 123 \"abc\""), Value::Undefined(_)));
+        assert!(matches!(run("text.rfind \"abc\" 123"), Value::Undefined(_)));
+    }
+
+    #[test]
+    fn text_head() {
+
+        // Numb - Text
+        assert_eq!(run("text.head 3 \"abcdef\""), Value::Text("abc".into()));
+        assert_eq!(run("text.head 0 \"abcdef\""), Value::Text("".into()));
+        assert_eq!(run("text.head(-2) \"abcdef\""), Value::Text("abcd".into()));
+        assert_eq!(run("text.head 99 \"abc\""), Value::Text("abc".into()));
+        assert_eq!(run("text.head(-99) \"abc\""), Value::Text("".into()));
+
+        // Nothing
+        assert_eq!(run("text.head ()"), Value::Nothing);
+        assert_eq!(run("text.head () \"abc\""), Value::Nothing);
+        assert_eq!(run("text.head () ()"), Value::Nothing);
+
+        // Tuple - Text
+        assert_eq!(
+            run("text.head (2, 3) \"abcdef\""), 
+            Value::Tuple(Rc::new(vec![
+                Value::Text("ab".into()),
+                Value::Text("abc".into()),
+            ]))
+        );
+
+        // Tuple - Tuple
+        assert_eq!(
+            run("text.head (2, 3) (\"abcd\", \"efgh\")"), 
+            Value::Tuple(Rc::new(vec![
+                Value::Text("ab".into()),
+                Value::Text("ef".into()),
+                Value::Text("abc".into()),
+                Value::Text("efg".into()),
+            ]))
+        );
+
+        // Others
+        assert!(matches!(run("text.head 123 456"), Value::Undefined(_)));
+        assert!(matches!(run("text.head \"abc\" 123"), Value::Undefined(_)));
+    }
+
+    #[test]
+    fn text_tail() {
+
+        // Numb - Text
+        assert_eq!(run("text.tail 3 \"abcdef\""), Value::Text("def".into()));
+        assert_eq!(run("text.tail 0 \"abcdef\""), Value::Text("abcdef".into()));
+        assert_eq!(run("text.tail(-2) \"abcdef\""), Value::Text("ef".into()));
+        assert_eq!(run("text.tail 99 \"abc\""), Value::Text("".into()));
+        assert_eq!(run("text.tail(-99) \"abc\""), Value::Text("abc".into()));
+
+        // Nothing
+        assert_eq!(run("text.tail ()"), Value::Nothing);
+        assert_eq!(run("text.tail () \"abc\""), Value::Nothing);
+        assert_eq!(run("text.tail () ()"), Value::Nothing);
+
+        // Tuple - Text
+        assert_eq!(
+            run("text.tail (-2, -3) \"abcdef\""), 
+            Value::Tuple(Rc::new(vec![
+                Value::Text("ef".into()),
+                Value::Text("def".into()),
+            ]))
+        );
+
+        // Tuple - Tuple
+        assert_eq!(
+            run("text.tail (-2, -3) (\"abcd\", \"efgh\")"), 
+            Value::Tuple(Rc::new(vec![
+                Value::Text("cd".into()),
+                Value::Text("gh".into()),
+                Value::Text("bcd".into()),
+                Value::Text("fgh".into()),
+            ]))
+        );
+
+        // Others
+        assert!(matches!(run("text.tail 123 456"), Value::Undefined(_)));
+        assert!(matches!(run("text.tail \"abc\" 123"), Value::Undefined(_)));
+    }
+
+    #[test]
+    fn text_split() {
+
+        // Text - Text
+        assert_eq!(
+            run("text.split \":\" \"aa:bb:cc\""),
+            Value::Tuple(Rc::new(vec![
+                Value::Text("aa".into()),
+                Value::Text("bb".into()),
+                Value::Text("cc".into()),
+            ]))
+        );
+        assert_eq!(
+            run("text.split \":\" \"aabbcc\""),
+            Value::Text("aabbcc".into()),
+        );
+
+        // Nothing
+        assert_eq!(run("text.split ()"), Value::Nothing);
+        assert_eq!(run("text.split () \"abc\""), Value::Nothing);
+        assert_eq!(run("text.split () ()"), Value::Nothing);
+
+        // Tuple - Text
+        assert_eq!(
+            run("text.split (\".\", \":\") \"aa.:bb.:cc\""), 
+            Value::Tuple(Rc::new(vec![
+                Value::Text("aa".into()),
+                Value::Text(":bb".into()),
+                Value::Text(":cc".into()),
+                Value::Text("aa.".into()),
+                Value::Text("bb.".into()),
+                Value::Text("cc".into()),
+            ]))
+        );
+
+        // Tuple - Tuple
+        assert_eq!(
+            run("text.split (\".\", \":\") (\"aa.:bb.:cc\", \"abc:def\")"), 
+            Value::Tuple(Rc::new(vec![
+                Value::Text("aa".into()),
+                Value::Text(":bb".into()),
+                Value::Text(":cc".into()),
+                Value::Text("abc:def".into()),
+                Value::Text("aa.".into()),
+                Value::Text("bb.".into()),
+                Value::Text("cc".into()),
+                Value::Text("abc".into()),
+                Value::Text("def".into()),
+            ]))
+        );
+
+        // Others
+        assert!(matches!(run("text.split 123 456"), Value::Undefined(_)));
+        assert!(matches!(run("text.split \"abc\" 123"), Value::Undefined(_)));
+    }
+
+    #[test]
+    fn text_join() {
+
+        // Text - Tuple
+        assert_eq!(run(r#"text.join ":" ("aa", "bb", "cc")"#), Value::Text("aa:bb:cc".into()));
+        assert_eq!(run(r#"text.join ":" "abc""#), Value::Text("abc".into()));
+
+        // Nothing
+        assert_eq!(run("text.join ()"), Value::Nothing);
+        assert_eq!(run("text.join () \"abc\""), Value::Nothing);
+        assert_eq!(run("text.join () ()"), Value::Nothing);
+
+        // Tuple - Tuple
+        assert_eq!(
+            run(r#"text.join (".", ":") ("aa", "bb", "cc")"#), 
+            Value::Tuple(Rc::new(vec![
+                Value::Text("aa.bb.cc".into()),
+                Value::Text("aa:bb:cc".into()),
+            ]))
+        );
+
+        // Others
+        assert!(matches!(run("text.join 123 345"), Value::Undefined(_)));
+        assert!(matches!(run("text.join \"abc\" 123"), Value::Undefined(_)));
+        assert!(matches!(run(r#"text.join ":" ("aa", 1, "cc")"#), Value::Undefined(_)));
+    }
+}
+````
+
+## File: src/builtins/time.rs
+````rust
+//! The `time` built-in namespace.
+//!
+//! Timestamps are `Numb` values holding seconds since the Unix epoch
+//! (1970-01-01T00:00:00Z), always interpreted as UTC. Every function except
+//! `now` is mapped over tuples via `map_1`: `Nothing` gives `Nothing`, a tuple
+//! is mapped element-wise, and an unsupported argument type gives `Undefined`.
+//!
+//! Namespace members:
+//! - `now()`         : current time
+//! - `to_date(t)`    : timestamp -> namespace `{year, month, day, hour, minute, second}`
+//! - `from_date(d)`  : date namespace -> timestamp (missing fields default to 1970-01-01T00:00:00)
+//! - `week_day(t)`   : 0 = Sunday ... 6 = Saturday
+//! - `week_number(t)`: ISO-8601 week number
+//! - `to_string(t)`  : ISO-8601 text, e.g. `2026-05-28T20:26:40.000Z`
+//! - `from_string(s)`: parse ISO-8601 text (date, or date + time)
+
+use crate::value::{BuiltinFn, Scope, Undef, Value};
+use super::helpers::*;
+
+
+
+// ----------------------------------------------------------------------------
+//  `time` built-in namespace
+// ----------------------------------------------------------------------------
+
+/// Builds the `time` namespace as a child of `parent`.
+pub fn create_namespace(parent: &Scope) -> Value {
+    let time_scope = parent.new_child();
+
+    time_scope.set("now", Value::Builtin(BuiltinFn::new("time.now", time_now)));
+
+    time_scope.set("to_date", map_1("time.to_date", time_to_date));
+    time_scope.set("from_date", map_1("time.from_date", time_from_date));
+
+    time_scope.set("week_day", map_1("time.week_day", time_week_day));
+    time_scope.set("week_number", map_1("time.week_number", time_week_number));
+
+    time_scope.set("to_string", map_1("time.to_string", time_to_string));
+    time_scope.set("from_string", map_1("time.from_string", time_from_string));
+
+    Value::Namespace(time_scope)
+}
+
+
+
+// ----------------------------------------------------------------------------
+//  Built-in functions
+// ----------------------------------------------------------------------------
+
+/// `time.now()`: current time as epoch seconds (fractional). Any argument is ignored.
+/// Returns 0 if the system clock is before the epoch.
+fn time_now(_arg: Value) -> Value {
+    match std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH) {
+        Ok(d) => Value::Numb(d.as_secs_f64()),
+        Err(_) => Value::Numb(0.0),
+    }
+}
+
+/// Returns a fresh namespace with `year, month, day, hour, minute, second`,
+/// with `second` possibly fractional.
+fn time_to_date(t: Value) -> Value {
+    match t {
+        Value::Numb(t) => {
+            let dt = datetime_from_epoch(t);
+            let scope = Scope::new();
+            scope.set("year", Value::Numb(dt.year as f64));
+            scope.set("month", Value::Numb(dt.month as f64));
+            scope.set("day", Value::Numb(dt.day as f64));
+            scope.set("hour", Value::Numb(dt.hour as f64));
+            scope.set("minute", Value::Numb(dt.minute as f64));
+            scope.set("second", Value::Numb(dt.second));
+            Value::Namespace(scope)
+        }
+        other => undef_unary!("time.to_date", other),
+    }
+}
+
+/// Missing or non-numeric fields default to year 0 / month 1 / day 1 / 00:00:00.
+fn time_from_date(date: Value) -> Value {
+    match date {
+        Value::Namespace(scope) => {
+            let y = numb_field(&scope, "year", 0.0) as i64;
+            let m = numb_field(&scope, "month", 1.0) as i64;
+            let d = numb_field(&scope, "day", 1.0) as i64;
+            let h = numb_field(&scope, "hour", 0.0) as i64;
+            let min = numb_field(&scope, "minute", 0.0) as i64;
+            let s = numb_field(&scope, "second", 0.0);
+            Value::Numb(epoch_from_parts(y, m, d, h, min, s))
+        }
+        other => undef_unary!("time.from_date", other),
+    }
+}
+
+/// Formats the given timestamp as `YYYY-MM-DDTHH:MM:SS.mmmZ` (UTC, millisecond precision).
+fn time_to_string(val: Value) -> Value {
+    match val {
+        Value::Numb(t) => {
+            let dt = datetime_from_epoch(t);
+            Value::Text(format!(
+                "{:04}-{:02}-{:02}T{:02}:{:02}:{:06.3}Z",
+                dt.year, dt.month, dt.day, dt.hour, dt.minute, dt.second
+            ).into())
+        }
+        other => undef_unary!("time.to_string", other),
+    }
+}
+
+/// Parses an ISO-8601 date/time string. Accepts `YYYY-MM-DD`, optionally followed by
+/// `T`, `t` or a space, then `HH:MM` or `HH:MM:SS[.fff]`, with an optional trailing `Z`/`z`.
+/// A missing time means midnight. Returns `Undefined` for unparsable text.
+fn time_from_string(val: Value) -> Value {
+    match val {
+        Value::Text(s) => match parse_iso_string(&s) {
+            Some(t) => Value::Numb(t),
+            None => undef_unary!("time.from_string", Value::Text(s)),
+        },
+        other => undef_unary!("time.from_string", other),
+    }
+}
+
+/// `time.week_day(t)`: 0 = Sunday … 6 = Saturday.
+fn time_week_day(val: Value) -> Value {
+    match val {
+        Value::Numb(t) => {
+            let days = (t.floor() as i64).div_euclid(86400);
+            // 1970-01-01 (day 0) was a Thursday, i.e. weekday 4
+            let wd = (days + 4).rem_euclid(7);
+            Value::Numb(wd as f64)
+        }
+        other => undef_unary!("time.week_day", other),
+    }
+}
+
+/// `time.week_number(t)`: ISO-8601 week number (weeks start Monday; week 1 contains the year's first Thursday).
+fn time_week_number(val: Value) -> Value {
+    match val {
+        Value::Numb(t) => {
+            let days = (t.floor() as i64).div_euclid(86400);
+            // weekday with Monday = 0 (day 0 was a Thursday, so +3)
+            let wday_mon0 = (days + 3).rem_euclid(7);
+            // the Thursday of the current ISO week. Its calendar year is the ISO year.
+            let thu_days = days + 3 - wday_mon0;
+            let (thu_y, _, _) = civil_from_days(thu_days);
+            // January 4th is always in ISO week 1. `jan4_thu_days` is the Thursday of that week.
+            let jan4_days = days_from_civil(thu_y, 1, 4);
+            let jan4_wday_mon0 = (jan4_days + 3).rem_euclid(7);
+            let jan4_thu_days = jan4_days + 3 - jan4_wday_mon0;
+            // 1 + the number of whole weeks between the two Thursdays
+            let wn = 1 + (thu_days - jan4_thu_days) / 7;
+            Value::Numb(wn as f64)
+        }
+        other => undef_unary!("time.week_number", other),
+    }
+}
+
+
+
+// ----------------------------------------------------------------------------
+//  Private helpers
+// ----------------------------------------------------------------------------
+
+/// A broken-down UTC date and time.
+struct DateTime {
+    year: i64, month: u32, day: u32,
+    hour: i64, minute: i64, second: f64, // `second` includes the fractional part
+}
+
+/// Splits epoch seconds into calendar fields (UTC). Works for negative times too.
+fn datetime_from_epoch(t: f64) -> DateTime {
+    let t_floor = t.floor() as i64;
+    let sub_sec = t - (t_floor as f64);
+    let days = t_floor.div_euclid(86400);
+    let rem_secs = t_floor.rem_euclid(86400);
+    let (year, month, day) = civil_from_days(days);
+    DateTime {
+        year, month, day,
+        hour: rem_secs / 3600,
+        minute: (rem_secs % 3600) / 60,
+        second: (rem_secs % 60) as f64 + sub_sec,
+    }
+}
+
+/// Combines calendar fields (UTC) into epoch seconds.
+fn epoch_from_parts(y: i64, m: i64, d: i64, h: i64, min: i64, sec: f64) -> f64 {
+    let days = days_from_civil(y, m, d);
+    (days * 86400 + h * 3600 + min * 60) as f64 + sec
+}
+
+/// Reads a numeric field from a date namespace, or returns `default`
+/// if the field is missing or not a `Numb`.
+fn numb_field(scope: &Scope, name: &str, default: f64) -> f64 {
+    match scope.get(name) {
+        Value::Numb(n) => n,
+        _ => default,
+    }
+}
+
+/// Convert days since 1970-01-01 to (year, month, day) in civil Gregorian calendar.
+///
+/// This implementation uses Howard Hinnant's `civil_from_days` algorithm,
+/// which works for the proleptic Gregorian calendar (i.e., it's valid
+/// for dates before 1582 as well, though the results might not match
+/// historical records).
+///
+/// `z`   : days since 0000-03-01
+/// `era` : 400-year cycle
+/// `doe` : day of era
+/// `yoe` : year of era
+/// `doy` : day of year counted from March 1
+/// `mp`  : month counted from March
+fn civil_from_days(days: i64) -> (i64, u32, u32) {
+    let z = days + 719468;
+    let era = (if z >= 0 { z } else { z - 146096 }) / 146097;
+    let doe = (z - era * 146097) as u32;
+    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+    let y = (yoe as i64) + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    let y = if m <= 2 { y + 1 } else { y };
+    (y, m, d)
+}
+
+/// Convert (year, month, day) to days since 1970-01-01 in civil Gregorian calendar.
+///
+/// This implementation uses Howard Hinnant's `days_from_civil` algorithm,
+/// which works for the proleptic Gregorian calendar.
+///
+/// `y`   : year (adjusted for March-based year start)
+/// `era` : 400-year cycle
+/// `yoe` : year of era
+/// `doy` : day of year (0-indexed, from March 1st)
+/// `doe` : day of era
+fn days_from_civil(y: i64, m: i64, d: i64) -> i64 {
+    let y = if m <= 2 { y - 1 } else { y };
+    let era = (if y >= 0 { y } else { y - 399 }) / 400;
+    let yoe = y - era * 400;
+    let doy = (153 * (if m > 2 { m - 3 } else { m + 9 }) + 2) / 5 + d - 1;
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    era * 146097 + doe - 719468
+}
+
+/// Parse an ISO-8601 date/time string into epoch seconds.
+///
+/// Accepts forms like:
+/// - `YYYY-MM-DD` (time defaults to 00:00:00Z)
+/// - `YYYY-MM-DDTHH:MM`
+/// - `YYYY-MM-DDtHH:MM:SS`
+/// - `YYYY-MM-DD HH:MM:SS.fffZ`
+/// An optional trailing `Z` or `z` is ignored. Returns `None` on any malformed input,
+/// including out-of-range month/day values.
+fn parse_iso_string(s: &str) -> Option<f64> {
+    let s = s.trim();
+    // Split into date and optional time parts
+    let parts: Vec<&str> = s.split(|c| c == 'T' || c == 't' || c == ' ').collect();
+    if parts.is_empty() {
+        return None;
+    }
+
+    // Parse date part (YYYY-MM-DD)
+    let date_parts: Vec<&str> = parts[0].split('-').collect();
+    if date_parts.len() != 3 {
+        return None;
+    }
+    let y: i64 = date_parts[0].parse().ok()?;
+    let m: i64 = date_parts[1].parse().ok()?;
+    let d: i64 = date_parts[2].parse().ok()?;
+
+    // Validate month and day ranges
+    if !(1..=12).contains(&m) || !(1..=31).contains(&d) {
+        return None;
+    }
+
+    // Parse optional time part (HH:MM:SS[.fff])
+    let (h, min, sec) = if parts.len() > 1 {
+        let time_str = parts[1].trim_end_matches(|c| c == 'Z' || c == 'z');
+        let time_parts: Vec<&str> = time_str.split(':').collect();
+        if time_parts.len() < 2 {
+            return None;
+        }
+        let h: i64 = time_parts[0].parse().ok()?;
+        let min: i64 = time_parts[1].parse().ok()?;
+        let sec: f64 = if time_parts.len() >= 3 {
+            time_parts[2].parse().ok()?
+        } else {
+            0.0
+        };
+        (h, min, sec)
+    } else {
+        (0, 0, 0.0)
+    };
+
+    Some(epoch_from_parts(y, m, d, h, min, sec))
+}
+
+
+
+// ----------------------------------------------------------------------------
+//  Unit tests
+// ----------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::rc::Rc;
+    use crate::eval::eval;
+    use crate::lexer::Lexer;
+    use crate::parser::Parser;
+
+    /// Minimal root scope: the `time` namespace plus the boolean constants.
+    /// Returns a child scope, mirroring how user code is evaluated.
+    fn root_scope() -> Scope {
+        let scope = Scope::new();
+        scope.set("time", create_namespace(&scope));
+        scope.set("TRUE", Value::Bool(true));
+        scope.set("FALSE", Value::Bool(false));
+        scope.new_child()
+    }
+
+    /// Lexes, parses and evaluates `src` in a fresh test scope.
+    fn run(src: &str) -> Value {
+        let scope = root_scope();
+        let mut parser = Parser::new(Lexer::new(src));
+        let ast = parser.parse();
+        eval(&ast, &scope)
+    }
+
+    /// `time.now()`: returns a number.
+    #[test]
+    fn test_now() {
+        assert!(matches!(run("time.now()"), Value::Numb(_)));
+    }
+
+    /// `time.to_date`: timestamp to date namespace.
+    #[test]
+    fn test_to_date() {
+        // Number
+        assert_eq!(
+            run("d = time.to_date(1780000000), d.(year, month, day, hour, minute, second)"),
+            Value::Tuple(Rc::new(vec![
+                Value::Numb(2026.0), // year
+                Value::Numb(5.0),    // month
+                Value::Numb(28.0),   // day
+                Value::Numb(20.0),   // hour (UTC)
+                Value::Numb(26.0),   // minute
+                Value::Numb(40.0),   // second
+            ]))
+        );
+
+        // Nothing
+        assert_eq!(run("time.to_date()"), Value::Nothing);
+
+        // Tuple
+        assert_eq!(
+            run("(d1,d2) = time.to_date(1780000000, 1780000009), d1.[minute, second], d2.[minute, second]"),
+            Value::Tuple(Rc::new(vec![
+                Value::List(Rc::new(vec![Value::Numb(26.0), Value::Numb(40.0)])),
+                Value::List(Rc::new(vec![Value::Numb(26.0), Value::Numb(49.0)])),
+            ]))
+        );
+
+        // Others
+        assert!(matches!(run("time.to_date []"), Value::Undefined(_)));
+    }
+
+    /// `time.from_date`: date namespace to timestamp.
+    #[test]
+    fn test_from_date() {
+        // Number
+        assert_eq!(
+            run("time.from_date{year:2026, month:5, day:28, hour:20, minute:26, second:40}"),
+            Value::Numb(1780000000.0)
+        );
+
+        // Missing fields default to 1970-01-01T00:00:00
+        assert_eq!(run("time.from_date{year:1970}"), Value::Numb(0.0));
+
+        // Nothing
+        assert_eq!(run("time.from_date()"), Value::Nothing);
+
+        // Tuple
+        let d1 = "{year:2026, month:5, day:28, hour:20, minute:26, second:40}";
+        let d2 = "{year:2026, month:5, day:28, hour:20, minute:26, second:49}";
+        assert_eq!(
+            run(&format!("time.from_date({}, {})", d1, d2)),
+            Value::Tuple(Rc::new(vec![
+                Value::Numb(1780000000.0),
+                Value::Numb(1780000009.0),
+            ]))
+        );
+
+        // Others
+        assert!(matches!(run("time.from_date []"), Value::Undefined(_)));
+    }
+
+    /// `time.week_day`: returns day of week.
+    #[test]
+    fn test_week_day() {
+        // Number (Sunday = 0 ... Saturday = 6)
+        assert_eq!(run("time.week_day(1780000000)"), Value::Numb(4.0)); // Thursday
+        assert_eq!(run("time.week_day(1780259200)"), Value::Numb(0.0)); // Sunday
+        assert_eq!(run("time.week_day(1780345600)"), Value::Numb(1.0)); // Monday
+        assert_eq!(run("time.week_day(0)"), Value::Numb(4.0));          // 1970-01-01, Thursday
+
+        // Nothing
+        assert_eq!(run("time.week_day()"), Value::Nothing);
+
+        // Tuple
+        assert_eq!(
+            run("time.week_day(1780000000, 1780259200, 1780345600)"),
+            Value::Tuple(Rc::new(vec![
+                Value::Numb(4.0),
+                Value::Numb(0.0),
+                Value::Numb(1.0),
+            ]))
+        );
+
+        // Others
+        assert!(matches!(run("time.week_day([])"), Value::Undefined(_)));
+    }
+
+    /// `time.week_number`: returns ISO week number.
+    #[test]
+    fn test_week_number() {
+        // Number (ISO-8601 week numbers)
+        assert_eq!(run("time.week_number(1780000000)"), Value::Numb(22.0)); // Thursday
+        assert_eq!(run("time.week_number(1780259200)"), Value::Numb(22.0)); // Sunday, same week
+        assert_eq!(run("time.week_number(1780345600)"), Value::Numb(23.0)); // Monday, next week
+        assert_eq!(run("time.week_number(0)"), Value::Numb(1.0));          // 1970-01-01 is in ISO week 1
+
+        // Nothing
+        assert_eq!(run("time.week_number()"), Value::Nothing);
+
+        // Tuple
+        assert_eq!(
+            run("time.week_number(1780000000, 1780345600)"),
+            Value::Tuple(Rc::new(vec![
+                Value::Numb(22.0),
+                Value::Numb(23.0),
+            ]))
+        );
+
+        // Others
+        assert!(matches!(run("time.week_number([])"), Value::Undefined(_)));
+    }
+
+    /// `time.to_string`: formats timestamp to ISO-8601 string.
+    #[test]
+    fn test_to_string() {
+        // Number
+        assert_eq!(
+            run("time.to_string(1780000000)"),
+            Value::Text("2026-05-28T20:26:40.000Z".into())
+        );
+
+        // Number with fractional seconds
+        assert_eq!(
+            run("time.to_string(1780000000.5)"),
+            Value::Text("2026-05-28T20:26:40.500Z".into())
+        );
+        assert_eq!(run("time.to_string(0)"), Value::Text("1970-01-01T00:00:00.000Z".into()));
+
+        // Nothing
+        assert_eq!(run("time.to_string()"), Value::Nothing);
+
+        // Tuple
+        assert_eq!(
+            run("time.to_string(1780000000, 1780000009)"),
+            Value::Tuple(Rc::new(vec![
+                Value::Text("2026-05-28T20:26:40.000Z".into()),
+                Value::Text("2026-05-28T20:26:49.000Z".into()),
+            ]))
+        );
+
+        // Others
+        assert!(matches!(run("time.to_string([])"), Value::Undefined(_)));
+        assert!(matches!(run(r#"time.to_string("abc")"#), Value::Undefined(_)));
+    }
+
+    /// `time.from_string`: parses ISO-8601 string to timestamp.
+    #[test]
+    fn test_from_string() {
+        // Text (full date-time)
+        assert_eq!(
+            run(r#"time.from_string("2026-05-28T20:26:40.000Z")"#),
+            Value::Numb(1780000000.0)
+        );
+
+        // Text (date only -> midnight UTC)
+        assert_eq!(
+            run(r#"time.from_string("2026-05-28")"#),
+            Value::Numb(1779926400.0)
+        );
+
+        // Space as date/time separator, no trailing Z
+        assert_eq!(
+            run(r#"time.from_string("2026-05-28 20:26:40")"#),
+            Value::Numb(1780000000.0)
+        );
+
+        // Nothing
+        assert_eq!(run("time.from_string()"), Value::Nothing);
+
+        // Tuple
+        assert_eq!(
+            run(r#"time.from_string("2026-05-28T20:26:40Z", "2026-05-28T20:26:49Z")"#),
+            Value::Tuple(Rc::new(vec![
+                Value::Numb(1780000000.0),
+                Value::Numb(1780000009.0),
+            ]))
+        );
+
+        // Round trip
+        assert_eq!(
+            run("time.from_string(time.to_string(1780000000))"),
+            Value::Numb(1780000000.0)
+        );
+
+        // Others
+        assert!(matches!(run("time.from_string([])"), Value::Undefined(_)));
+        assert!(matches!(run(r#"time.from_string("not a date")"#), Value::Undefined(_)));
+        assert!(matches!(run(r#"time.from_string("2026-13-01")"#), Value::Undefined(_)));
+        assert!(matches!(run(r#"time.from_string("2026-05-00")"#), Value::Undefined(_)));
+    }
+}
+````
+
+## File: src/builtins/undef.rs
+````rust
+//! The `undef` built-in namespace.
+//!
+//! Provides helpers for explicitly constructing `Value::Undefined` values
+//! from user code.
+//!
+//! | Member       | Description                                              |
+//! |--------------|----------------------------------------------------------|
+//! | `undef.from` | Wraps any value into `Undefined(Undef::Value(<value>))`. |
+
+use crate::value::{BuiltinFn, Scope, Undef, Value};
+
+
+
+// ----------------------------------------------------------------------------
+//  `undef` built-in namespace
+// ----------------------------------------------------------------------------
+
+/// Builds the `undef` namespace as a child of `parent`.
+///
+/// The child scope keeps the parent's bindings visible from inside the
+/// namespace. It currently contains only `from`.
+pub fn create_namespace(parent: &Scope) -> Value {
+    let undef_scope = parent.new_child();
+    undef_scope.set("from", Value::Builtin(BuiltinFn::new("undef.from", undef_from)));
+    Value::Namespace(undef_scope)
+}
+
+/// `undef.from X` — wraps `X` into `Value::Undefined(Undef::Value(X))`.
+///
+/// The argument is wrapped as a whole and is not mapped element-wise, so a
+/// tuple argument produces a single `Undefined` that holds the entire tuple.
+/// `Nothing` is wrapped too.
+fn undef_from(val: Value) -> Value {
+    Value::Undefined(Undef::Value(Box::new(val)))
+}
+
+
+
+// ----------------------------------------------------------------------------
+//  UNIT TESTS
+// ----------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::eval::eval;
+    use crate::lexer::Lexer;
+    use crate::parser::Parser;
+
+    fn root_scope() -> Scope {
+        let scope = Scope::new();
+        scope.set("undef", create_namespace(&scope));
+        scope.set("TRUE"  , Value::Bool(true));
+        scope.set("FALSE" , Value::Bool(false));
+        scope.new_child()
+    }
+
+    fn run(src: &str) -> Value {
+        let scope = root_scope();
+        let mut parser = Parser::new(Lexer::new(src));
+        let ast = parser.parse();
+        eval(&ast, &scope)
+    }
+
+    fn undefined(val: Value) -> Value {
+        Value::Undefined(Undef::Value(Box::new(val)))
+    }
+
+    #[test]
+    fn test_undef_from() {
+        assert_eq!(
+            run("undef.from 10"), 
+            Value::Undefined(Undef::Value(Box::new(Value::Numb(10.0))))
+        );
+        assert_eq!(
+            run("undef.from \"abc\""), 
+            Value::Undefined(Undef::Value(Box::new(Value::Text("abc".into()))))
+        );
+
+        // Undefined from Bool
+        assert_eq!(run("undef.from TRUE"),  undefined(Value::Bool(true)));
+        assert_eq!(run("undef.from FALSE"), undefined(Value::Bool(false)));
+
+        // Undefined from Nothing
+        assert_eq!(undef_from(Value::Nothing), undefined(Value::Nothing));
+
+        // Nested Undefined
+        assert_eq!(
+            run("undef.from (undef.from 1)"),
+            undefined(undefined(Value::Numb(1.0)))
+        );
+    }
+}
+````
 
 ## File: src/ast.rs
 ````rust
@@ -203,52 +3523,43 @@ impl Node {
 ````rust
 // src/builtins.rs
 //
-// Built-in functions and namespaces that are pre-loaded into the root scope.
+// Purpose: this module builds the root scope and defines the built-ins that
+// live directly in it (`type`, `parse`, `TRUE`, `FALSE`). Every other
+// built-in lives in a submodule that exposes `create_namespace(&Scope) -> Value`.
 //
-// # How to add a new built-in function
+// Adding a root-level function:
+//   1. Write `fn my_fn(arg: Value) -> Value`.
+//   2. Register it in `root_scope()` with `scope.set("my_fn", map_1("my_fn", my_fn))`.
+//      `map_1` makes it map over tuples and pass `Nothing` through.
 //
-//   1. Write a plain Rust function `fn my_fn(arg: Value) -> Value { ... }`.
-//   2. Wrap it: `Value::Builtin(BuiltinFn::new("my_fn", my_fn))`.
-//   3. `scope.set("my_fn", ...)` in `root_scope()`, or insert it into one of
-//      the namespace builders (`math_namespace()`, etc.).
+// Adding a function to a namespace: put it in the matching submodule (`numb`,
+// `text`, `time`, …) and register it in that module's `create_namespace`.
 //
-// # Multi-argument functions / Curried Higher-Order Functions
+// Multi-argument functions: these are curried. Use `map_curried` from `helpers`,
+// so `math.pow 10` returns a function that takes the second argument.
 //
-//   Functions of type f(x, y) that require two parameters are implemented as
-//   higher-order functions f(x) that return a g(y) function.
-//   For example: `pow10 = math.pow 10`, `pow10 2` returns 1024.
-//
-// # Error convention
-//
-//   Never panic. Return `Value::Undefined(Undef::UnaryOperation { ... })` for
-//   type errors. Use the function's own `&'static str` name as the `op` field
-//   so the caller can identify the source of the error.
+// Errors: never panic. Return `Undefined` through the `undef_unary!` macro (or
+// its binary counterpart in `helpers`), using the function's own name as the
+// `op` label.
 
-use std::rc::Rc;
 use crate::value::{BuiltinFn, Scope, Undef, Value};
 use crate::lexer::Lexer;
 use crate::parser::Parser;
 use crate::eval::eval;
 
+// Shared helpers and macros (map_1, map_curried, undef_unary!, ...).
+mod helpers;
+use helpers::*;
 
-
-
-// ----------------------------------------------------------------------------
-//  Macros
-// ----------------------------------------------------------------------------
-
-macro_rules! undef_unary {
-    ($op:expr, $val:expr) => {
-        Value::Undefined(Undef::UnaryOperation {
-            op: $op,
-            val: Box::new($val),
-            pos: 0,
-        })
-    };
-}
-
-
-
+// One submodule per built-in namespace; each exposes create_namespace().
+mod bool_;
+mod numb;
+mod text;
+mod list;
+mod nspace;
+mod undef;
+mod math;
+mod time;
 
 
 
@@ -273,31 +3584,29 @@ macro_rules! undef_unary {
 /// assert_eq!(eval(&ast, &scope), swan_core::value::Value::Numb(3.0));
 /// ```
 pub fn root_scope() -> Scope {
+    // Built-ins are installed in this base scope.
     let scope = Scope::new();
 
-    // --- Builtin Namespaces ---
-    scope.set("bool"     , create_bool_namespace(&scope));
-    scope.set("numb"     , create_numb_namespace(&scope));
-    scope.set("text"     , create_text_namespace(&scope));
-    scope.set("list"     , create_list_namespace(&scope));
-    scope.set("nspace", create_nspace_namespace(&scope));
-    scope.set("undef", create_undef_namespace(&scope));
-    scope.set("math"     , create_math_namespace(&scope));
-    scope.set("time"     , create_time_namespace(&scope));
+    // Each namespace is registered under its own name, e.g. `math.sqrt`.
+    scope.set("bool"  , bool_::create_namespace(&scope));
+    scope.set("numb"  , numb::create_namespace(&scope));
+    scope.set("text"  , text::create_namespace(&scope));
+    scope.set("list"  , list::create_namespace(&scope));
+    scope.set("nspace", nspace::create_namespace(&scope));
+    scope.set("undef" , undef::create_namespace(&scope));
+    scope.set("math"  , math::create_namespace(&scope));
+    scope.set("time"  , time::create_namespace(&scope));
 
-    // --- Builtin Constants ---
     scope.set("TRUE" , Value::Bool(true));
     scope.set("FALSE", Value::Bool(false));
 
-    // --- Builtin Functions ---
-    scope.set("type" , Value::Builtin(BuiltinFn::new("type" , root_type)));
-    scope.set("parse", Value::Builtin(BuiltinFn::new("parse", root_parse)));
+    scope.set("type" , map_1("type" , type_function));
+    scope.set("parse", map_1("parse", parse_function));
 
-    // --- Return empty child ---
+    // Returns a fresh empty child scope. User code then defines and shadows
+    // names in the child and cannot overwrite the built-ins stored in the parent.
     scope.new_child()
 }
-
-
 
 
 
@@ -305,22 +3614,12 @@ pub fn root_scope() -> Scope {
 //  built-in functions
 // ----------------------------------------------------------------------------
 
-fn root_type(val: Value) -> Value {
-    match val {
-        Value::Nothing => Value::Nothing,
-        Value::Tuple(items) => {
-            let types: Vec<Value> = items
-                .iter()
-                .map(|it| Value::Text(type_name(it).into()))
-                .collect();
-            normalize_tuple(types)
-        }
-        other => Value::Text(type_name(&other).into()),
-    }
-}
-
-fn type_name(val: &Value) -> &'static str {
-    match val {
+/// Builtin `type`: returns the type name of its argument as a `Text`.
+///
+/// Wrapped with `map_1`, so `type()` is `Nothing` and `type(a, b)` gives a
+/// tuple of type names. Both `Func` and `Builtin` values report `"Func"`.
+fn type_function(val: Value) -> Value {
+    let n = match val {
         Value::Nothing => "Nothing",
         Value::Bool(_) => "Bool",
         Value::Numb(_) => "Numb",
@@ -330,18 +3629,26 @@ fn type_name(val: &Value) -> &'static str {
         Value::Func { .. } | Value::Builtin(_) => "Func",
         Value::Undefined(_) => "Undefined",
         Value::Tuple(_) => "Tuple",
-        val => panic!("Unknown value type: {:?}", val),
-    }
+        Value::Name(_) => "Name",
+    };
+    Value::Text(n.into())
 }
 
-/// Builtin `parse` function: takes a string expression `S` and returns an `eval` function.
-fn root_parse(arg: Value) -> Value {
+/// Builtin `parse` function:
+///   - takes a `Text` containing source code and parses it immediately.
+///   - returns a builtin function named `"eval"`.
+///   - that function takes a `Namespace` and evaluates the captured AST in
+///     that namespace as its scope.
+///   - a non-`Text` argument to `parse` gives `Undefined`, labelled `"parse"`.
+///   - a non-`Namespace` argument to the returned function gives `Undefined`,
+///     labelled `"eval"`.
+fn parse_function(arg: Value) -> Value {
     match arg {
         Value::Text(source) => {
             let mut parser = Parser::new(Lexer::new(&source));
             let ast = parser.parse();
 
-            // Return an `eval` function capturing the parsed AST node
+            // The closure takes ownership of the AST.
             Value::Builtin(BuiltinFn::new("eval", move |ns_arg| {
                 match ns_arg {
                     Value::Namespace(scope) => eval(&ast, &scope),
@@ -355,832 +3662,6 @@ fn root_parse(arg: Value) -> Value {
 
 
 
-
-
-
-// ----------------------------------------------------------------------------
-//  `bool` built-in namespace
-// ----------------------------------------------------------------------------
-
-pub fn create_bool_namespace(parent: &Scope) -> Value {
-    let bool_scope = parent.new_child();
-    bool_scope.set("TRUE" , Value::Bool(true));
-    bool_scope.set("FALSE", Value::Bool(false));
-    bool_scope.set("from" , Value::Builtin(BuiltinFn::new("bool.from", bool_from)));
-    Value::Namespace(bool_scope)
-}
-
-fn bool_from(val: Value) -> Value {
-    Value::Bool(bool::from(val))
-}
-
-
-
-
-
-// ----------------------------------------------------------------------------
-//  `numb` built-in namespace 
-// ----------------------------------------------------------------------------
-
-pub fn create_numb_namespace(parent: &Scope) -> Value {
-    let numb_scope = parent.new_child();
-    numb_scope.set("from" , Value::Builtin(BuiltinFn::new("numb.from", numb_from)));
-    Value::Namespace(numb_scope)
-}
-
-fn numb_from(val: Value) -> Value {
-    match &val {
-        Value::Nothing  => Value::Numb(0.0),
-        Value::Numb(n)  => Value::Numb(*n),
-        Value::Bool(b)  => Value::Numb(if *b { 1.0 } else { 0.0 }),
-        Value::Text(s)  => match s.parse::<f64>() {
-            Ok(n)  => Value::Numb(n),
-            Err(_) => undef_unary!("numb.from", val),
-        },
-        _ => undef_unary!("numb.from", val),
-    }
-}
-
-
-
-
-
-// ----------------------------------------------------------------------------
-//  `text` built-in namespace 
-// ----------------------------------------------------------------------------
-
-pub fn create_text_namespace(parent: &Scope) -> Value {
-    let text_scope = parent.new_child();
-    text_scope.set("from"     , Value::Builtin(BuiltinFn::new("text.from"     , text_from)));
-    text_scope.set("enum"     , Value::Builtin(BuiltinFn::new("text.enum"     , text_enum)));
-    text_scope.set("size"     , Value::Builtin(BuiltinFn::new("text.size"     , text_size)));
-    text_scope.set("find"     , Value::Builtin(BuiltinFn::new("text.find"     , text_find)));
-    text_scope.set("rfind"    , Value::Builtin(BuiltinFn::new("text.rfind"    , text_rfind)));
-    text_scope.set("lower"    , Value::Builtin(BuiltinFn::new("text.lower"    , text_lower)));
-    text_scope.set("upper"    , Value::Builtin(BuiltinFn::new("text.upper"    , text_upper)));
-    text_scope.set("trim"     , Value::Builtin(BuiltinFn::new("text.trim"     , text_trim)));
-    text_scope.set("trim_head", Value::Builtin(BuiltinFn::new("text.trim_head", text_trim_head)));
-    text_scope.set("trim_tail", Value::Builtin(BuiltinFn::new("text.trim_tail", text_trim_tail)));
-    text_scope.set("head"     , Value::Builtin(BuiltinFn::new("text.head"     , text_head)));
-    text_scope.set("tail"     , Value::Builtin(BuiltinFn::new("text.tail"     , text_tail)));
-    text_scope.set("split"    , Value::Builtin(BuiltinFn::new("text.split"    , text_split)));
-    text_scope.set("join"     , Value::Builtin(BuiltinFn::new("text.join"     , text_join)));
-    Value::Namespace(text_scope)
-}
-
-fn text_from(val: Value) -> Value {
-    let s: String = match &val {
-        Value::Text(s)  => return Value::Text(s.clone()),
-        Value::Numb(n)  => n.to_string(),
-        Value::Bool(b)  => if *b { "TRUE".into() } else { "FALSE".into() },
-        Value::Nothing  => String::new(),
-        _ => return undef_unary!("text.from", val),
-    };
-
-    Value::Text(s.into())
-}
-
-fn text_enum(val: Value) -> Value {
-    match val {
-        Value::Text(s) => {
-            let chars: Vec<Value> = s.chars().map(|c| Value::Text(c.to_string().into())).collect();
-            normalize_tuple(chars)
-        }
-        other => undef_unary!("text.enum", other),
-    }
-}
-
-fn text_size(val: Value) -> Value {
-    match val {
-        Value::Text(s) => Value::Numb(s.chars().count() as f64),
-        other => undef_unary!("text.size", other),
-    }
-}
-
-fn text_find(needle: Value) -> Value {
-    Value::Builtin(BuiltinFn::new("text.find", move |haystack| {
-        match (&needle, haystack) {
-            (Value::Text(n), Value::Text(h)) => match h.find(n.as_ref()) {
-                Some(byte_pos) => {
-                    let char_pos = h[..byte_pos].chars().count();
-                    Value::Numb(char_pos as f64)
-                }
-                None => Value::Numb(-1.0),
-            },
-            (_, other) => undef_unary!("text.find", other),
-        }
-    }))
-}
-
-fn text_rfind(needle: Value) -> Value {
-    Value::Builtin(BuiltinFn::new("text.rfind", move |haystack| {
-        match (&needle, haystack) {
-            (Value::Text(n), Value::Text(h)) => match h.rfind(n.as_ref()) {
-                Some(byte_pos) => {
-                    let char_pos = h[..byte_pos].chars().count();
-                    Value::Numb(char_pos as f64)
-                }
-                None => Value::Numb(-1.0),
-            },
-            (_, other) => undef_unary!("text.rfind", other),
-        }
-    }))
-}
-
-fn text_lower(val: Value) -> Value {
-    match val {
-        Value::Text(s) => Value::Text(s.to_lowercase().into()),
-        other => undef_unary!("text.lower", other),
-    }
-}
-
-fn text_upper(val: Value) -> Value {
-    match val {
-        Value::Text(s) => Value::Text(s.to_uppercase().into()),
-        other => undef_unary!("text.upper", other),
-    }
-}
-
-fn text_trim(val: Value) -> Value {
-    match val {
-        Value::Text(s) => Value::Text(s.trim().into()),
-        other => undef_unary!("text.trim", other),
-    }
-}
-
-fn text_trim_head(val: Value) -> Value {
-    match val {
-        Value::Text(s) => Value::Text(s.trim_start().into()),
-        other => undef_unary!("text.trim_head", other),
-    }
-}
-
-fn text_trim_tail(val: Value) -> Value {
-    match val {
-        Value::Text(s) => Value::Text(s.trim_end().into()),
-        other => undef_unary!("text.trim_tail", other),
-    }
-}
-
-fn text_head(n: Value) -> Value {
-    Value::Builtin(BuiltinFn::new("text.head", move |s| {
-        match (&n, s) {
-            (Value::Numb(n_val), Value::Text(s_val)) => {
-                let chars: Vec<char> = s_val.chars().collect();
-                let len = chars.len() as i64;
-                let n_idx = *n_val as i64;
-                let end = if n_idx >= 0 {
-                    n_idx.min(len) as usize
-                } else {
-                    (len + n_idx).max(0) as usize
-                };
-                let result: String = chars[..end].iter().collect();
-                Value::Text(result.into())
-            }
-            (_, other) => undef_unary!("text.head", other),
-        }
-    }))
-}
-
-fn text_tail(n: Value) -> Value {
-    Value::Builtin(BuiltinFn::new("text.tail", move |s| {
-        match (&n, s) {
-            (Value::Numb(n_val), Value::Text(s_val)) => {
-                let chars: Vec<char> = s_val.chars().collect();
-                let len = chars.len() as i64;
-                let n_idx = *n_val as i64;
-                let start = if n_idx >= 0 {
-                    n_idx.min(len) as usize
-                } else {
-                    (len + n_idx).max(0) as usize
-                };
-                let result: String = chars[start..].iter().collect();
-                Value::Text(result.into())
-            }
-            (_, other) => undef_unary!("text.tail", other),
-        }
-    }))
-}
-
-fn text_split(sep: Value) -> Value {
-    Value::Builtin(BuiltinFn::new("text.split", move |target| {
-        match (&sep, target) {
-            (Value::Text(s1), Value::Text(s2)) => {
-                let parts: Vec<Value> = s2
-                    .split(s1.as_ref())
-                    .map(|p| Value::Text(p.into()))
-                    .collect();
-                normalize_tuple(parts)
-            }
-            (_, other) => undef_unary!("text.split", other),
-        }
-    }))
-}
-
-fn text_join(sep: Value) -> Value {
-    Value::Builtin(BuiltinFn::new("text.join", move |items| {
-        match &sep {
-            Value::Text(s1) => {
-                let strings: Vec<String> = items
-                    .items()
-                    .map(|it| match it {
-                        Value::Text(t) => t.to_string(),
-                        Value::Numb(n) => n.to_string(),
-                        Value::Bool(b) => if b { "TRUE".into() } else { "FALSE".into() },
-                        Value::Nothing => String::new(),
-                        other => format!("{:?}", other),
-                    })
-                    .collect();
-                Value::Text(strings.join(s1.as_ref()).into())
-            }
-            _ => undef_unary!("text.join", items),
-        }
-    }))
-}
-
-
-
-
-
-// ----------------------------------------------------------------------------
-//  `list` built-in namespace
-// ----------------------------------------------------------------------------
-
-pub fn create_list_namespace(parent: &Scope) -> Value {
-    let list_scope = parent.new_child();
-    list_scope.set("enum"   , Value::Builtin(BuiltinFn::new("list.enum"   , list_enum)));
-    list_scope.set("size"   , Value::Builtin(BuiltinFn::new("list.size"   , list_size)));
-    list_scope.set("reverse", Value::Builtin(BuiltinFn::new("list.reverse", list_reverse)));
-    list_scope.set("find"   , Value::Builtin(BuiltinFn::new("list.find"   , list_find)));
-    list_scope.set("rfind"  , Value::Builtin(BuiltinFn::new("list.rfind"  , list_rfind)));
-    list_scope.set("head"   , Value::Builtin(BuiltinFn::new("list.head"   , list_head)));
-    list_scope.set("tail"   , Value::Builtin(BuiltinFn::new("list.tail"   , list_tail)));
-    Value::Namespace(list_scope)
-}
-
-fn list_enum(val: Value) -> Value {
-    match val {
-        Value::List(l) => normalize_tuple(l.as_ref().clone()),
-        other => undef_unary!("list.enum", other),
-    }
-}
-
-fn list_size(val: Value) -> Value {
-    match val {
-        Value::List(l) => Value::Numb(l.len() as f64),
-        other => undef_unary!("list.size", other),
-    }
-}
-
-fn list_reverse(val: Value) -> Value {
-    match val {
-        Value::List(l) => {
-            let mut rev = l.as_ref().clone();
-            rev.reverse();
-            Value::List(Rc::new(rev))
-        }
-        other => undef_unary!("list.reverse", other),
-    }
-}
-
-fn list_find(item: Value) -> Value {
-    Value::Builtin(BuiltinFn::new("list.find", move |list| {
-        match list {
-            Value::List(l) => {
-                let idx = l.iter().position(|x| x == &item);
-                match idx {
-                    Some(i) => Value::Numb(i as f64),
-                    None => Value::Numb(-1.0),
-                }
-            }
-            other => undef_unary!("list.find", other),
-        }
-    }))
-}
-
-fn list_rfind(item: Value) -> Value {
-    Value::Builtin(BuiltinFn::new("list.rfind", move |list| {
-        match list {
-            Value::List(l) => {
-                let idx = l.iter().rposition(|x| x == &item);
-                match idx {
-                    Some(i) => Value::Numb(i as f64),
-                    None => Value::Numb(-1.0),
-                }
-            }
-            other => undef_unary!("list.rfind", other),
-        }
-    }))
-}
-
-fn list_head(n: Value) -> Value {
-    Value::Builtin(BuiltinFn::new("list.head", move |list| {
-        match (&n, list) {
-            (Value::Numb(n_val), Value::List(l)) => {
-                let len = l.len() as i64;
-                let n_idx = *n_val as i64;
-                let end = if n_idx >= 0 {
-                    n_idx.min(len) as usize
-                } else {
-                    (len + n_idx).max(0) as usize
-                };
-                Value::List(Rc::new(l[..end].to_vec()))
-            }
-            (_, other) => undef_unary!("list.head", other),
-        }
-    }))
-}
-
-fn list_tail(n: Value) -> Value {
-    Value::Builtin(BuiltinFn::new("list.tail", move |list| {
-        match (&n, list) {
-            (Value::Numb(n_val), Value::List(l)) => {
-                let len = l.len() as i64;
-                let n_idx = *n_val as i64;
-                let start = if n_idx >= 0 {
-                    n_idx.min(len) as usize
-                } else {
-                    (len + n_idx).max(0) as usize
-                };
-                Value::List(Rc::new(l[start..].to_vec()))
-            }
-            (_, other) => undef_unary!("list.tail", other),
-        }
-    }))
-}
-
-
-
-
-
-// ----------------------------------------------------------------------------
-//  `nspace` built-in namespace
-// ----------------------------------------------------------------------------
-
-pub fn create_nspace_namespace(parent: &Scope) -> Value {
-    let nspace_scope = parent.new_child();
-    nspace_scope.set("enum"  , Value::Builtin(BuiltinFn::new("nspace.enum"  , nspace_enum)));
-    nspace_scope.set("size"  , Value::Builtin(BuiltinFn::new("nspace.size"  , nspace_size)));
-    nspace_scope.set("parent", Value::Builtin(BuiltinFn::new("nspace.parent", nspace_parent)));
-    Value::Namespace(nspace_scope)
-}
-
-fn nspace_enum(val: Value) -> Value {
-    match val {
-        Value::Namespace(scope) => {
-            let mut keys: Vec<Value> = scope
-                .0
-                .borrow()
-                .bindings
-                .keys()
-                .map(|k| Value::Text(k.clone().into()))
-                .collect();
-            keys.sort_by(|a, b| match (a, b) {
-                (Value::Text(s1), Value::Text(s2)) => s1.cmp(s2),
-                _ => std::cmp::Ordering::Equal,
-            });
-            normalize_tuple(keys)
-        }
-        other => undef_unary!("nspace.enum", other),
-    }
-}
-
-fn nspace_size(val: Value) -> Value {
-    match val {
-        Value::Namespace(scope) => {
-            let count = scope.0.borrow().bindings.len();
-            Value::Numb(count as f64)
-        }
-        other => undef_unary!("nspace.size", other),
-    }
-}
-
-fn nspace_parent (val: Value) -> Value {
-    match val {
-        Value::Namespace(scope) => {
-            // Check if the underlying Scope has a parent scope
-            let parent_scope = scope.0.borrow().parent.clone();
-            match parent_scope {
-                Some(p) => Value::Namespace(p),
-                None => Value::Nothing,
-            }
-        }
-        other => undef_unary!("nspace.parent", other),
-    }
-}
-
-
-
-
-
-// ----------------------------------------------------------------------------
-//  `undef` built-in namespace
-// ----------------------------------------------------------------------------
-
-pub fn create_undef_namespace(parent: &Scope) -> Value {
-    let undef_scope = parent.new_child();
-    undef_scope.set("from", Value::Builtin(BuiltinFn::new("undef.from", undef_from)));
-    Value::Namespace(undef_scope)
-}
-
-fn undef_from(val: Value) -> Value {
-    Value::Undefined(Undef::Value(Box::new(val)))
-}
-
-
-
-
-
-// ----------------------------------------------------------------------------
-//  `math` built-in namespace
-// ----------------------------------------------------------------------------
-
-pub fn create_math_namespace(parent: &Scope) -> Value {
-    let math_scope = parent.new_child();
-
-    // --- single-argument math functions ---
-    math_scope.set("sqrt",  builtin_f64_1("math.sqrt",  f64::sqrt));
-    math_scope.set("abs",   builtin_f64_1("math.abs",   f64::abs));
-    math_scope.set("floor", builtin_f64_1("math.floor", f64::floor));
-    math_scope.set("ceil",  builtin_f64_1("math.ceil",  f64::ceil));
-    math_scope.set("round", builtin_f64_1("math.round", f64::round));
-    math_scope.set("trunc", builtin_f64_1("math.trunc", f64::trunc));
-    math_scope.set("sin",   builtin_f64_1("math.sin",   f64::sin));
-    math_scope.set("cos",   builtin_f64_1("math.cos",   f64::cos));
-    math_scope.set("tan",   builtin_f64_1("math.tan",   f64::tan));
-    math_scope.set("asin",  builtin_f64_1("math.asin",  f64::asin));
-    math_scope.set("acos",  builtin_f64_1("math.acos",  f64::acos));
-    math_scope.set("atan",  builtin_f64_1("math.atan",  f64::atan));
-    math_scope.set("sinh",  builtin_f64_1("math.sinh",  f64::sinh));
-    math_scope.set("cosh",  builtin_f64_1("math.cosh",  f64::cosh));
-    math_scope.set("tanh",  builtin_f64_1("math.tanh",  f64::tanh));
-    math_scope.set("asinh", builtin_f64_1("math.asinh", f64::asinh));
-    math_scope.set("acosh", builtin_f64_1("math.acosh", f64::acosh));
-    math_scope.set("atanh", builtin_f64_1("math.atanh", f64::atanh));
-    math_scope.set("exp",   builtin_f64_1("math.exp",   f64::exp));
-    math_scope.set("ln",    builtin_f64_1("math.ln",    f64::ln));
-    math_scope.set("log2",  builtin_f64_1("math.log2",  f64::log2));
-    math_scope.set("log10", builtin_f64_1("math.log10", f64::log10));
-
-    // --- two-argument math functions (curried higher-order functions: f(x) -> g(y)) ---
-    // pow(exp) -> g(base) => base.powf(exp). E.g. pow10 = math.pow 10; pow10 2 => 1024
-    math_scope.set("pow",   builtin_f64_curried("math.pow",   |exp, base| base.powf(exp)));
-    // log(base) -> g(x) => x.log(base). E.g. log10 = math.log 10; log10 100 => 2
-    math_scope.set("log",   builtin_f64_curried("math.log",   |base, x| x.log(base)));
-    // atan2(x) -> g(y) => y.atan2(x)
-    math_scope.set("atan2", builtin_f64_curried("math.atan2", |x, y| y.atan2(x)));
-    // hypot(x) -> g(y) => x.hypot(y)
-    math_scope.set("hypot", builtin_f64_curried("math.hypot", |x, y| x.hypot(y)));
-
-    // --- multi-argument math functions ---
-    math_scope.set("max", Value::Builtin(BuiltinFn::new("math.max", math_max)));
-    math_scope.set("min", Value::Builtin(BuiltinFn::new("math.min", math_min)));
-
-    // --- math constants ---
-    math_scope.set("PI",       Value::Numb(std::f64::consts::PI));
-    math_scope.set("E",        Value::Numb(std::f64::consts::E));
-    math_scope.set("INF",      Value::Numb(f64::INFINITY));
-    math_scope.set("INFINITY", Value::Numb(f64::INFINITY));
-
-    Value::Namespace(math_scope)
-}
-
-fn math_max(arg: Value) -> Value {
-    let mut count = 0;
-    let mut max_val = f64::NEG_INFINITY;
-    for item in arg.items() {
-        match item {
-            Value::Numb(n) => {
-                if n > max_val {
-                    max_val = n;
-                }
-                count += 1;
-            }
-            _ => return undef_unary!("math.max", arg),
-        }
-    }
-    if count == 0 {
-        undef_unary!("math.max", arg)
-    } else {
-        Value::Numb(max_val)
-    }
-}
-
-fn math_min(arg: Value) -> Value {
-    let mut count = 0;
-    let mut min_val = f64::INFINITY;
-    for item in arg.items() {
-        match item {
-            Value::Numb(n) => {
-                if n < min_val {
-                    min_val = n;
-                }
-                count += 1;
-            }
-            _ => return undef_unary!("math.min", arg),
-        }
-    }
-    if count == 0 {
-        undef_unary!("math.min", arg)
-    } else {
-        Value::Numb(min_val)
-    }
-}
-
-
-
-
-
-// ----------------------------------------------------------------------------
-//  `time` built-in namespace
-// ----------------------------------------------------------------------------
-
-pub fn create_time_namespace(parent: &Scope) -> Value {
-    let time_scope = parent.new_child();
-    time_scope.set("now",           Value::Builtin(BuiltinFn::new("time.now",           time_now)));
-    time_scope.set("timezone",      Value::Builtin(BuiltinFn::new("time.timezone",      time_timezone)));
-    time_scope.set("to_date",       Value::Builtin(BuiltinFn::new("time.to_date",       time_to_date)));
-    time_scope.set("to_UTC_date",   Value::Builtin(BuiltinFn::new("time.to_UTC_date",   time_to_utc_date)));
-    time_scope.set("from_date",     Value::Builtin(BuiltinFn::new("time.from_date",     time_from_date)));
-    time_scope.set("from_UTC_date", Value::Builtin(BuiltinFn::new("time.from_UTC_date", time_from_utc_date)));
-    time_scope.set("to_ISO_string", Value::Builtin(BuiltinFn::new("time.to_ISO_string", time_to_iso_string)));
-    time_scope.set("from_string",   Value::Builtin(BuiltinFn::new("time.from_string",   time_from_string)));
-    time_scope.set("week_day",      Value::Builtin(BuiltinFn::new("time.week_day",      time_week_day)));
-    time_scope.set("week_number",   Value::Builtin(BuiltinFn::new("time.week_number",   time_week_number)));
-    Value::Namespace(time_scope)
-}
-
-fn time_now(_arg: Value) -> Value {
-    match std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH) {
-        Ok(d) => Value::Numb(d.as_secs_f64()),
-        Err(_) => Value::Numb(0.0),
-    }
-}
-
-fn time_timezone(_arg: Value) -> Value {
-    Value::Numb(0.0)
-}
-
-fn time_to_utc_date(val: Value) -> Value {
-    match val {
-        Value::Numb(t) => {
-            let t_floor = t.floor() as i64;
-            let sub_sec = t - (t_floor as f64);
-            let days = t_floor.div_euclid(86400);
-            let rem_secs = t_floor.rem_euclid(86400);
-            let hours = rem_secs / 3600;
-            let minutes = (rem_secs % 3600) / 60;
-            let seconds = (rem_secs % 60) as f64 + sub_sec;
-            let (y, m, d) = civil_from_days(days);
-
-            let scope = Scope::new();
-            scope.set("year", Value::Numb(y as f64));
-            scope.set("month", Value::Numb(m as f64));
-            scope.set("day", Value::Numb(d as f64));
-            scope.set("hours", Value::Numb(hours as f64));
-            scope.set("minutes", Value::Numb(minutes as f64));
-            scope.set("seconds", Value::Numb(seconds));
-            Value::Namespace(scope)
-        }
-        other => undef_unary!("time.to_UTC_date", other),
-    }
-}
-
-fn time_to_date(val: Value) -> Value {
-    match val {
-        Value::Numb(_) => time_to_utc_date(val),
-        other => undef_unary!("time.to_date", other),
-    }
-}
-
-fn time_from_utc_date(val: Value) -> Value {
-    match val {
-        Value::Namespace(scope) => {
-            let y = match scope.get("year") {
-                Value::Numb(n) => n as i64,
-                _ => 0,
-            };
-            let m = match scope.get("month") {
-                Value::Numb(n) => n as u32,
-                _ => 1,
-            };
-            let d = match scope.get("day") {
-                Value::Numb(n) => n as u32,
-                _ => 1,
-            };
-            let h = match scope.get("hours") {
-                Value::Numb(n) => n as i64,
-                _ => 0,
-            };
-            let min = match scope.get("minutes") {
-                Value::Numb(n) => n as i64,
-                _ => 0,
-            };
-            let s = match scope.get("seconds") {
-                Value::Numb(n) => n,
-                _ => 0.0,
-            };
-            let days = days_from_civil(y, m, d);
-            let total_secs = (days * 86400 + h * 3600 + min * 60) as f64 + s;
-            Value::Numb(total_secs)
-        }
-        other => undef_unary!("time.from_UTC_date", other),
-    }
-}
-
-fn time_from_date(val: Value) -> Value {
-    match val {
-        Value::Namespace(_) => time_from_utc_date(val),
-        other => undef_unary!("time.from_date", other),
-    }
-}
-
-fn time_to_iso_string(val: Value) -> Value {
-    match val {
-        Value::Numb(t) => {
-            let t_floor = t.floor() as i64;
-            let sub_sec = t - (t_floor as f64);
-            let days = t_floor.div_euclid(86400);
-            let rem_secs = t_floor.rem_euclid(86400);
-            let hours = rem_secs / 3600;
-            let minutes = (rem_secs % 3600) / 60;
-            let seconds = (rem_secs % 60) as f64 + sub_sec;
-            let (y, m, d) = civil_from_days(days);
-            let s = format!("{:04}-{:02}-{:02}T{:02}:{:02}:{:06.3}Z", y, m, d, hours, minutes, seconds);
-            Value::Text(s.into())
-        }
-        other => undef_unary!("time.to_ISO_string", other),
-    }
-}
-
-fn time_from_string(val: Value) -> Value {
-    match val {
-        Value::Text(s) => match parse_iso_string(&s) {
-            Some(t) => Value::Numb(t),
-            None => undef_unary!("time.from_string", Value::Text(s)), 
-        },
-        other => undef_unary!("time.from_string", other),
-    }
-}
-
-fn time_week_day(val: Value) -> Value {
-    match val {
-        Value::Numb(t) => {
-            let days = (t.floor() as i64).div_euclid(86400);
-            let wd = (days + 4).rem_euclid(7);
-            Value::Numb(wd as f64)
-        }
-        other => undef_unary!("time.week_day", other),
-    }
-}
-
-fn time_week_number(val: Value) -> Value {
-    match val {
-        Value::Numb(t) => {
-            let days = (t.floor() as i64).div_euclid(86400);
-            let wday_mon0 = (days + 3).rem_euclid(7);
-            let thu_days = days + 3 - wday_mon0;
-            let (thu_y, _, _) = civil_from_days(thu_days);
-            let jan4_days = days_from_civil(thu_y, 1, 4);
-            let jan4_wday_mon0 = (jan4_days + 3).rem_euclid(7);
-            let jan4_thu_days = jan4_days + 3 - jan4_wday_mon0;
-            let wn = 1 + (thu_days - jan4_thu_days) / 7;
-            Value::Numb(wn as f64)
-        }
-        other => undef_unary!("time.week_number", other),
-    }
-}
-
-
-
-
-
-// ----------------------------------------------------------------------------
-//  PRIVATE HELPERS
-// ----------------------------------------------------------------------------
-
-/// Normalizes a sequence of items:
-/// - 0 items -> `Value::Nothing`
-/// - 1 item  -> `items[0]`
-/// - >=2     -> `Value::Tuple(Rc::new(items))`
-fn normalize_tuple(mut items: Vec<Value>) -> Value {
-    match items.len() {
-        0 => Value::Nothing,
-        1 => items.pop().unwrap(),
-        _ => Value::Tuple(Rc::new(items)),
-    }
-}
-
-/// Build a `Value::Builtin` that wraps an `f64 -> f64` function.
-///
-/// Accepts a `Numb` and returns a `Numb`. Returns `Undefined` for any other
-/// input type.
-fn builtin_f64_1(name: &'static str, f: fn(f64) -> f64) -> Value {
-    Value::Builtin(BuiltinFn::new(name, move |arg| {
-        match arg {
-            Value::Numb(x) => {
-                let result = f(x);
-                // Propagate NaN (e.g. sqrt(-1)) as Undefined.
-                if result.is_nan() {
-                    undef_unary!(name, Value::Numb(x))
-                } else {
-                    Value::Numb(result)
-                }
-            }
-            other => undef_unary!(name, other),
-        }
-    }))
-}
-
-/// Build a `Value::Builtin` that wraps a curried higher-order `f64 -> f64 -> f64` function.
-///
-/// Calling `f(x)` returns a new function `g(y)` that computes `result(x, y)`.
-/// Returns `Undefined` if arguments are invalid or result is NaN.
-fn builtin_f64_curried(name: &'static str, f: fn(f64, f64) -> f64) -> Value {
-    Value::Builtin(BuiltinFn::new(name, move |arg1| {
-        Value::Builtin(BuiltinFn::new(name, move |arg2| {
-            match (&arg1, arg2) {
-                (Value::Numb(a), Value::Numb(b)) => {
-                    let result = f(*a, b);
-                    if result.is_nan() {
-                        undef_unary!(name, Value::Numb(b))
-                    } else {
-                        Value::Numb(result)
-                    }
-                }
-                (_, other) => undef_unary!(name, other),
-            }
-        }))
-    }))
-}
-
-/// Convert days since 1970-01-01 to (year, month, day) in civil Gregorian calendar.
-fn civil_from_days(days: i64) -> (i64, u32, u32) {
-    let z = days + 719468;
-    let era = if z >= 0 { z } else { z - 146096 } / 146097;
-    let doe = (z - era * 146097) as u32;
-    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
-    let y = (yoe as i64) + era * 400;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-    let mp = (5 * doy + 2) / 153;
-    let d = doy - (153 * mp + 2) / 5 + 1;
-    let m = if mp < 10 { mp + 3 } else { mp - 9 };
-    let y = if m <= 2 { y + 1 } else { y };
-    (y, m, d)
-}
-
-/// Convert (year, month, day) to days since 1970-01-01 in civil Gregorian calendar.
-fn days_from_civil(y: i64, m: u32, d: u32) -> i64 {
-    let y = if m <= 2 { y - 1 } else { y };
-    let era = if y >= 0 { y } else { y - 399 } / 400;
-    let yoe = (y - era * 400) as u32;
-    let doy = (153 * (if m > 2 { m - 3 } else { m + 9 }) + 2) / 5 + d - 1;
-    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
-    era * 146097 + (doe as i64) - 719468
-}
-
-/// Parse an ISO-8601 date/time string into epoch seconds.
-fn parse_iso_string(s: &str) -> Option<f64> {
-    let s = s.trim();
-    let parts: Vec<&str> = s.split(|c| c == 'T' || c == 't' || c == ' ').collect();
-    if parts.is_empty() {
-        return None;
-    }
-    let date_parts: Vec<&str> = parts[0].split('-').collect();
-    if date_parts.len() != 3 {
-        return None;
-    }
-    let y: i64 = date_parts[0].parse().ok()?;
-    let m: u32 = date_parts[1].parse().ok()?;
-    let d: u32 = date_parts[2].parse().ok()?;
-    let days = days_from_civil(y, m, d);
-
-    let (h, min, sec) = if parts.len() > 1 {
-        let time_str = parts[1].trim_end_matches(|c| c == 'Z' || c == 'z');
-        let time_parts: Vec<&str> = time_str.split(':').collect();
-        if time_parts.len() < 2 {
-            return None;
-        }
-        let h: i64 = time_parts[0].parse().ok()?;
-        let min: i64 = time_parts[1].parse().ok()?;
-        let sec: f64 = if time_parts.len() >= 3 {
-            time_parts[2].parse().ok()?
-        } else {
-            0.0
-        };
-        (h, min, sec)
-    } else {
-        (0, 0, 0.0)
-    };
-
-    let total_secs = (days * 86400 + h * 3600 + min * 60) as f64 + sec;
-    Some(total_secs)
-}
-
-
-
-
-
 // ----------------------------------------------------------------------------
 //  Tests
 // ----------------------------------------------------------------------------
@@ -1188,10 +3669,9 @@ fn parse_iso_string(s: &str) -> Option<f64> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::eval::eval;
-    use crate::lexer::Lexer;
-    use crate::parser::Parser;
+    use std::rc::Rc;
 
+    /// Evaluates `src` in a fresh root scope.
     fn run(src: &str) -> Value {
         let scope = root_scope();
         let mut parser = Parser::new(Lexer::new(src));
@@ -1199,323 +3679,59 @@ mod tests {
         eval(&ast, &scope)
     }
 
-    mod root_builtins {
-        use super::*;
+    #[test]
+    fn test_type() {
+        // Item
+        assert_eq!(run("type(1 == 1)"), Value::Text("Bool".into()));
+        assert_eq!(run("type 10"), Value::Text("Numb".into()));
+        assert_eq!(run(r#"type "abc""#), Value::Text("Text".into()));
+        assert_eq!(run("type [1, 2]"), Value::Text("List".into()));
+        assert_eq!(run("type {a: 1}"), Value::Text("Namespace".into()));
+        assert_eq!(run("type(x -> x)"), Value::Text("Func".into()));
+        assert_eq!(run("type type"), Value::Text("Func".into()));
 
-        #[test]
-        fn test_type() {
-            assert_eq!(run("type(1 == 1)"), Value::Text("Bool".into()));
-            assert_eq!(run("type 10"), Value::Text("Numb".into()));
-            assert_eq!(run(r#"type "abc""#), Value::Text("Text".into()));
-            assert_eq!(run("type [1, 2]"), Value::Text("List".into()));
-            assert_eq!(run("type {a: 1}"), Value::Text("Namespace".into()));
-            assert_eq!(run("type(x -> x)"), Value::Text("Func".into()));
-            assert_eq!(run("type()"), Value::Nothing);
-            assert_eq!(
-                run(r#"type(10, "abc", [1])"#),
-                Value::Tuple(Rc::new(vec![
-                    Value::Text("Numb".into()),
-                    Value::Text("Text".into()),
-                    Value::Text("List".into()),
-                ]))
-            );
-        }
+        // Nothing
+        assert_eq!(run("type()"), Value::Nothing);
 
-        #[test]
-        fn test_parse() {
-            // Basic dynamic evaluation with scope
-            assert_eq!(
-                run(r#"eval_fn = parse "a + b", eval_fn { a = 10, b = 20 }"#),
-                Value::Numb(30.0)
-            );
-
-            // Dynamic evaluation returning a function/closure
-            assert_eq!(
-                run(r#"double = (parse "x -> x * 2") {}, double 5"#),
-                Value::Numb(10.0)
-            );
-
-            // Invalid argument type returns Undefined
-            assert!(matches!(run("parse 123"), Value::Undefined(_)));
-        }
+        // Tuple
+        assert_eq!(
+            run(r#"type(10, "abc", [1])"#),
+            Value::Tuple(Rc::new(vec![
+                Value::Text("Numb".into()),
+                Value::Text("Text".into()),
+                Value::Text("List".into()),
+            ]))
+        );
     }
 
-    mod bool_ns {
-        use super::*;
+    #[test]
+    fn test_parse() {
+        // Evaluation with a scope argument
+        assert_eq!(
+            run(r#"eval_fn = parse "a + b", eval_fn { a = 10, b = 20 }"#),
+            Value::Numb(30.0)
+        );
 
-        #[test]
-        fn test_true_false_constants() {
-            assert_eq!(run("bool.TRUE"),  Value::Bool(true));
-            assert_eq!(run("bool.FALSE"), Value::Bool(false));
-        }
+        // Returns a function/closure
+        assert_eq!(
+            run(r#"double = (parse "x -> x * 2") {}, double 5"#),
+            Value::Numb(10.0)
+        );
 
-        #[test]
-        fn test_from_function() {
-            assert_eq!(run("bool.from 1"),   Value::Bool(true));
-            assert_eq!(run("bool.from 0"),   Value::Bool(false));
-            assert_eq!(run("bool.from(bool.TRUE)"), Value::Bool(true));
-            assert_eq!(run("bool.from(1,0,0,1)"), Value::Bool(true));
-            assert_eq!(run("bool.from(0,0,0,0)"), Value::Bool(false));
-        }
-    }
+        // Nothing
+        assert_eq!(run("parse()"), Value::Nothing);
 
-    mod numb_ns {
-        use super::*;
+        // Tuple
+        assert_eq!(
+            run(r#"(f,g) = parse("2*x", "3*x"), f{x:10}, g{x:20}"#),
+            Value::Tuple(Rc::new(vec![
+                Value::Numb(20.0),
+                Value::Numb(60.0),
+            ])),
+        );
 
-        #[test]
-        fn test_from_func() {
-            assert_eq!(run("numb.from()")          , Value::Numb(0.0));
-            assert_eq!(run("numb.from(1.5)")       , Value::Numb(1.5));
-            assert_eq!(run("numb.from(bool.TRUE)") , Value::Numb(1.0));
-            assert_eq!(run("numb.from(bool.FALSE)"), Value::Numb(0.0));
-            assert_eq!(run(r#"numb.from "42""#)    , Value::Numb(42.0));
-        }
-    }
-
-    mod text_ns {
-        use super::*;
-
-        #[test]
-        fn test_builtin_text() {
-            assert_eq!(run("text.from 42"),          Value::Text("42".into()));
-            assert_eq!(run("text.from(bool.TRUE)"),  Value::Text("TRUE".into()));
-            assert_eq!(run("text.from(bool.FALSE)"), Value::Text("FALSE".into()));
-        }
-
-        #[test]
-        fn test_size() {
-            assert_eq!(run(r#"text.size "abc""#), Value::Numb(3.0));
-            assert_eq!(run(r#"text.size """#),    Value::Numb(0.0));
-        }
-
-        #[test]
-        fn test_find_and_rfind() {
-            assert_eq!(run(r#"text.find "bc" "abcdef""#), Value::Numb(1.0));
-            assert_eq!(run(r#"text.find "xyz" "abcdef""#), Value::Numb(-1.0));
-            assert_eq!(run(r#"text.rfind "a" "abracadabra""#), Value::Numb(10.0));
-        }
-
-        #[test]
-        fn test_case_and_trim() {
-            assert_eq!(run(r#"text.lower "AbC""#),       Value::Text("abc".into()));
-            assert_eq!(run(r#"text.upper "AbC""#),       Value::Text("ABC".into()));
-            assert_eq!(run(r#"text.trim "   abc   ""#),  Value::Text("abc".into()));
-            assert_eq!(run(r#"text.trim_head "  abc ""#),Value::Text("abc ".into()));
-            assert_eq!(run(r#"text.trim_tail "  abc ""#),Value::Text("  abc".into()));
-        }
-
-        #[test]
-        fn test_head_and_tail() {
-            assert_eq!(run(r#"text.head 3 "abcdef""#),   Value::Text("abc".into()));
-            assert_eq!(run(r#"text.head (-2) "abcdef""#),Value::Text("abcd".into()));
-            assert_eq!(run(r#"text.tail 2 "abcdef""#),   Value::Text("cdef".into()));
-            assert_eq!(run(r#"text.tail (-2) "abcdef""#),Value::Text("ef".into()));
-        }
-
-        #[test]
-        fn test_split_and_join() {
-            assert_eq!(
-                run(r#"text.split ":" "a:b:c""#),
-                Value::Tuple(Rc::new(vec![
-                    Value::Text("a".into()),
-                    Value::Text("b".into()),
-                    Value::Text("c".into()),
-                ]))
-            );
-            assert_eq!(run(r#"text.join ":" ("a", "b", "c")"#), Value::Text("a:b:c".into()));
-        }
-
-        #[test]
-        fn test_enum() {
-            assert_eq!(
-                run(r#"text.enum "abc""#),
-                Value::Tuple(Rc::new(vec![
-                    Value::Text("a".into()),
-                    Value::Text("b".into()),
-                    Value::Text("c".into()),
-                ]))
-            );
-        }
-    }
-
-    mod list_ns {
-        use super::*;
-
-        #[test]
-        fn test_size_and_reverse() {
-            assert_eq!(run("list.size [1, 2, 3]"), Value::Numb(3.0));
-            assert_eq!(
-                run("list.reverse [1, 2, 3]"),
-                Value::List(Rc::new(vec![Value::Numb(3.0), Value::Numb(2.0), Value::Numb(1.0)]))
-            );
-        }
-
-        #[test]
-        fn test_find_and_rfind() {
-            assert_eq!(run("list.find 20 [10, 20, 30, 20, 10]"), Value::Numb(1.0));
-            assert_eq!(run("list.rfind 20 [10, 20, 30, 20, 10]"), Value::Numb(3.0));
-            assert_eq!(run("list.find 99 [10, 20]"), Value::Numb(-1.0));
-        }
-
-        #[test]
-        fn test_head_and_tail() {
-            assert_eq!(
-                run("list.head 2 [1, 2, 3, 4]"),
-                Value::List(Rc::new(vec![Value::Numb(1.0), Value::Numb(2.0)]))
-            );
-            assert_eq!(
-                run("list.tail 2 [1, 2, 3, 4]"),
-                Value::List(Rc::new(vec![Value::Numb(3.0), Value::Numb(4.0)]))
-            );
-        }
-
-        #[test]
-        fn test_enum() {
-            assert_eq!(
-                run("list.enum [10, 20]"),
-                Value::Tuple(Rc::new(vec![Value::Numb(10.0), Value::Numb(20.0)]))
-            );
-        }
-    }
-
-    mod nspace_ns {
-        use super::*;
-
-        #[test]
-        fn test_size_and_enum() {
-            assert_eq!(run("nspace.size {a: 1, b: 2}"), Value::Numb(2.0));
-            assert_eq!(
-                run("nspace.enum {a: 1, b: 2}"),
-                Value::Tuple(Rc::new(vec![Value::Text("a".into()), Value::Text("b".into())]))
-            );
-        }
-
-        #[test]
-        fn test_parent() {
-
-            // 1. Parent of a child namespace literal { ... } created inside another scope
-            assert_eq!(
-                run("ns = {a = 1}, child = ns.{b = 2}, nspace.parent child == ns"),
-                Value::Bool(true)
-            );
-
-            // 2. Parent on non-namespace yields Undefined
-            assert!(matches!(run("parent 42"), Value::Undefined(_)));
-
-            // 3. The parent of the root scope should be null
-            assert_eq!(
-                run("nspace.parent(nspace.parent(nspace.parent{}))"),
-                Value::Nothing
-            );
-        }
-    }
-
-    mod undef_ns {
-        use super::*;
-
-        #[test]
-        fn test_udef_from() {
-            assert_eq!(
-                run("undef.from 10"), 
-                Value::Undefined(Undef::Value(Box::new(Value::Numb(10.0))))
-            );
-            assert_eq!(
-                run("undef.from \"abc\""), 
-                Value::Undefined(Undef::Value(Box::new(Value::Text("abc".into()))))
-            );
-        }
-    }
-
-    mod math_ns {
-        use super::*;
-
-        #[test]
-        fn test_sqrt_func() {
-            assert_eq!(run("math.sqrt 9"),  Value::Numb(3.0));
-            assert_eq!(run("math.sqrt 4"),  Value::Numb(2.0));
-        }
-
-        #[test]
-        fn test_abs_func() {
-            assert_eq!(run("math.abs(-5)"), Value::Numb(5.0));
-            assert_eq!(run("math.abs 3"),   Value::Numb(3.0));
-        }
-
-        #[test]
-        fn test_constants() {
-            assert_eq!(run("math.PI"),       Value::Numb(std::f64::consts::PI));
-            assert_eq!(run("math.E"),        Value::Numb(std::f64::consts::E));
-            assert_eq!(run("math.INF"),      Value::Numb(f64::INFINITY));
-            assert_eq!(run("math.INFINITY"), Value::Numb(f64::INFINITY));
-        }
-
-        #[test]
-        fn test_pow_higher_order() {
-            // pow(base, exp) should be pow10 = pow(10), where pow10(base) returns base to power of 10
-            assert_eq!(run("pow10 = math.pow 10, pow10 2"), Value::Numb(1024.0));
-            assert_eq!(run("sq = math.pow 2, sq 5"),        Value::Numb(25.0));
-            assert_eq!(run("math.pow 3 2"),                 Value::Numb(8.0));
-        }
-
-        #[test]
-        fn test_log_higher_order() {
-            assert_eq!(run("log10 = math.log 10, log10 100"), Value::Numb(2.0));
-            assert_eq!(run("math.log 2 8"),                   Value::Numb(3.0));
-        }
-
-        #[test]
-        fn test_hypot_and_atan2_higher_order() {
-            assert_eq!(run("h3 = math.hypot 3, h3 4"), Value::Numb(5.0));
-            assert_eq!(run("math.hypot 3 4"),          Value::Numb(5.0));
-        }
-
-        #[test]
-        fn test_max_and_min() {
-            assert_eq!(run("math.max(1, 22, 3, 4)"), Value::Numb(22.0));
-            assert_eq!(run("math.min(1, 22, 3, 4)"), Value::Numb(1.0));
-        }
-
-        #[test]
-        fn test_math_sqrt_of_negative_is_undef() {
-            assert!(matches!(run("math.sqrt -1"), Value::Undefined(_)));
-        }
-    }
-
-    mod time_ns {
-        use super::*;
-
-        #[test]
-        fn test_now_and_timezone() {
-            assert!(matches!(run("time.now()"), Value::Numb(_)));
-            assert_eq!(run("time.timezone()"), Value::Numb(0.0));
-        }
-
-        #[test]
-        fn test_to_iso_and_from_string() {
-            assert_eq!(
-                run("time.to_ISO_string 1639513675.900"),
-                Value::Text("2021-12-14T20:27:55.900Z".into())
-            );
-            assert_eq!(
-                run(r#"time.from_string "2021-12-14T20:27:55.900Z""#),
-                Value::Numb(1639513675.9)
-            );
-        }
-
-        #[test]
-        fn test_to_date_and_from_date() {
-            assert_eq!(
-                run("d = time.to_UTC_date 1642290213.284, time.from_UTC_date d"),
-                Value::Numb(1642290213.284)
-            );
-        }
-
-        #[test]
-        fn test_week_day_and_week_number() {
-            // 2021-12-14 was a Tuesday (2) in week 50
-            assert_eq!(run("time.week_day 1639513675.900"), Value::Numb(2.0));
-            assert_eq!(run("time.week_number 1639513675.900"), Value::Numb(50.0));
-        }
+        // Invalid argument type returns Undefined
+        assert!(matches!(run("parse 123"), Value::Undefined(_)));
     }
 }
 ````
@@ -2026,18 +4242,22 @@ fn eval_lifting(name: Value, scope: &Scope, pos: usize) -> Value {
 /// - `Value::Func { ... }` — user-defined function (not yet implemented).
 /// - Anything else — returns `Undefined`.
 fn eval_apply(func: Value, arg: Value, pos: usize) -> Value {
-    // 1. Broadcast over Tuple on the left: applying each function in a tuple to `arg`
-    if matches!(func, Value::Tuple(_)) {
-        let results: Vec<Value> = func
-            .items()
-            .map(|f| eval_apply(f, arg.clone(), pos))
-            .collect();
-        return match results.len() {
-            0 => Value::Nothing,
-            1 => results[0].clone(),
-            _ => Value::Tuple(Rc::new(results)),
-        };
-    }
+    func.map(move |f| eval_apply_1(f, arg.clone(), pos))
+}
+
+fn eval_apply_1(func: Value, arg: Value, pos: usize) -> Value {
+    // // 1. Broadcast over Tuple on the left: applying each function in a tuple to `arg`
+    // if matches!(func, Value::Tuple(_)) {
+    //     let results: Vec<Value> = func
+    //         .items()
+    //         .map(|f| eval_apply(f, arg.clone(), pos))
+    //         .collect();
+    //     return match results.len() {
+    //         0 => Value::Nothing,
+    //         1 => results[0].clone(),
+    //         _ => Value::Tuple(Rc::new(results)),
+    //     };
+    // }
 
     // 2. Dispatch single-item application by type
     match func {
@@ -5446,17 +7666,51 @@ impl Value {
     pub fn pair(&self, other: &Value) -> Pairs {
         Pairs::new(self, other)
     }
+
+    pub fn normalize(&self) -> Self {
+        if matches!(self, Value::Tuple(_)) {
+            let flat_items: Vec<_> = self.items().collect();
+            match flat_items.len() {
+                0 => Value::Nothing,
+                1 => flat_items[0].clone(),
+                _ => Value::Tuple(Rc::new(flat_items)),
+            }
+        } else {
+            self.clone()
+        }
+    }
+
+    /// Maps a function `f: Value -> Value` over this `Value`:
+    /// - `Value::Nothing` -> `Value::Nothing`
+    /// - `Value::Tuple`   -> `Value::Tuple` containing `f(v1), f(v2), ..., f(vn)`
+    /// - Any other value  -> `f(self)`
+    pub fn map(&self, f: impl Fn(Value) -> Value + 'static) -> Value {
+        match self {
+            Value::Nothing => Value::Nothing,
+            Value::Tuple(items) => {
+                let mapped_items: Vec<Value> = items
+                    .iter()
+                    .map(|item| f(item.clone()))
+                    .collect();
+                Value::Tuple(Rc::new(mapped_items)).normalize()
+            }
+            _ => f(self.clone()),
+        }
+    }
 }
 
 impl From<Value> for bool {
     fn from(val: Value) -> Self {
         match val {
-            Value::Nothing => false,
-            Value::Bool(b) => b,
-            Value::Numb(n) => n != 0.0,
-            Value::Text(t) => !t.is_empty(),
-            Value::List(v) => !v.is_empty(),
+            Value::Nothing      => false,
+            Value::Bool(b)      => b,
+            Value::Numb(n)      => n != 0.0,
+            Value::Text(t)      => !t.is_empty(),
+            Value::List(v)      => !v.is_empty(),
+            Value::Func{..}     => true,
+            Value::Builtin(_)   => true,
             Value::Undefined(_) => false,
+            Value::Namespace(s) => s.0.borrow().bindings.len() > 0,
             Value::Tuple(_) => {
                 // Returns true if AT LEAST ONE item in the tuple converts to true.
                 // If ALL items map to false, `.any()` returns false.

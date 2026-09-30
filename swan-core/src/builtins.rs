@@ -22,7 +22,7 @@
 use crate::value::{BuiltinFn, Scope, Undef, Value};
 use crate::lexer::Lexer;
 use crate::parser::Parser;
-use crate::eval::eval;
+use crate::evaluator::eval;
 
 // Shared helpers and macros (map_1, map_curried, undef_unary!, ...).
 mod helpers;
@@ -51,7 +51,7 @@ mod time;
 ///
 /// ```
 /// use swan_core::builtins::root_scope;
-/// use swan_core::eval::eval;
+/// use swan_core::evaluator::eval;
 /// use swan_core::lexer::Lexer;
 /// use swan_core::parser::Parser;
 ///

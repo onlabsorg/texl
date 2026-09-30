@@ -304,7 +304,7 @@ fn parse_iso_string(s: &str) -> Option<f64> {
 mod tests {
     use super::*;
     use std::rc::Rc;
-    use crate::eval::eval;
+    use crate::evaluator::eval;
     use crate::lexer::Lexer;
     use crate::parser::Parser;
 

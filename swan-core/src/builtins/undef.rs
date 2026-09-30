@@ -44,7 +44,7 @@ fn undef_from(val: Value) -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::eval::eval;
+    use crate::evaluator::eval;
     use crate::lexer::Lexer;
     use crate::parser::Parser;
 

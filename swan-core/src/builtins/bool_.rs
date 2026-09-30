@@ -59,7 +59,7 @@ fn bool_all(val: Value) -> Value {
 mod tests {
     use super::*;
     use std::rc::Rc;
-    use crate::eval::eval;
+    use crate::evaluator::eval;
     use crate::lexer::Lexer;
     use crate::parser::Parser;
 

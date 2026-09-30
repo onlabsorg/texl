@@ -136,7 +136,7 @@ fn list_tail(n: Value, list: Value) -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::eval::eval;
+    use crate::evaluator::eval;
     use crate::lexer::Lexer;
     use crate::parser::Parser;
 

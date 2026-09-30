@@ -200,7 +200,7 @@ fn builtin_f64_curried(name: &'static str, f: fn(f64, f64) -> f64) -> Value {
 mod tests {
     use super::*;
     use std::rc::Rc;
-    use crate::eval::eval;
+    use crate::evaluator::eval;
     use crate::lexer::Lexer;
     use crate::parser::Parser;
 

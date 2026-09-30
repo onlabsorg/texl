@@ -6,5 +6,6 @@ pub mod ast;
 pub mod parser;
 
 pub mod value;
-pub mod eval;
+pub mod evaluator;
+
 pub mod builtins;
