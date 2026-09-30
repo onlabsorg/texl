@@ -30,9 +30,10 @@ use crate::eval::eval;
 mod helpers;
 use helpers::*;
 
-mod bool;
+mod bool_;
 mod numb;
 mod text;
+mod list;
 mod nspace;
 mod undef;
 mod math;
@@ -67,10 +68,10 @@ pub fn root_scope() -> Scope {
     let scope = Scope::new();
 
     // --- Builtin Namespaces ---
-    scope.set("bool"  , bool::create_namespace(&scope));
+    scope.set("bool"  , bool_::create_namespace(&scope));
     scope.set("numb"  , numb::create_namespace(&scope));
     scope.set("text"  , text::create_namespace(&scope));
-    scope.set("list"  , create_list_namespace(&scope));
+    scope.set("list"  , list::create_namespace(&scope));
     scope.set("nspace", nspace::create_namespace(&scope));
     scope.set("undef" , undef::create_namespace(&scope));
     scope.set("math"  , math::create_namespace(&scope));
@@ -143,123 +144,6 @@ fn root_parse(arg: Value) -> Value {
         other => undef_unary!("parse", other),
     }
 }
-
-
-
-
-// ----------------------------------------------------------------------------
-//  `list` built-in namespace
-// ----------------------------------------------------------------------------
-
-pub fn create_list_namespace(parent: &Scope) -> Value {
-    let list_scope = parent.new_child();
-    list_scope.set("enum"   , Value::Builtin(BuiltinFn::new("list.enum"   , list_enum)));
-    list_scope.set("size"   , Value::Builtin(BuiltinFn::new("list.size"   , list_size)));
-    list_scope.set("reverse", Value::Builtin(BuiltinFn::new("list.reverse", list_reverse)));
-    list_scope.set("find"   , Value::Builtin(BuiltinFn::new("list.find"   , list_find)));
-    list_scope.set("rfind"  , Value::Builtin(BuiltinFn::new("list.rfind"  , list_rfind)));
-    list_scope.set("head"   , Value::Builtin(BuiltinFn::new("list.head"   , list_head)));
-    list_scope.set("tail"   , Value::Builtin(BuiltinFn::new("list.tail"   , list_tail)));
-    Value::Namespace(list_scope)
-}
-
-fn list_enum(val: Value) -> Value {
-    match val {
-        Value::List(l) => normalize_tuple(l.as_ref().clone()),
-        other => undef_unary!("list.enum", other),
-    }
-}
-
-fn list_size(val: Value) -> Value {
-    match val {
-        Value::List(l) => Value::Numb(l.len() as f64),
-        other => undef_unary!("list.size", other),
-    }
-}
-
-fn list_reverse(val: Value) -> Value {
-    match val {
-        Value::List(l) => {
-            let mut rev = l.as_ref().clone();
-            rev.reverse();
-            Value::List(Rc::new(rev))
-        }
-        other => undef_unary!("list.reverse", other),
-    }
-}
-
-fn list_find(item: Value) -> Value {
-    Value::Builtin(BuiltinFn::new("list.find", move |list| {
-        match list {
-            Value::List(l) => {
-                let idx = l.iter().position(|x| x == &item);
-                match idx {
-                    Some(i) => Value::Numb(i as f64),
-                    None => Value::Numb(-1.0),
-                }
-            }
-            other => undef_unary!("list.find", other),
-        }
-    }))
-}
-
-fn list_rfind(item: Value) -> Value {
-    Value::Builtin(BuiltinFn::new("list.rfind", move |list| {
-        match list {
-            Value::List(l) => {
-                let idx = l.iter().rposition(|x| x == &item);
-                match idx {
-                    Some(i) => Value::Numb(i as f64),
-                    None => Value::Numb(-1.0),
-                }
-            }
-            other => undef_unary!("list.rfind", other),
-        }
-    }))
-}
-
-fn list_head(n: Value) -> Value {
-    Value::Builtin(BuiltinFn::new("list.head", move |list| {
-        match (&n, list) {
-            (Value::Numb(n_val), Value::List(l)) => {
-                let len = l.len() as i64;
-                let n_idx = *n_val as i64;
-                let end = if n_idx >= 0 {
-                    n_idx.min(len) as usize
-                } else {
-                    (len + n_idx).max(0) as usize
-                };
-                Value::List(Rc::new(l[..end].to_vec()))
-            }
-            (_, other) => undef_unary!("list.head", other),
-        }
-    }))
-}
-
-fn list_tail(n: Value) -> Value {
-    Value::Builtin(BuiltinFn::new("list.tail", move |list| {
-        match (&n, list) {
-            (Value::Numb(n_val), Value::List(l)) => {
-                let len = l.len() as i64;
-                let n_idx = *n_val as i64;
-                let start = if n_idx >= 0 {
-                    n_idx.min(len) as usize
-                } else {
-                    (len + n_idx).max(0) as usize
-                };
-                Value::List(Rc::new(l[start..].to_vec()))
-            }
-            (_, other) => undef_unary!("list.tail", other),
-        }
-    }))
-}
-
-
-
-
-
-
-
 
 
 
@@ -559,48 +443,6 @@ mod tests {
         // Invalid argument type returns Undefined
         assert!(matches!(run("parse 123"), Value::Undefined(_)));
     }
-
-    mod list_ns {
-        use super::*;
-
-        #[test]
-        fn test_size_and_reverse() {
-            assert_eq!(run("list.size [1, 2, 3]"), Value::Numb(3.0));
-            assert_eq!(
-                run("list.reverse [1, 2, 3]"),
-                Value::List(Rc::new(vec![Value::Numb(3.0), Value::Numb(2.0), Value::Numb(1.0)]))
-            );
-        }
-
-        #[test]
-        fn test_find_and_rfind() {
-            assert_eq!(run("list.find 20 [10, 20, 30, 20, 10]"), Value::Numb(1.0));
-            assert_eq!(run("list.rfind 20 [10, 20, 30, 20, 10]"), Value::Numb(3.0));
-            assert_eq!(run("list.find 99 [10, 20]"), Value::Numb(-1.0));
-        }
-
-        #[test]
-        fn test_head_and_tail() {
-            assert_eq!(
-                run("list.head 2 [1, 2, 3, 4]"),
-                Value::List(Rc::new(vec![Value::Numb(1.0), Value::Numb(2.0)]))
-            );
-            assert_eq!(
-                run("list.tail 2 [1, 2, 3, 4]"),
-                Value::List(Rc::new(vec![Value::Numb(3.0), Value::Numb(4.0)]))
-            );
-        }
-
-        #[test]
-        fn test_enum() {
-            assert_eq!(
-                run("list.enum [10, 20]"),
-                Value::Tuple(Rc::new(vec![Value::Numb(10.0), Value::Numb(20.0)]))
-            );
-        }
-    }
-
-
 
     mod time_ns {
         use super::*;
