@@ -82,6 +82,7 @@ pub fn eval_less_than_or_equal_to(lhv: Value, rhv: Value, pos: usize) -> Value {
 
 #[cfg(test)]
 mod tests {
+    use std::rc::Rc;
     use super::*;
     use crate::lexer::Lexer;
     use crate::parser::Parser;
@@ -129,11 +130,25 @@ mod tests {
         assert_eq!(evaluate_bool("{x:1,y:2} == {x:1,z:2}"), false);
 
         // tuple
-        assert_eq!(evaluate_bool("(1,2,3) == (1,2,3)"), true);
-        assert_eq!(evaluate_bool("(1,2,3) == (1,2)")  , false);
+        assert_eq!(
+            evaluate("(1,2,3) == (1,4,3)"), 
+            Value::Tuple(Rc::new(vec![
+                Value::Bool(true),
+                Value::Bool(false),
+                Value::Bool(true),
+            ]))
+        );
+        assert_eq!(
+            evaluate("(1,2,3) == (1,2)"), 
+            Value::Tuple(Rc::new(vec![
+                Value::Bool(true),
+                Value::Bool(true),
+                Value::Bool(false),
+            ]))
+        );
 
         // nothing
-        assert_eq!(evaluate_bool("() == ()"), true);
+        assert_eq!(evaluate("() == ()"), Value::Nothing);
         assert_eq!(evaluate_bool("() == FALSE  "), false);
         assert_eq!(evaluate_bool("() == 1      "), false);
         assert_eq!(evaluate_bool("() == \"abc\""), false);
@@ -175,11 +190,25 @@ mod tests {
         assert_eq!(evaluate_bool("{x:1,y:2} != {x:1,z:2}"), true);
 
         // tuple
-        assert_eq!(evaluate_bool("(1,2,3) != (1,2,3)"), false);
-        assert_eq!(evaluate_bool("(1,2,3) != (1,2)")  , true);
+        assert_eq!(
+            evaluate("(1,2,3) != (1,4,3)"), 
+            Value::Tuple(Rc::new(vec![
+                Value::Bool(false),
+                Value::Bool(true),
+                Value::Bool(false),
+            ]))
+        );
+        assert_eq!(
+            evaluate("(1,2,3) != (1,2)"), 
+            Value::Tuple(Rc::new(vec![
+                Value::Bool(false),
+                Value::Bool(false),
+                Value::Bool(true),
+            ]))
+        );
 
         // nothing
-        assert_eq!(evaluate_bool("() != ()"), false);
+        assert_eq!(evaluate("() != ()"), Value::Nothing);
         assert_eq!(evaluate_bool("() != FALSE  "), true);
         assert_eq!(evaluate_bool("() != 1      "), true);
         assert_eq!(evaluate_bool("() != \"abc\""), true);
@@ -223,17 +252,26 @@ mod tests {
         assert_eq!(evaluate_bool("[1,2  ] > [1,2,3]"), false);
         assert_eq!(evaluate_bool("[1,2,3] > [1,2  ]"), true);
         
-        // TODO: namespace
-        
         // tuple
-        assert_eq!(evaluate_bool("(1,2,3) > (1,2,3)"), false);
-        assert_eq!(evaluate_bool("(1,2,3) > (1,3,4)"), false);
-        assert_eq!(evaluate_bool("(1,3,4) > (1,2,3)"), true);
-        assert_eq!(evaluate_bool("(1,2  ) > (1,2,3)"), false);
-        assert_eq!(evaluate_bool("(1,2,3) > (1,2  )"), true);
+        assert_eq!(
+            evaluate("(1,20,3) > (10,2,3)"), 
+            Value::Tuple(Rc::new(vec![
+                Value::Bool(false),
+                Value::Bool(true),
+                Value::Bool(false),
+            ]))
+        );
+        assert_eq!(
+            evaluate("(1,20,3) > (10,2)"), 
+            Value::Tuple(Rc::new(vec![
+                Value::Bool(false),
+                Value::Bool(true),
+                Value::Bool(true),
+            ]))
+        );
 
         // nothing
-        assert_eq!(evaluate_bool("() > ()"), false);
+        assert_eq!(evaluate("() > ()"), Value::Nothing);
         assert_eq!(evaluate_bool("() > FALSE  "), false);
         assert_eq!(evaluate_bool("() > 1      "), false);
         assert_eq!(evaluate_bool("() > \"abc\""), false);
@@ -281,17 +319,26 @@ mod tests {
         assert_eq!(evaluate_bool("[1,2  ] < [1,2,3]"), true);
         assert_eq!(evaluate_bool("[1,2,3] < [1,2  ]"), false);
         
-        // TODO: namespace
-        
         // tuple
-        assert_eq!(evaluate_bool("(1,2,3) < (1,2,3)"), false);
-        assert_eq!(evaluate_bool("(1,2,3) < (1,3,4)"), true);
-        assert_eq!(evaluate_bool("(1,3,4) < (1,2,3)"), false);
-        assert_eq!(evaluate_bool("(1,2  ) < (1,2,3)"), true);
-        assert_eq!(evaluate_bool("(1,2,3) < (1,2  )"), false);
+        assert_eq!(
+            evaluate("(1,20,3) < (10,2,3)"), 
+            Value::Tuple(Rc::new(vec![
+                Value::Bool(true),
+                Value::Bool(false),
+                Value::Bool(false),
+            ]))
+        );
+        assert_eq!(
+            evaluate("(1,20,3) < (10,2)"), 
+            Value::Tuple(Rc::new(vec![
+                Value::Bool(true),
+                Value::Bool(false),
+                Value::Bool(false),
+            ]))
+        );
 
         // nothing
-        assert_eq!(evaluate_bool("() < ()"), false);
+        assert_eq!(evaluate("() < ()"), Value::Nothing);
         assert_eq!(evaluate_bool("() < FALSE  "), true);
         assert_eq!(evaluate_bool("() < 1      "), true);
         assert_eq!(evaluate_bool("() < \"abc\""), true);
@@ -339,17 +386,26 @@ mod tests {
         assert_eq!(evaluate_bool("[1,2  ] >= [1,2,3]"), false);
         assert_eq!(evaluate_bool("[1,2,3] >= [1,2  ]"), true);
         
-        // TODO: namespace
-        
         // tuple
-        assert_eq!(evaluate_bool("(1,2,3) >= (1,2,3)"), true);
-        assert_eq!(evaluate_bool("(1,2,3) >= (1,3,4)"), false);
-        assert_eq!(evaluate_bool("(1,3,4) >= (1,2,3)"), true);
-        assert_eq!(evaluate_bool("(1,2  ) >= (1,2,3)"), false);
-        assert_eq!(evaluate_bool("(1,2,3) >= (1,2  )"), true);
+        assert_eq!(
+            evaluate("(1,20,3) >= (10,2,3)"), 
+            Value::Tuple(Rc::new(vec![
+                Value::Bool(false),
+                Value::Bool(true),
+                Value::Bool(true),
+            ]))
+        );
+        assert_eq!(
+            evaluate("(1,20,3) >= (10,2)"), 
+            Value::Tuple(Rc::new(vec![
+                Value::Bool(false),
+                Value::Bool(true),
+                Value::Bool(true),
+            ]))
+        );
 
         // nothing
-        assert_eq!(evaluate_bool("() >= ()"), true);
+        assert_eq!(evaluate("() >= ()"), Value::Nothing);
         assert_eq!(evaluate_bool("() >= FALSE  "), false);
         assert_eq!(evaluate_bool("() >= 1      "), false);
         assert_eq!(evaluate_bool("() >= \"abc\""), false);
@@ -397,17 +453,26 @@ mod tests {
         assert_eq!(evaluate_bool("[1,2  ] <= [1,2,3]"), true);
         assert_eq!(evaluate_bool("[1,2,3] <= [1,2  ]"), false);
         
-        // TODO: namespace
-        
         // tuple
-        assert_eq!(evaluate_bool("(1,2,3) <= (1,2,3)"), true);
-        assert_eq!(evaluate_bool("(1,2,3) <= (1,3,4)"), true);
-        assert_eq!(evaluate_bool("(1,3,4) <= (1,2,3)"), false);
-        assert_eq!(evaluate_bool("(1,2  ) <= (1,2,3)"), true);
-        assert_eq!(evaluate_bool("(1,2,3) <= (1,2  )"), false);
+        assert_eq!(
+            evaluate("(1,20,3) <= (10,2,3)"), 
+            Value::Tuple(Rc::new(vec![
+                Value::Bool(true),
+                Value::Bool(false),
+                Value::Bool(true),
+            ]))
+        );
+        assert_eq!(
+            evaluate("(1,20,3) <= (10,2)"), 
+            Value::Tuple(Rc::new(vec![
+                Value::Bool(true),
+                Value::Bool(false),
+                Value::Bool(false),
+            ]))
+        );
 
         // nothing
-        assert_eq!(evaluate_bool("() <= ()"), true);
+        assert_eq!(evaluate("() <= ()"), Value::Nothing);
         assert_eq!(evaluate_bool("() <= FALSE  "), true);
         assert_eq!(evaluate_bool("() <= 1      "), true);
         assert_eq!(evaluate_bool("() <= \"abc\""), true);

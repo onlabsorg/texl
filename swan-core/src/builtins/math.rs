@@ -331,7 +331,7 @@ mod tests {
         assert_eq!(run("math.trunc(-3.7)"), Value::Numb(-3.0));
 
         // Undefined (type error)
-        assert!(matches!(run("math.trunc(bool.TRUE)"), Value::Undefined(_)));
+        assert!(matches!(run("math.trunc(TRUE)"), Value::Undefined(_)));
 
         // Nothing
         assert!(matches!(run("math.trunc()"), Value::Nothing));

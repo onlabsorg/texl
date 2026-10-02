@@ -27,32 +27,32 @@ mod comparison_operations;
 /// and applies `$eval_fn` element-wise. Otherwise, applies `$eval_fn` directly.
 ///
 /// Requires 4 arguments: `($lhv, $rhv, $eval_fn, $pos)`
-macro_rules! eval_binary {
-    ($eval_fn:path, $lhv:expr, $rhv:expr, $pos:expr) => {{
+macro_rules! map_pairs {
+    ($lhv:expr, $rhv:expr, $eval_fn:expr) => {{
         let (lhv, rhv) = ($lhv, $rhv);
         if matches!(lhv, Value::Tuple(_)) || matches!(rhv, Value::Tuple(_)) {
             Value::Tuple(Rc::new(
                 lhv.pair(&rhv)
-                    .map(|(l, r)| $eval_fn(l, r, $pos))
+                    .map(|(l,r)| $eval_fn(l,r))
                     .collect(),
             )).normalize()
         } else if lhv == Value::Nothing && rhv == Value::Nothing {
             Value::Nothing
         } else {
-            $eval_fn(lhv, rhv, $pos)
+            $eval_fn(lhv, rhv)
         }
     }};
 }
 
-macro_rules! eval_unary {
-    ($eval_fn:expr, $val:expr) => {{
+macro_rules! map_values {
+    ($val:expr, $eval_fn:expr) => {{
         let val = $val;
         match val {
             Value::Nothing => Value::Nothing,
             Value::Tuple(_) => {
                 Value::Tuple(Rc::new(
                     val.items()
-                    .map(|v| $eval_fn(v))
+                    .map($eval_fn)
                     .collect()
                 )).normalize()
             }
@@ -121,19 +121,19 @@ pub fn eval(node: &Node, scope: &Scope) -> Value {
         // Unary negation operation: `-X`
         Node::NegateOp(unary) => {
             let val = eval(&unary.opd, scope);
-            eval_unary!(|v| negation_operation::eval(v, unary.pos), val)
+            map_values!(val, |v| negation_operation::eval(v, unary.pos))
         }
 
         // Unary logical negation operation: `!X`
         Node::LogicalNegationOp(unary) => {
             let val = eval(&unary.opd, scope);
-            eval_unary!(logical_negation_operation::eval, val)
+            map_values!(val, logical_negation_operation::eval)
         }
 
         // Unary lifting operation: `$X`
         Node::LiftingOp(unary) => {
             let names = eval_names(&unary.opd);
-            eval_unary!(|n| lifting_operation::eval(n, &scope, unary.pos), names)
+            map_values!(names, |n| lifting_operation::eval(n, &scope, unary.pos))
         }
 
 
@@ -167,7 +167,7 @@ pub fn eval(node: &Node, scope: &Scope) -> Value {
             // responsible for destructuring it if needed.
             let func = eval(&bin.lho, scope);
             let args= eval(&bin.rho, scope);
-            eval_apply(func, args, bin.pos)
+            map_values!(func, |f| eval_apply(f, args.clone(), bin.pos))
         }
 
         // Pairing operation: `X , Y`
@@ -181,12 +181,7 @@ pub fn eval(node: &Node, scope: &Scope) -> Value {
         Node::MappingOp(bin) => {
             let args = eval(&bin.lho, scope);
             let func = eval(&bin.rho, scope);
-            let vals: Vec<Value> = args.items().map(|arg| eval_apply(func.clone(), arg, bin.pos)).collect();
-            match vals.len() {
-                0 => Value::Nothing,
-                1 => vals[0].clone(),
-                _ => Value::Tuple(vals.into()),
-            }
+            map_values!(args, |a: Value| map_values!(func.clone(), |f| eval_apply(f, a.clone(), bin.pos)))
         }
 
         // Assignemt: `name = V`
@@ -228,7 +223,8 @@ pub fn eval(node: &Node, scope: &Scope) -> Value {
             // The left-hand side must evaluate to a `Value::Namespace`.
             // The right-hand side must be an `Identifier` node; its string is used
             // as the lookup key, not its evaluated value.
-            match eval(&bin.lho, scope) {
+            let nst = eval(&bin.lho, scope);
+            map_values!(nst, |ns| match ns {
                 Value::Namespace(ns_scope) => {
                     eval(&bin.rho, &ns_scope)
                 }
@@ -238,7 +234,7 @@ pub fn eval(node: &Node, scope: &Scope) -> Value {
                     rhv: Box::new(Value::Nothing),  // rhv can´t be evaluated without a scope
                     pos: bin.pos,
                 }),
-            }
+            })
         }
 
 
@@ -249,42 +245,42 @@ pub fn eval(node: &Node, scope: &Scope) -> Value {
         Node::SumOp(bin) => {
             let lhv = eval(&bin.lho, scope);
             let rhv = eval(&bin.rho, scope);
-            eval_binary!(arithmetic_operations::eval_add, lhv, rhv, bin.pos)
+            map_pairs!(lhv, rhv, |l,r| arithmetic_operations::eval_add(l, r, bin.pos))
         }
 
         // Subtraction: `A - B`
         Node::SubtractionOp(bin) => {
             let lhv = eval(&bin.lho, scope);
             let rhv = eval(&bin.rho, scope);
-            eval_binary!(arithmetic_operations::eval_subtraction, lhv, rhv, bin.pos)
+            map_pairs!(lhv, rhv, |l,r| arithmetic_operations::eval_subtraction(l, r, bin.pos))
         }
 
         // Product: `A * B`
         Node::ProductOp(bin) => {
             let lhv = eval(&bin.lho, scope);
             let rhv = eval(&bin.rho, scope);
-            eval_binary!(arithmetic_operations::eval_product, lhv, rhv, bin.pos)
+            map_pairs!(lhv, rhv, |l,r| arithmetic_operations::eval_product(l, r, bin.pos))
         }
 
         // Division: `A / B`
         Node::DivisionOp(bin) => {
             let lhv = eval(&bin.lho, scope);
             let rhv = eval(&bin.rho, scope);
-            eval_binary!(arithmetic_operations::eval_division, lhv, rhv, bin.pos)
+            map_pairs!(lhv, rhv, |l,r| arithmetic_operations::eval_division(l, r, bin.pos))
         }
 
         // Modulo: `A % B`
         Node::ModuloOp(bin) => {
             let lhv = eval(&bin.lho, scope);
             let rhv = eval(&bin.rho, scope);
-            eval_binary!(arithmetic_operations::eval_modulo, lhv, rhv, bin.pos)
+            map_pairs!(lhv, rhv, |l,r| arithmetic_operations::eval_modulo(l, r, bin.pos))
         }
 
         // Exponentiation: `A ^ B`
         Node::PowerOp(bin) => {
             let lhv = eval(&bin.lho, scope);
             let rhv = eval(&bin.rho, scope);
-            eval_binary!(arithmetic_operations::eval_power, lhv, rhv, bin.pos)
+            map_pairs!(lhv, rhv, |l,r| arithmetic_operations::eval_power(l, r, bin.pos))
         }
 
 
@@ -295,42 +291,42 @@ pub fn eval(node: &Node, scope: &Scope) -> Value {
         Node::EqualToOp(bin) => {
             let lhv = eval(&bin.lho, scope);
             let rhv = eval(&bin.rho, scope);
-            comparison_operations::eval_equal_to(lhv, rhv)
+            map_pairs!(lhv, rhv, |l,r| comparison_operations::eval_equal_to(l, r))
         }
 
         // Non-equal: `A != B`
         Node::NotEqualToOp(bin) => {
             let lhv = eval(&bin.lho, scope);
             let rhv = eval(&bin.rho, scope);
-            comparison_operations::eval_not_equal_to(lhv, rhv)
+            map_pairs!(lhv, rhv, |l,r| comparison_operations::eval_not_equal_to(l, r))
         }
 
         // Greater-than: `A > B`
         Node::GreaterThanOp(bin) => {
             let lhv = eval(&bin.lho, scope);
             let rhv = eval(&bin.rho, scope);
-            comparison_operations::eval_greater_than(lhv, rhv, bin.pos)
+            map_pairs!(lhv, rhv, |l,r| comparison_operations::eval_greater_than(l, r, bin.pos))
         }
 
         // Non-greater-than: `A <= B`
         Node::GreaterThanOrEqualToOp(bin) => {
             let lhv = eval(&bin.lho, scope);
             let rhv = eval(&bin.rho, scope);
-            comparison_operations::eval_greater_than_or_equal_to(lhv, rhv, bin.pos)
+            map_pairs!(lhv, rhv, |l,r| comparison_operations::eval_greater_than_or_equal_to(l, r, bin.pos))
         }
 
         // Less than: `A < B`
         Node::LessThanOp(bin) => {
             let lhv = eval(&bin.lho, scope);
             let rhv = eval(&bin.rho, scope);
-            comparison_operations::eval_less_than(lhv, rhv, bin.pos)
+            map_pairs!(lhv, rhv, |l,r| comparison_operations::eval_less_than(l, r, bin.pos))
         }
 
         // Non-less-than: `A >= B`
         Node::LessThanOrEqualToOp(bin) => {
             let lhv = eval(&bin.lho, scope);
             let rhv = eval(&bin.rho, scope);
-            comparison_operations::eval_less_than_or_equal_to(lhv, rhv, bin.pos)
+            map_pairs!(lhv, rhv, |l,r| comparison_operations::eval_less_than_or_equal_to(l, r, bin.pos))
         }
 
 
@@ -340,21 +336,19 @@ pub fn eval(node: &Node, scope: &Scope) -> Value {
         // And: `A & B`
         Node::AndOp(bin) => {
             let lhv = eval(&bin.lho, scope);
-            if bool::from(lhv.clone()) {
-                eval(&bin.rho, scope)
-            } else {
-                lhv
-            }
+            let rhv = eval(&bin.rho, scope);
+            map_pairs!(lhv, rhv, |l: Value, r: Value| {
+                if bool::from(l.clone()) { r } else { l }
+            })
         }
 
         // Or: `A | B`
         Node::OrOp(bin) => {
             let lhv = eval(&bin.lho, scope);
-            if bool::from(lhv.clone()) {
-                lhv
-            } else {
-                eval(&bin.rho, scope)
-            }
+            let rhv = eval(&bin.rho, scope);
+            map_pairs!(lhv, rhv, |l: Value, r: Value| {
+                if bool::from(l.clone()) { l } else { r }
+            })
         }
 
 
@@ -363,12 +357,11 @@ pub fn eval(node: &Node, scope: &Scope) -> Value {
 
         // Conditional: `A ? B`
         Node::ConditionalOp(bin) => {
-            let cnd = bool::from(eval(&bin.lho, scope));
-            if cnd {
-                eval(&bin.rho, scope)
-            } else {
-                Value::Nothing
-            }
+            let lhv = eval(&bin.lho, scope);
+            let rhv = eval(&bin.rho, scope);
+            map_pairs!(lhv, rhv, |l,r| {
+                if bool::from(l) { r } else { Value::Nothing }
+            })
         }
 
         // Alternative: `A ; B`
@@ -388,14 +381,14 @@ pub fn eval(node: &Node, scope: &Scope) -> Value {
         Node::CompositionOp(bin) => {
             let lhv = eval(&bin.lho, scope);
             let rhv = eval(&bin.rho, scope);
-            eval_binary!(eval_composition, lhv, rhv, bin.pos)
+            map_pairs!(lhv, rhv, |l,r| eval_composition(l, r, bin.pos))
         }
 
         // Reverse composition: `F >> G`
         Node::ReverseCompositionOp(bin) => {
             let lhv = eval(&bin.lho, scope);
             let rhv = eval(&bin.rho, scope);
-            eval_binary!(eval_composition, rhv, lhv, bin.pos)
+            map_pairs!(lhv, rhv, |l,r| eval_composition(r, l, bin.pos))
         }
 
 
@@ -473,10 +466,6 @@ fn eval_names(node: &Node) -> Value {
 /// - `Value::Func { ... }` — user-defined function (not yet implemented).
 /// - Anything else — returns `Undefined`.
 fn eval_apply(func: Value, arg: Value, pos: usize) -> Value {
-    func.map(move |f| eval_apply_1(f, arg.clone(), pos))
-}
-
-fn eval_apply_1(func: Value, arg: Value, pos: usize) -> Value {
     // // 1. Broadcast over Tuple on the left: applying each function in a tuple to `arg`
     // if matches!(func, Value::Tuple(_)) {
     //     let results: Vec<Value> = func
@@ -696,18 +685,25 @@ mod tests {
 
     #[test]
     fn function_application() {
+
+        // Func
         assert_eq!(evaluate("f = (a) -> 2*a , f 5"), Value::Numb(10.0));
         assert_eq!(evaluate("f = (a,b) -> a+b , f(3,7)"), Value::Numb(10.0));
         assert_eq!(evaluate("f = (a,b,c) -> (a,b)*c , f(2,3,4,5)"), Value::Tuple(Rc::new(vec![
             Value::Numb(8.0),
             Value::Numb(15.0),
         ])));
+        assert_eq!(evaluate("(()->3)()"), Value::Numb(3.0));
+        assert_eq!(evaluate("(()->3) 10"), Value::Numb(3.0));
+
+        // Nothing
+        assert_eq!(evaluate("() 5"), Value::Nothing);
+
+        // Tuple
         assert_eq!(
             evaluate("(x->2*x , x->3*x) 4"), 
             Value::Tuple(Rc::new(vec![Value::Numb(8.0), Value::Numb(12.0)]))
         );
-        assert_eq!(evaluate("(()->3)()"), Value::Numb(3.0));
-        assert_eq!(evaluate("(()->3) 10"), Value::Numb(3.0));
     }
 
     #[test]
@@ -804,18 +800,38 @@ mod tests {
 
     #[test]
     fn mapping() {
+
+        // Mapping tuple to function
         assert_eq!(evaluate("f = a -> 2*a , (2,3,4) => f"), Value::Tuple(Rc::new(vec![
             Value::Numb(4.0),
             Value::Numb(6.0),
             Value::Numb(8.0),
         ])));
+
+        // Mapping value to function
         assert_eq!(evaluate("f = a -> 2*a , 2 => f"), Value::Numb(4.0));
+
+        // Mapping nothing to function
         assert_eq!(evaluate("f = a -> 2*a , () => f"), Value::Nothing);
+
+        // Normalizing output of mapping
         assert_eq!(evaluate("f = a -> () , (1,2,3) => f"), Value::Nothing);
+
+        // Mapping tuple to tuple of functions
+        assert_eq!(
+            evaluate("f = a -> 2*a , g = b -> 3*b, (2,5) => (f,g)"), 
+            Value::Tuple(Rc::new(vec![
+                Value::Numb(4.0),
+                Value::Numb(6.0),
+                Value::Numb(10.0),
+                Value::Numb(15.0),
+            ]))
+        );
     }
 
     #[test]
     fn conditional() {
+
         // Left side casts to true -> returns right-hand side operand
         assert_eq!(evaluate("TRUE ? 10"), Value::Numb(10.0));
         assert_eq!(evaluate("1 ? \"yes\""), Value::Text("yes".into()));
@@ -826,10 +842,16 @@ mod tests {
         assert_eq!(evaluate("0 ? 10"), Value::Nothing);
         assert_eq!(evaluate("\"\" ? 10"), Value::Nothing);
         assert_eq!(evaluate("() ? 10"), Value::Nothing);
+        assert_eq!(evaluate("() ? ()"), Value::Nothing);
 
-        // Tuples: truthy if at least one element converts to true
-        assert_eq!(evaluate("(FALSE, 0, 1) ? \"has_true\""), Value::Text("has_true".into()));
-        assert_eq!(evaluate("(FALSE, 0, \"\") ? \"all_false\""), Value::Nothing);
+        // Tuples get filtered by truthyness
+        assert_eq!(
+            evaluate("(TRUE, FALSE, TRUE, FALSE) ? (1,2,3,4)"),
+            Value::Tuple(Rc::new(vec![
+                Value::Numb(1.0),
+                Value::Numb(3.0),
+            ]))
+        );
     }
 
     #[test]
@@ -841,21 +863,30 @@ mod tests {
 
     #[test]
     fn and_op() {
+
         // True & RHS -> returns RHS
         assert_eq!(evaluate("TRUE & 10"), Value::Numb(10.0));
         assert_eq!(evaluate("TRUE & FALSE"), Value::Bool(false));
         assert_eq!(evaluate("1 & \"hello\""), Value::Text("hello".into()));
-        assert_eq!(evaluate("(FALSE, 1) & 42"), Value::Numb(42.0));
 
         // False & RHS -> short-circuits and returns LHS
         assert_eq!(evaluate("FALSE & 10"), Value::Bool(false));
         assert_eq!(evaluate("0 & 10"), Value::Numb(0.0));
         assert_eq!(evaluate("\"\" & 10"), Value::Text("".into()));
+
+        // Nothing
+        assert_eq!(evaluate("() & ()"), Value::Nothing);
         assert_eq!(evaluate("() & 10"), Value::Nothing);
-        assert_eq!(evaluate("(FALSE, 0) & 42"), Value::Tuple(Rc::new(vec![
-            Value::Bool(false),
-            Value::Numb(0.0),
-        ])));
+
+        // Tuple
+        assert_eq!(
+            evaluate("(FALSE, 1) & (10, \"abc\")"), 
+            Value::Tuple(Rc::new(vec![
+                Value::Bool(false),
+                Value::Text("abc".into()),
+            ]))
+        );
+        assert_eq!(evaluate("TRUE & (10, 1)"), Value::Numb(10.0));
     }
 
     #[test]
@@ -864,17 +895,24 @@ mod tests {
         assert_eq!(evaluate("TRUE | 10"), Value::Bool(true));
         assert_eq!(evaluate("1 | 10"), Value::Numb(1.0));
         assert_eq!(evaluate("\"yes\" | 10"), Value::Text("yes".into()));
-        assert_eq!(evaluate("(FALSE, 1) | 42"), Value::Tuple(Rc::new(vec![
-            Value::Bool(false),
-            Value::Numb(1.0),
-        ])));
 
         // False | RHS -> returns RHS
         assert_eq!(evaluate("FALSE | 10"), Value::Numb(10.0));
         assert_eq!(evaluate("0 | \"fallback\""), Value::Text("fallback".into()));
         assert_eq!(evaluate("\"\" | TRUE"), Value::Bool(true));
+
+        // Nothing
         assert_eq!(evaluate("() | 5"), Value::Numb(5.0));
-        assert_eq!(evaluate("(FALSE, 0) | 42"), Value::Numb(42.0));
+
+        // Tuple
+        assert_eq!(
+            evaluate("(FALSE, 1) | (10, \"abc\")"), 
+            Value::Tuple(Rc::new(vec![
+                Value::Numb(10.0),
+                Value::Numb(1.0),
+            ]))
+        );
+        assert_eq!(evaluate("(FALSE, 0) | 10"), Value::Numb(10.0));
     }
 
     #[test]

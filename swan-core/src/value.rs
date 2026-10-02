@@ -123,12 +123,14 @@ impl PartialEq for ScopeData {
 }
 
 impl fmt::Debug for ScopeData {
-
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        // Print only the binding names: values may be Funcs whose closures
+        // point back to this very scope, which would recurse forever.
+        let mut keys: Vec<&String> = self.bindings.keys().collect();
+        keys.sort();
         f.debug_struct("ScopeData")
-            .field("bindings", &self.bindings)
-            // Print whether a parent exists without recursively formatting the parent scope!
-            .field("has_parent", &self.parent.is_some()) 
+            .field("bindings", &keys)
+            .field("has_parent", &self.parent.is_some())
             .finish()
     }
 }
