@@ -1,18 +1,22 @@
-
+//! Unary affirm operation: `+X`.
+//!
+//! Affirm is the identity operation: it returns its operand untouched, whatever
+//! its type (number, text, bool, list, namespace, function, tuple, `Nothing`,
+//! `Undefined`, ...). In particular it does not require a number, and it does
+//! not map over tuples or normalize them (unlike negation), because the operand
+//! is passed through as a whole.
 
 use crate::value::Value;
 
 
-
-
-/// `+X` — identity for ALL Swan value types. (#10)
+/// `+X` — returns `val` unchanged.
 ///
-/// In JS this is literally `return this.operand.evaluate(context)` with no
-/// type guard.  Restricting it to Numb only was a bug.
+/// This is deliberately type-agnostic: no type check is done, so it never
+/// produces an `Undefined` of its own. An `Undefined` operand is simply passed
+/// through, consistent with Swan's "errors are values" semantics.
 pub fn eval(val: Value) -> Value {
     val
 }
-
 
 
 // ----------------------------------------------------------------------------
@@ -28,6 +32,7 @@ mod tests {
     use crate::value::Scope;
     use crate::evaluator::eval;
 
+    /// Parses and evaluates `src` in a scope that defines `TRUE` and `FALSE`.
     fn evaluate(src: &str) -> Value {
         let mut parser = Parser::new(Lexer::new(src));
         let ast = parser.parse();
@@ -37,35 +42,32 @@ mod tests {
         eval(&ast, &scope)
     }
 
+    /// `+X` is the identity for every kind of value.
     #[test]
     fn affirm() {
-
-        // number
+        // Number
         assert_eq!(evaluate("+2"), Value::Numb(2.0));
 
-        // +X should be a pure identity — it must NOT return Undef for
-        // non-numeric types (was the bug described in review item #10).
-        let text_val = Value::Text("hello".into());
+        // Text: must not become Undefined (it is not restricted to numbers)
+        assert_eq!(evaluate("+\"hello\""), Value::Text("hello".into()));
 
-        // Build a tiny AST manually: AffirmOp wrapping a Text literal.
-        let scope = Scope::new();
-        let text_leaf = crate::ast::Node::Text(crate::ast::Leaf { pos: 0, val: "hello".into() });
-        let affirm_node = crate::ast::Node::AffirmOp(crate::ast::UnaryOp {
-            pos: 0,
-            opd: Box::new(text_leaf),
-        });
-        assert_eq!(eval(&affirm_node, &scope), text_val);
+        // Bool
+        assert_eq!(evaluate("+TRUE"), Value::Bool(true));
+        assert_eq!(evaluate("+FALSE"), Value::Bool(false));
+
+        // List
+        assert_eq!(
+            evaluate("+[1, 2]"),
+            Value::List(Rc::new(vec![Value::Numb(1.0), Value::Numb(2.0)]))
+        );
 
         // Nothing
         assert_eq!(evaluate("+()"), Value::Nothing);
 
-        // Tuple
+        // Tuple: returned as is
         assert_eq!(
-            evaluate("+(1, 2)"), 
-            Value::Tuple(Rc::new(vec![
-                Value::Numb(1.0),
-                Value::Numb(2.0),
-            ]))
+            evaluate("+(1, 2)"),
+            Value::Tuple(Rc::new(vec![Value::Numb(1.0), Value::Numb(2.0)]))
         );
     }
 }
