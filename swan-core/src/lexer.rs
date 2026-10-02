@@ -74,6 +74,13 @@ impl<'a> Lexer<'a> {
         self.chars.peek().copied()
     }
 
+    /// Returns the second upcoming character without consuming any characters.
+    fn peek_second_char(&self) -> Option<char> {
+        let mut it = self.chars.clone();
+        it.next(); // Skip the first peeked character
+        it.next()   // Return the second character
+    }
+
     /// Returns `true` if the next (unconsumed) character equals `ch`.
     fn next_char_is(&mut self, ch: char) -> bool {
         self.peek_char() == Some(ch)
@@ -153,19 +160,9 @@ impl<'a> Lexer<'a> {
         self.consume_digits();
 
         // Optional fractional part: `.` followed by one or more digits.
-        //
-        // NOTE: the `.` is consumed *before* checking for a following digit.
-        // This means that `12.x` yields `Undefined("12.")` + `Identifier("x")`
-        // rather than `Number(12)` + `SubcontextingOp` + `Identifier("x")`.
-        // Fixing this would require a two-character lookahead.
-        if self.peek_char() == Some('.') {
+        if self.peek_char() == Some('.') && matches!(self.peek_second_char(), Some('0'..='9')) {
             self.next_char(); // consume '.'
-            if matches!(self.peek_char(), Some('0'..='9')) {
-                self.consume_digits();
-            } else {
-                // Dot not followed by a digit → malformed literal.
-                return Token::Undefined(&self.source[start_pos..self.position]);
-            }
+            self.consume_digits();
         }
 
         // Optional exponent part: `e` or `E`, optional sign, one or more digits.
@@ -446,7 +443,7 @@ mod tests {
         assert_token!("12.3e2", Token::Number(1230.0), 0);
         assert_token!("12.3E+2", Token::Number(1230.0), 0);
         assert_token!("12.3e-2", Token::Number(0.123), 0);
-        assert_token!("12.", Token::Undefined("12."), 0);
+        assert_token!("12.", Token::Number(12.0), 0);
         assert_token!("12.3e", Token::Undefined("12.3e"), 0);
         assert_token!("12.3e+", Token::Undefined("12.3e+"), 0);
         assert_token!("12.3E-", Token::Undefined("12.3E-"), 0);
