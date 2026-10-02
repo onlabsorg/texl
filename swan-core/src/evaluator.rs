@@ -497,6 +497,7 @@ fn eval_names(node: &Node) -> Value {
 /// - `Value::Func { ... }`: a child scope of the closure is created, the parameters are bound to the argument, and the body is evaluated.
 /// - `Value::List`: indexing by number, or by a tuple of numbers.
 /// - `Value::Namespace`: lookup by text key, or by a tuple of keys.
+/// - `Value::Text`: character indexing by number, or by a tuple of numbers.
 /// - Anything else: returns `Undefined(application)`.
 fn eval_apply(func: Value, arg: Value, pos: usize) -> Value {
     match func {
@@ -534,6 +535,19 @@ fn eval_apply(func: Value, arg: Value, pos: usize) -> Value {
             }
         }
 
+        // --- Text Application ---
+        Value::Text(text) => {
+            if matches!(arg, Value::Tuple(_)) {
+                let items: Vec<Value> = arg
+                    .items()
+                    .map(|idx| eval_apply_text(&text, idx, pos))
+                    .collect();
+                collect_results(items)
+            } else {
+                eval_apply_text(&text, arg, pos)
+            }
+        }
+
         other => Value::Undefined(Undef::BinaryOperation {
             op: "application",
             lhv: Box::new(other),
@@ -563,6 +577,33 @@ fn eval_apply_list(list: &[Value], arg: Value, pos: usize) -> Value {
         other => Value::Undefined(Undef::BinaryOperation {
             op: "application",
             lhv: Box::new(Value::List(Rc::new(list.to_vec()))),
+            rhv: Box::new(other),
+            pos,
+        }),
+    }
+}
+
+/// Applies a Text to a single index `arg`.
+///
+/// Returns the character at position `arg` as a one-character `Text`.
+/// Indexing is by Unicode character (`char`), not by byte, and is zero-based.
+/// Negative, fractional or out-of-range indices give `Nothing`.
+/// Non-numbers give `Undefined`.
+fn eval_apply_text(text: &Rc<str>, arg: Value, pos: usize) -> Value {
+    match arg {
+        Value::Numb(n) => {
+            if n >= 0.0 && n.fract() == 0.0 {
+                if let Some(ch) = text.chars().nth(n as usize) {
+                    return Value::Text(ch.to_string().into());
+                }
+            }
+            // Index is out of bounds or not a whole integer
+            Value::Nothing
+        }
+        // Argument is not a number
+        other => Value::Undefined(Undef::BinaryOperation {
+            op: "application",
+            lhv: Box::new(Value::Text(text.clone())),
             rhv: Box::new(other),
             pos,
         }),
@@ -764,6 +805,48 @@ mod tests {
         assert_eq!(
             evaluate("({x:1, y:2} , {x:10, y:20}) \"y\""),
             Value::Tuple(Rc::new(vec![Value::Numb(2.0), Value::Numb(20.0)]))
+        );
+
+        // --- Text ---
+        assert_eq!(evaluate(r#""hello" 1"#), Value::Text("e".into()));
+        assert_eq!(evaluate(r#""hello" 0"#), Value::Text("h".into()));
+
+        // Indexing is by character, not by byte
+        assert_eq!(evaluate(r#""héllo" 1"#), Value::Text("é".into()));
+
+        // Out-of-bounds, negative and fractional indices return Nothing
+        assert_eq!(evaluate(r#""hello" 5"#), Value::Nothing);
+        assert_eq!(evaluate(r#""hello" (-1)"#), Value::Nothing);
+        assert_eq!(evaluate(r#""hello" 1.5"#), Value::Nothing);
+        assert_eq!(evaluate(r#""" 0"#), Value::Nothing);
+
+        // Non-number argument returns Undefined(Undef::BinaryOperation)
+        match evaluate(r#""abc" "0""#) {
+            Value::Undefined(Undef::BinaryOperation { op, lhv, rhv, .. }) => {
+                assert_eq!(op, "application");
+                assert_eq!(*lhv, Value::Text("abc".into()));
+                assert_eq!(*rhv, Value::Text("0".into()));
+            }
+            other => panic!("expected Undefined::BinaryOperation, got {:?}", other),
+        }
+
+        // Applying text to a Tuple (Nothing is kept for positional alignment)
+        assert_eq!(
+            evaluate(r#""hello" (0, 10, 4)"#),
+            Value::Tuple(Rc::new(vec![
+                Value::Text("h".into()),
+                Value::Nothing,
+                Value::Text("o".into()),
+            ]))
+        );
+
+        // Applying a tuple of texts to a number
+        assert_eq!(
+            evaluate(r#"("abc", "xyz") 1"#),
+            Value::Tuple(Rc::new(vec![
+                Value::Text("b".into()),
+                Value::Text("y".into()),
+            ]))
         );
     }
 
