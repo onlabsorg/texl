@@ -24,3 +24,4 @@ target
 *.todo.md
 local/
 .aider*
+*.repomix.md
