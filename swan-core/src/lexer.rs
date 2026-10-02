@@ -182,6 +182,18 @@ impl<'a> Lexer<'a> {
             }
         }
 
+        // Trailing word-boundary check: numbers cannot be directly adjacent to identifier chars
+        if matches!(self.peek_char(), Some('_') | Some('a'..='z' | 'A'..='Z')) {
+            while let Some(ch) = self.peek_char() {
+                if ch == '_' || ch.is_alphanumeric() {
+                    self.next_char();
+                } else {
+                    break;
+                }
+            }
+            return Token::Undefined(&self.source[start_pos..self.position]);
+        }
+
         // The accumulated substring is a well-formed f64 string; Rust's
         // standard parser handles all three forms above.
         let number_str = &self.source[start_pos..self.position];
@@ -438,6 +450,7 @@ mod tests {
         assert_token!("12.3e", Token::Undefined("12.3e"), 0);
         assert_token!("12.3e+", Token::Undefined("12.3e+"), 0);
         assert_token!("12.3E-", Token::Undefined("12.3E-"), 0);
+        assert_token!("12.3abc", Token::Undefined("12.3abc"), 0);
 
         // Text Literal
         assert_token!("\"abc\"", Token::Text("abc"), 0);
