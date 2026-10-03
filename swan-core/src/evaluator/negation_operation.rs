@@ -7,7 +7,7 @@
 //! `map_values!` macro, so `-()` gives `Nothing` and `-(1, 2)` gives `(-1, -2)`
 //! without any tuple logic here.
 
-use crate::value::{Undef, Value};
+use crate::value::Value;
 
 
 /// `-X` — negates a single value.
@@ -22,11 +22,7 @@ use crate::value::{Undef, Value};
 pub fn eval(val: Value, pos: usize) -> Value {
     match val {
         Value::Numb(n) => Value::Numb(-n),
-        other => Value::Undefined(Undef::UnaryOperation {
-            op:  "negation",
-            val: Box::new(other),
-            pos,
-        }),
+        other => Value::undef_unary("negation", other, pos),
     }
 }
 
@@ -41,7 +37,7 @@ mod tests {
     use super::*;
     use crate::lexer::Lexer;
     use crate::parser::Parser;
-    use crate::value::Scope;
+    use crate::value::{Scope, Undef};
     use crate::evaluator::eval;
 
     fn evaluate(src: &str) -> Value {
@@ -73,11 +69,7 @@ mod tests {
         // Tuple with a non-numeric item: only that item becomes Undefined
         assert_eq!(evaluate("-(1, \"a\")"), Value::Tuple(Rc::new(vec![
             Value::Numb(-1.0),
-            Value::Undefined(Undef::UnaryOperation {
-                op:  "negation",
-                val: Box::new(Value::Text("a".into())),
-                pos: 0,
-            }),
+            Value::undef_unary("negation", Value::Text("a".into()), 0),
         ])));
 
         // Other types: Undefined, carrying the operator, the operand and the position.

@@ -10,7 +10,7 @@
 //!   `Undefined(Undef::BinaryOperation { op: "order", .. })`.
 //! - `Nothing` is equal only to `Nothing` and is less than any other value.
 use std::cmp::Ordering;
-use crate::value::{Value, Undef};
+use crate::value::Value;
 
 
 
@@ -39,12 +39,7 @@ pub fn eval_not_equal_to(lhv: Value, rhv: Value) -> Value {
 fn compare(lhv: Value, rhv: Value, pos: usize, test: fn(Ordering) -> bool) -> Value {
     match lhv.partial_cmp(&rhv) {
         Some(ordering) => Value::Bool(test(ordering)),
-        None => Value::Undefined(Undef::BinaryOperation {
-            op:  "order",
-            lhv: Box::new(lhv),
-            rhv: Box::new(rhv),
-            pos,
-        }),
+        None => Value::undef_binary("order", lhv, rhv, pos),
     }
 }
 
@@ -291,12 +286,10 @@ mod tests {
         assert_eq!(evaluate_bool("{x: 10} > ()"), true);
 
         // values of unrelated types have no order: Undefined(order) carrying both operands and the operator position (byte offset 5)
-        assert_eq!(evaluate("TRUE > 1"), Value::Undefined(Undef::BinaryOperation{
-            op:  "order", 
-            lhv: Box::new(Value::Bool(true)), 
-            rhv: Box::new(Value::Numb(1.0)), 
-            pos: 5,
-        }));
+        assert_eq!(
+            evaluate("TRUE > 1"), 
+            Value::undef_binary("order", Value::Bool(true), Value::Numb(1.0), 5),
+        );
     }
 
     #[test]
@@ -359,12 +352,10 @@ mod tests {
         assert_eq!(evaluate_bool("{x: 10} < ()"), false);
 
         // values of unrelated types have no order: Undefined(order) carrying both operands and the operator position (byte offset 5)
-        assert_eq!(evaluate("TRUE < 1"), Value::Undefined(Undef::BinaryOperation{
-            op:  "order", 
-            lhv: Box::new(Value::Bool(true)), 
-            rhv: Box::new(Value::Numb(1.0)), 
-            pos: 5,
-        }));
+        assert_eq!(
+            evaluate("TRUE < 1"), 
+            Value::undef_binary("order", Value::Bool(true), Value::Numb(1.0), 5), 
+        );
     }
 
     #[test]
@@ -427,12 +418,10 @@ mod tests {
         assert_eq!(evaluate_bool("{x: 10} >= ()"), true);
 
         // values of unrelated types have no order: Undefined(order) carrying both operands and the operator position (byte offset 5)
-        assert_eq!(evaluate("TRUE >= 1"), Value::Undefined(Undef::BinaryOperation{
-            op:  "order", 
-            lhv: Box::new(Value::Bool(true)), 
-            rhv: Box::new(Value::Numb(1.0)), 
-            pos: 5,
-        }));
+        assert_eq!(
+            evaluate("TRUE >= 1"), 
+            Value::undef_binary("order", Value::Bool(true), Value::Numb(1.0), 5),
+        );
     }
 
     #[test]
@@ -495,12 +484,10 @@ mod tests {
         assert_eq!(evaluate_bool("{x: 10} <= ()"), false);
 
         // values of unrelated types have no order: Undefined(order) carrying both operands and the operator position (byte offset 5)
-        assert_eq!(evaluate("TRUE <= 1"), Value::Undefined(Undef::BinaryOperation{
-            op:  "order", 
-            lhv: Box::new(Value::Bool(true)), 
-            rhv: Box::new(Value::Numb(1.0)), 
-            pos: 5,
-        }));
+        assert_eq!(
+            evaluate("TRUE <= 1"), 
+            Value::undef_binary("order", Value::Bool(true), Value::Numb(1.0), 5), 
+        );
     }
 }
 

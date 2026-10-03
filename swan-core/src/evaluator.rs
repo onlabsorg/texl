@@ -234,12 +234,7 @@ pub fn eval(node: &Node, scope: &Scope) -> Value {
                 Value::Namespace(ns_scope) => {
                     eval(&bin.rho, &ns_scope)
                 }
-                lhv => Value::Undefined(Undef::BinaryOperation {
-                    op:  "subcontexting",
-                    lhv: Box::new(lhv),
-                    rhv: Box::new(Value::Nothing),  // rhv can't be evaluated without a scope
-                    pos: bin.pos,
-                }),
+                lhv => Value::undef_binary("subcontexting", lhv, Value::Nothing, bin.pos),
             })
         }
 
@@ -425,12 +420,7 @@ pub fn eval(node: &Node, scope: &Scope) -> Value {
 /// Builds the `Undefined` value returned when the left-hand side of a binding
 /// operation (`->`, `=`, `:`) is not a valid name or tuple of names.
 fn invalid_names(op: &'static str, names: Value, pos: usize) -> Value {
-    Value::Undefined(Undef::BinaryOperation {
-        op,
-        lhv: Box::new(names),
-        rhv: Box::new(Value::Nothing), // the right-hand side is never evaluated
-        pos,
-    })
+    Value::undef_binary(op, names, Value::Nothing, pos)
 }
 
 /// Packs the per-item results of applying a list/namespace to a tuple of
@@ -548,12 +538,7 @@ fn eval_apply(func: Value, arg: Value, pos: usize) -> Value {
             }
         }
 
-        other => Value::Undefined(Undef::BinaryOperation {
-            op: "application",
-            lhv: Box::new(other),
-            rhv: Box::new(arg),
-            pos,
-        }),
+        other => Value::undef_binary("application", other, arg, pos),
     }
 }
 
@@ -574,12 +559,7 @@ fn eval_apply_list(list: &[Value], arg: Value, pos: usize) -> Value {
             Value::Nothing
         }
         // Argument is not a number
-        other => Value::Undefined(Undef::BinaryOperation {
-            op: "application",
-            lhv: Box::new(Value::List(Rc::new(list.to_vec()))),
-            rhv: Box::new(other),
-            pos,
-        }),
+        other => Value::undef_binary("application", Value::List(Rc::new(list.to_vec())), other, pos),
     }
 }
 
@@ -601,12 +581,7 @@ fn eval_apply_text(text: &Rc<str>, arg: Value, pos: usize) -> Value {
             Value::Nothing
         }
         // Argument is not a number
-        other => Value::Undefined(Undef::BinaryOperation {
-            op: "application",
-            lhv: Box::new(Value::Text(text.clone())),
-            rhv: Box::new(other),
-            pos,
-        }),
+        other => Value::undef_binary("application", Value::Text(text.clone()), other, pos),
     }
 }
 
@@ -621,12 +596,7 @@ fn eval_apply_namespace(scope: &Scope, arg: Value, pos: usize) -> Value {
             found.unwrap_or(Value::Nothing)
         }
         // Argument is not a string
-        other => Value::Undefined(Undef::BinaryOperation {
-            op: "application",
-            lhv: Box::new(Value::Namespace(scope.clone())),
-            rhv: Box::new(other),
-            pos,
-        }),
+        other => Value::undef_binary("application", Value::Namespace(scope.clone()), other, pos),
     }
 }
 

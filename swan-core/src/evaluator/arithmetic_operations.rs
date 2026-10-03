@@ -11,18 +11,7 @@
 //! division by zero yields `±inf` or `NaN`.
 
 use std::rc::Rc;
-use crate::value::{Value, Undef};
-
-
-/// Builds the `Undefined` value returned when `op` is not defined for the operand types.
-fn undefined(op: &'static str, lhv: Value, rhv: Value, pos: usize) -> Value {
-    Value::Undefined(Undef::BinaryOperation {
-        op,
-        lhv: Box::new(lhv),
-        rhv: Box::new(rhv),
-        pos,
-    })
-}
+use crate::value::Value;
 
 
 // ----------------------------------------------------------------------------
@@ -62,7 +51,7 @@ pub fn eval_add(lhv: Value, rhv: Value, pos: usize) -> Value {
             Value::List(Rc::new(v))
         }
 
-        (lhv, rhv) => undefined("sum", lhv, rhv, pos),
+        (lhv, rhv) => Value::undef_binary("sum", lhv, rhv, pos),
     }
 }
 
@@ -75,7 +64,7 @@ pub fn eval_subtraction(lhv: Value, rhv: Value, pos: usize) -> Value {
     match (lhv, rhv) {
         (Value::Numb(a), Value::Numb(b)) => Value::Numb(a - b),
 
-        (lhv, rhv) => undefined("subtraction", lhv, rhv, pos),
+        (lhv, rhv) => Value::undef_binary("subtraction", lhv, rhv, pos),
     }
 }
 
@@ -92,7 +81,7 @@ pub fn eval_product(lhv: Value, rhv: Value, pos: usize) -> Value {
         // Logical AND
         (Value::Bool(a), Value::Bool(b)) => Value::Bool(a && b),
 
-        (lhv, rhv) => undefined("product", lhv, rhv, pos),
+        (lhv, rhv) => Value::undef_binary("product", lhv, rhv, pos),
     }
 }
 
@@ -105,7 +94,7 @@ pub fn eval_division(lhv: Value, rhv: Value, pos: usize) -> Value {
     match (lhv, rhv) {
         (Value::Numb(a), Value::Numb(b)) => Value::Numb(a / b),
 
-        (lhv, rhv) => undefined("division", lhv, rhv, pos),
+        (lhv, rhv) => Value::undef_binary("division", lhv, rhv, pos),
     }
 }
 
@@ -118,7 +107,7 @@ pub fn eval_modulo(lhv: Value, rhv: Value, pos: usize) -> Value {
     match (lhv, rhv) {
         (Value::Numb(a), Value::Numb(b)) => Value::Numb(a % b),
 
-        (lhv, rhv) => undefined("modulo", lhv, rhv, pos),
+        (lhv, rhv) => Value::undef_binary("modulo", lhv, rhv, pos),
     }
 }
 
@@ -131,7 +120,7 @@ pub fn eval_power(lhv: Value, rhv: Value, pos: usize) -> Value {
     match (lhv, rhv) {
         (Value::Numb(a), Value::Numb(b)) => Value::Numb(a.powf(b)),
 
-        (lhv, rhv) => undefined("power", lhv, rhv, pos),
+        (lhv, rhv) => Value::undef_binary("power", lhv, rhv, pos),
     }
 }
 
@@ -149,7 +138,7 @@ mod tests {
     use super::*;
     use crate::lexer::Lexer;
     use crate::parser::Parser;
-    use crate::value::Scope;
+    use crate::value::{Scope, Undef};
     use crate::evaluator::eval;
 
     fn evaluate(src: &str) -> Value {

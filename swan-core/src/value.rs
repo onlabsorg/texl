@@ -87,6 +87,17 @@ impl Value {
             pos
         })
     }
+
+    /// Helper to construct a unary operation Undefined value.
+    #[inline]
+    pub fn undef_binary(op: &'static str, lhv: Value, rhv: Value, pos: usize) -> Value {
+        Value::Undefined(Undef::BinaryOperation {
+            op,
+            lhv: Box::new(lhv),
+            rhv: Box::new(rhv),
+            pos
+        })
+    }
 }
 
 

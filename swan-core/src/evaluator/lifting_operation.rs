@@ -9,7 +9,7 @@
 //! Tuple and `Nothing` operands are broadcast by `map_values!` in the parent
 //! module, so this module only handles a single item at a time.
 
-use crate::value::{Scope, Value, Undef};
+use crate::value::{Scope, Value};
 
 /// Lifts a single name out of `scope`.
 ///
@@ -28,11 +28,7 @@ pub fn eval(name: Value, scope: &Scope, pos: usize) -> Value {
         // A valid name: look it up starting from the outermost scope.
         Value::Name(n) => scope.lift(&n),
         // Not a name: report it as an undefined lifting operation.
-        other => Value::Undefined(Undef::UnaryOperation {
-            op:  "lifting",
-            val: Box::new(other),
-            pos,
-        }),
+        other => Value::undef_unary("lifting", other, pos),
     }
 }
 
@@ -49,6 +45,7 @@ mod tests {
     use crate::lexer::Lexer;
     use crate::parser::Parser;
     use crate::evaluator::eval;
+    use crate::value::Undef;
 
     fn evaluate(src: &str) -> Value {
         let mut parser = Parser::new(Lexer::new(src));
