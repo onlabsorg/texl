@@ -88,7 +88,7 @@ impl Value {
         })
     }
 
-    /// Helper to construct a unary operation Undefined value.
+    /// Helper to construct a binary operation Undefined value.
     #[inline]
     pub fn undef_binary(op: &'static str, lhv: Value, rhv: Value, pos: usize) -> Value {
         Value::Undefined(Undef::BinaryOperation {
@@ -97,6 +97,15 @@ impl Value {
             rhv: Box::new(rhv),
             pos
         })
+    }
+    
+    /// Helper to construct and normalize a tuple
+    #[inline]
+    pub fn tuple(items: Vec<Value>) -> Value {
+        match items.len() {
+            0 => Value::Nothing,
+            _ => Value::Tuple(Rc::new(items)).normalize(),
+        }
     }
 }
 

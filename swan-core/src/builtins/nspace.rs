@@ -48,7 +48,7 @@ fn nspace_enum(val: Value) -> Value {
                 .cloned()
                 .collect();
             keys.sort();
-            normalize_tuple(
+            Value::tuple(
                 keys.into_iter().map(|k| Value::Text(k.into())).collect()
             )
         }

@@ -47,7 +47,7 @@ fn list_size(val: Value) -> Value {
 /// Expands a list into a tuple of its elements (an empty list gives `Nothing`, a one-element list gives that element). Undefined for non-lists.
 fn list_enum(val: Value) -> Value {
     match val {
-        Value::List(l) => normalize_tuple(l.as_ref().clone()),
+        Value::List(l) => Value::tuple(l.as_ref().clone()),
         other => Value::undef_unary("list.enum", other, 0),
     }
 }

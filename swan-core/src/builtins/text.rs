@@ -91,7 +91,7 @@ fn text_enum(val: Value) -> Value {
     match val {
         Value::Text(s) => {
             let chars: Vec<Value> = s.chars().map(|c| Value::Text(c.to_string().into())).collect();
-            normalize_tuple(chars)
+            Value::tuple(chars)
         }
         other => Value::undef_unary("text.enum", other, 0),
     }
@@ -221,7 +221,7 @@ fn text_split(sep: Value, target: Value) -> Value {
                 .split(s1.as_ref())
                 .map(|p| Value::Text(p.into()))
                 .collect();
-            normalize_tuple(parts)
+            Value::tuple(parts)
         }
         (_, other) => Value::undef_unary("text.split", other, 0),
     }

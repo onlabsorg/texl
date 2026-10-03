@@ -1,20 +1,8 @@
 
 
-use std::rc::Rc;
 use crate::value::{BuiltinFn, Value};
 
 
-
-/// Normalizes a sequence of items:
-/// - 0 items -> `Value::Nothing`
-/// - 1 item  -> `items[0]`
-/// - >=2     -> `Value::Tuple(Rc::new(items))`
-pub fn normalize_tuple(items: Vec<Value>) -> Value {
-    match items.len() {
-        0 => Value::Nothing,
-        _ => Value::Tuple(Rc::new(items)).normalize(),
-    }
-}
 
 /// Wraps a single-argument built-in function `fn(Value) -> Value` so that
 /// if applied to a `Tuple`, it maps over each element and returns a `Tuple`.
