@@ -9,7 +9,7 @@
 //! All functions are wrapped with `map_1`, so they map over tuples, return
 //! `Nothing` for `Nothing`, and return `Undefined` for non-namespace arguments.
 
-use crate::value::{Scope, Undef, Value};
+use crate::value::{Scope, Value};
 use super::helpers::*;
 
 
@@ -52,7 +52,7 @@ fn nspace_enum(val: Value) -> Value {
                 keys.into_iter().map(|k| Value::Text(k.into())).collect()
             )
         }
-        other => undef_unary!("nspace.enum", other),
+        other => Value::undef_unary("nspace.enum", other, 0),
     }
 }
 
@@ -65,7 +65,7 @@ fn nspace_size(val: Value) -> Value {
             let count = scope.0.borrow().bindings.len();
             Value::Numb(count as f64)
         }
-        other => undef_unary!("nspace.size", other),
+        other => Value::undef_unary("nspace.size", other, 0),
     }
 }
 
@@ -81,7 +81,7 @@ fn nspace_parent(val: Value) -> Value {
                 None => Value::Nothing,
             }
         }
-        other => undef_unary!("nspace.parent", other),
+        other => Value::undef_unary("nspace.parent", other, 0),
     }
 }
 
@@ -208,7 +208,7 @@ mod tests {
         assert_eq!(
             run("(a,b) = nspace.parent(14, nspace.{}), a, b == nspace"), 
             Value::Tuple(Rc::new(vec![
-                    undef_unary!("nspace.parent", Value::Numb(14.0)),
+                    Value::undef_unary("nspace.parent", Value::Numb(14.0), 0),
                     Value::Bool(true)
             ]))
         );

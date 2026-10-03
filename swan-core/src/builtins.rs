@@ -15,16 +15,13 @@
 // Multi-argument functions: these are curried. Use `map_curried` from `helpers`,
 // so `math.pow 10` returns a function that takes the second argument.
 //
-// Errors: never panic. Return `Undefined` through the `undef_unary!` macro (or
-// its binary counterpart in `helpers`), using the function's own name as the
-// `op` label.
 
-use crate::value::{BuiltinFn, Scope, Undef, Value};
+use crate::value::{BuiltinFn, Scope, Value};
 use crate::lexer::Lexer;
 use crate::parser::Parser;
 use crate::evaluator::eval;
 
-// Shared helpers and macros (map_1, map_curried, undef_unary!, ...).
+// Shared helpers and macros (map_1, map_curried, ...).
 mod helpers;
 use helpers::*;
 
@@ -129,11 +126,11 @@ fn parse_function(arg: Value) -> Value {
             Value::Builtin(BuiltinFn::new("eval", move |ns_arg| {
                 match ns_arg {
                     Value::Namespace(scope) => eval(&ast, &scope),
-                    other => undef_unary!("eval", other),
+                    other => Value::undef_unary("eval", other, 0),
                 }
             }))
         }
-        other => undef_unary!("parse", other),
+        other => Value::undef_unary("parse", other, 0),
     }
 }
 

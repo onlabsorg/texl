@@ -14,7 +14,7 @@
 //! - `to_string(t)`  : ISO-8601 text, e.g. `2026-05-28T20:26:40.000Z`
 //! - `from_string(s)`: parse ISO-8601 text (date, or date + time)
 
-use crate::value::{BuiltinFn, Scope, Undef, Value};
+use crate::value::{BuiltinFn, Scope, Value};
 use super::helpers::*;
 
 
@@ -71,7 +71,7 @@ fn time_to_date(t: Value) -> Value {
             scope.set("second", Value::Numb(dt.second));
             Value::Namespace(scope)
         }
-        other => undef_unary!("time.to_date", other),
+        other => Value::undef_unary("time.to_date", other, 0),
     }
 }
 
@@ -87,7 +87,7 @@ fn time_from_date(date: Value) -> Value {
             let s = numb_field(&scope, "second", 0.0);
             Value::Numb(epoch_from_parts(y, m, d, h, min, s))
         }
-        other => undef_unary!("time.from_date", other),
+        other => Value::undef_unary("time.from_date", other, 0),
     }
 }
 
@@ -101,7 +101,7 @@ fn time_to_string(val: Value) -> Value {
                 dt.year, dt.month, dt.day, dt.hour, dt.minute, dt.second
             ).into())
         }
-        other => undef_unary!("time.to_string", other),
+        other => Value::undef_unary("time.to_string", other, 0),
     }
 }
 
@@ -112,9 +112,9 @@ fn time_from_string(val: Value) -> Value {
     match val {
         Value::Text(s) => match parse_iso_string(&s) {
             Some(t) => Value::Numb(t),
-            None => undef_unary!("time.from_string", Value::Text(s)),
+            None => Value::undef_unary("time.from_string", Value::Text(s), 0),
         },
-        other => undef_unary!("time.from_string", other),
+        other => Value::undef_unary("time.from_string", other, 0),
     }
 }
 
@@ -127,7 +127,7 @@ fn time_week_day(val: Value) -> Value {
             let wd = (days + 4).rem_euclid(7);
             Value::Numb(wd as f64)
         }
-        other => undef_unary!("time.week_day", other),
+        other => Value::undef_unary("time.week_day", other, 0),
     }
 }
 
@@ -149,7 +149,7 @@ fn time_week_number(val: Value) -> Value {
             let wn = 1 + (thu_days - jan4_thu_days) / 7;
             Value::Numb(wn as f64)
         }
-        other => undef_unary!("time.week_number", other),
+        other => Value::undef_unary("time.week_number", other, 0),
     }
 }
 

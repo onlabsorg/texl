@@ -8,7 +8,7 @@
 //! Arguments of the wrong type produce `Value::Undefined`.
 
 use std::rc::Rc;
-use crate::value::{Scope, Undef, Value};
+use crate::value::{Scope, Value};
 use super::helpers::*;
 
 
@@ -39,7 +39,8 @@ pub fn create_namespace(parent: &Scope) -> Value {
 fn list_size(val: Value) -> Value {
     match val {
         Value::List(l) => Value::Numb(l.len() as f64),
-        other => undef_unary!("list.size", other),
+        other => 
+            Value::undef_unary("list.size", other, 0),
     }
 }
 
@@ -47,7 +48,7 @@ fn list_size(val: Value) -> Value {
 fn list_enum(val: Value) -> Value {
     match val {
         Value::List(l) => normalize_tuple(l.as_ref().clone()),
-        other => undef_unary!("list.enum", other),
+        other => Value::undef_unary("list.enum", other, 0),
     }
 }
 
@@ -59,7 +60,7 @@ fn list_reverse(val: Value) -> Value {
             rev.reverse();
             Value::List(Rc::new(rev))
         }
-        other => undef_unary!("list.reverse", other),
+        other => Value::undef_unary("list.reverse", other, 0),
     }
 }
 
@@ -70,7 +71,7 @@ fn list_find(item: Value, list: Value) -> Value {
         Value::List(l) => Value::Numb(
             l.iter().position(|x| x == &item).map_or(-1.0, |i| i as f64)
         ),
-        other => undef_unary!("list.find", other),
+        other => Value::undef_unary("list.find", other, 0),
     }
 }
 
@@ -81,7 +82,7 @@ fn list_rfind(item: Value, list: Value) -> Value {
         Value::List(l) => Value::Numb(
             l.iter().rposition(|x| x == &item).map_or(-1.0, |i| i as f64)
         ),
-        other => undef_unary!("list.rfind", other),
+        other => Value::undef_unary("list.rfind", other, 0),
     }
 }
 
@@ -110,7 +111,7 @@ fn list_head(n: Value, list: Value) -> Value {
             let end = resolve_count(*n, l.len());
             Value::List(Rc::new(l[..end].to_vec()))
         }
-        (_, other) => undef_unary!("list.head", other),
+        (_, other) => Value::undef_unary("list.head", other, 0),
     }
 }
 
@@ -123,7 +124,7 @@ fn list_tail(n: Value, list: Value) -> Value {
             let start = resolve_count(*n, l.len());
             Value::List(Rc::new(l[start..].to_vec()))
         }
-        (_, other) => undef_unary!("list.tail", other),
+        (_, other) => Value::undef_unary("list.tail", other, 0),
     }
 }
 

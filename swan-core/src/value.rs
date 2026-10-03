@@ -76,6 +76,20 @@ pub enum Value {
 }
 
 
+impl Value {
+
+    /// Helper to construct a unary operation Undefined value.
+    #[inline]
+    pub fn undef_unary(op: &'static str, val: Value, pos: usize) -> Value {
+        Value::Undefined(Undef::UnaryOperation {
+            op,
+            val: Box::new(val),
+            pos
+        })
+    }
+}
+
+
 
 // ----------------------------------------------------------------------------
 //  Implement equality and order for Value

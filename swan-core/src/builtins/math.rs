@@ -1,5 +1,5 @@
 
-use crate::value::{BuiltinFn, Scope, Undef, Value};
+use crate::value::{BuiltinFn, Scope, Value};
 
 use super::helpers::*;
 
@@ -100,12 +100,12 @@ fn math_max(arg: Value) -> Value {
                 }
                 count += 1;
             }
-            _ => return undef_unary!("math.max", arg),
+            _ => return Value::undef_unary("math.max", arg, 0),
         }
     }
 
     if count == 0 {
-        undef_unary!("math.max", arg)
+        Value::undef_unary("math.max", arg, 0)
     } else {
         Value::Numb(max_val)
     }
@@ -131,12 +131,12 @@ fn math_min(arg: Value) -> Value {
                 }
                 count += 1;
             }
-            _ => return undef_unary!("math.min", arg),
+            _ => return Value::undef_unary("math.min", arg, 0),
         }
     }
 
     if count == 0 {
-        undef_unary!("math.min", arg)
+        Value::undef_unary("math.min", arg, 0)
     } else {
         Value::Numb(min_val)
     }
@@ -159,12 +159,12 @@ fn builtin_f64_1(name: &'static str, f: fn(f64) -> f64) -> Value {
                 let result = f(x);
                 // Propagate NaN (e.g. sqrt(-1)) as Undefined.
                 if result.is_nan() {
-                    undef_unary!(name, Value::Numb(x))
+                    Value::undef_unary(name, Value::Numb(x), 0)
                 } else {
                     Value::Numb(result)
                 }
             }
-            other => undef_unary!(name, other),
+            other => Value::undef_unary(name, other, 0),
         }
     })
 }
@@ -180,12 +180,12 @@ fn builtin_f64_curried(name: &'static str, f: fn(f64, f64) -> f64) -> Value {
             (Value::Numb(a), Value::Numb(b)) => {
                 let result = f(*a, b);
                 if result.is_nan() {
-                    undef_unary!(name, Value::Numb(b))
+                    Value::undef_unary(name, Value::Numb(b), 0)
                 } else {
                     Value::Numb(result)
                 }
             }
-            (_, other) => undef_unary!(name, other),
+            (_, other) => Value::undef_unary(name, other, 0),
         }
     })
 }
@@ -232,9 +232,9 @@ mod tests {
         assert_eq!(run("math.sqrt 4"), Value::Numb(2.0));
 
         // Undefined
-        assert_eq!(run("math.sqrt(-1)")    , undef_unary!("math.sqrt", Value::Numb(-1.0)));
-        assert_eq!(run("math.sqrt TRUE")   , undef_unary!("math.sqrt", Value::Bool(true)));
-        assert_eq!(run("math.sqrt \"abc\""), undef_unary!("math.sqrt", Value::Text("abc".into())));
+        assert_eq!(run("math.sqrt(-1)")    , Value::undef_unary("math.sqrt", Value::Numb(-1.0), 0));
+        assert_eq!(run("math.sqrt TRUE")   , Value::undef_unary("math.sqrt", Value::Bool(true), 0));
+        assert_eq!(run("math.sqrt \"abc\""), Value::undef_unary("math.sqrt", Value::Text("abc".into()), 0));
 
         // Nothing
         assert_eq!(run("math.sqrt()"), Value::Nothing);
@@ -254,8 +254,8 @@ mod tests {
         assert_eq!(run("math.abs 3"),   Value::Numb(3.0));
 
         // Undefined
-        assert_eq!(run("math.abs TRUE")   , undef_unary!("math.abs", Value::Bool(true)));
-        assert_eq!(run("math.abs \"abc\""), undef_unary!("math.abs", Value::Text("abc".into())));
+        assert_eq!(run("math.abs TRUE")   , Value::undef_unary("math.abs", Value::Bool(true), 0));
+        assert_eq!(run("math.abs \"abc\""), Value::undef_unary("math.abs", Value::Text("abc".into()), 0));
 
         // Nothing
         assert_eq!(run("math.abs()"), Value::Nothing);
@@ -652,8 +652,8 @@ mod tests {
         assert_eq!(run("math.pow 3 2"),                 Value::Numb(8.0));
 
         // Undefined
-        assert_eq!(run("math.pow TRUE 3")   , undef_unary!("math.pow", Value::Numb(3.0)));
-        assert_eq!(run("math.pow \"abc\" 3"), undef_unary!("math.pow", Value::Numb(3.0)));
+        assert_eq!(run("math.pow TRUE 3")   , Value::undef_unary("math.pow", Value::Numb(3.0), 0));
+        assert_eq!(run("math.pow \"abc\" 3"), Value::undef_unary("math.pow", Value::Numb(3.0), 0));
 
         // Nothing
         assert_eq!(run("math.pow()"), Value::Nothing);
@@ -679,8 +679,8 @@ mod tests {
         assert_eq!(run("math.log 2 8"),                   Value::Numb(3.0));
 
         // Undefined
-        assert_eq!(run("math.log TRUE 3")   , undef_unary!("math.log", Value::Numb(3.0)));
-        assert_eq!(run("math.log \"abc\" 3"), undef_unary!("math.log", Value::Numb(3.0)));
+        assert_eq!(run("math.log TRUE 3")   , Value::undef_unary("math.log", Value::Numb(3.0), 0));
+        assert_eq!(run("math.log \"abc\" 3"), Value::undef_unary("math.log", Value::Numb(3.0), 0));
 
         // Nothing
         assert_eq!(run("math.log()"), Value::Nothing);

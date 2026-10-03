@@ -6,7 +6,7 @@
 //! type produce `Value::Undefined`. All positions and lengths count Unicode
 //! characters, not bytes.
 
-use crate::value::{BuiltinFn, Scope, Undef, Value};
+use crate::value::{BuiltinFn, Scope, Value};
 use super::helpers::*;
 
 
@@ -72,7 +72,7 @@ fn text_from(val: Value) -> Value {
             format!("[[Namespace of {}]]", scope.0.borrow().bindings.len())
         }
         // Bool/Numb/Text/etc. handled above; Nothing and Tuple never reach here (handled by map_1).
-        _ => return undef_unary!("text.from", val),
+        _ => return Value::undef_unary("text.from", val, 0),
     };
 
     Value::Text(s.into())
@@ -82,7 +82,7 @@ fn text_from(val: Value) -> Value {
 fn text_size(val: Value) -> Value {
     match val {
         Value::Text(s) => Value::Numb(s.chars().count() as f64),
-        other => undef_unary!("text.size", other),
+        other => Value::undef_unary("text.size", other, 0),
     }
 }
 
@@ -93,7 +93,7 @@ fn text_enum(val: Value) -> Value {
             let chars: Vec<Value> = s.chars().map(|c| Value::Text(c.to_string().into())).collect();
             normalize_tuple(chars)
         }
-        other => undef_unary!("text.enum", other),
+        other => Value::undef_unary("text.enum", other, 0),
     }
 }
 
@@ -105,7 +105,7 @@ fn text_enum(val: Value) -> Value {
 fn text_lower(val: Value) -> Value {
     match val {
         Value::Text(s) => Value::Text(s.to_lowercase().into()),
-        other => undef_unary!("text.lower", other),
+        other => Value::undef_unary("text.lower", other, 0),
     }
 }
 
@@ -113,7 +113,7 @@ fn text_lower(val: Value) -> Value {
 fn text_upper(val: Value) -> Value {
     match val {
         Value::Text(s) => Value::Text(s.to_uppercase().into()),
-        other => undef_unary!("text.upper", other),
+        other => Value::undef_unary("text.upper", other, 0),
     }
 }
 
@@ -121,7 +121,7 @@ fn text_upper(val: Value) -> Value {
 fn text_trim(val: Value) -> Value {
     match val {
         Value::Text(s) => Value::Text(s.trim().into()),
-        other => undef_unary!("text.trim", other),
+        other => Value::undef_unary("text.trim", other, 0),
     }
 }
 
@@ -129,7 +129,7 @@ fn text_trim(val: Value) -> Value {
 fn text_trim_head(val: Value) -> Value {
     match val {
         Value::Text(s) => Value::Text(s.trim_start().into()),
-        other => undef_unary!("text.trim_head", other),
+        other => Value::undef_unary("text.trim_head", other, 0),
     }
 }
 
@@ -137,7 +137,7 @@ fn text_trim_head(val: Value) -> Value {
 fn text_trim_tail(val: Value) -> Value {
     match val {
         Value::Text(s) => Value::Text(s.trim_end().into()),
-        other => undef_unary!("text.trim_tail", other),
+        other => Value::undef_unary("text.trim_tail", other, 0),
     }
 }
 
@@ -158,7 +158,7 @@ fn char_position(haystack: &str, byte_pos: Option<usize>) -> Value {
 fn text_find(needle: Value, haystack: Value) -> Value {
     match (&needle, haystack) {
         (Value::Text(n), Value::Text(h)) => char_position(&h, h.find(n.as_ref())),
-        (_, other) => undef_unary!("text.find", other),
+        (_, other) => Value::undef_unary("text.find", other, 0),
     }
 }
 
@@ -166,7 +166,7 @@ fn text_find(needle: Value, haystack: Value) -> Value {
 fn text_rfind(needle: Value, haystack: Value) -> Value {
     match (&needle, haystack) {
         (Value::Text(n), Value::Text(h)) => char_position(&h, h.rfind(n.as_ref())),
-        (_, other) => undef_unary!("text.rfind", other),
+        (_, other) => Value::undef_unary("text.rfind", other, 0),
     }
 }
 
@@ -192,7 +192,7 @@ fn text_head(n: Value, s: Value) -> Value {
             let result: String = chars[..end].iter().collect();
             Value::Text(result.into())
         }
-        (_, other) => undef_unary!("text.head", other),
+        (_, other) => Value::undef_unary("text.head", other, 0),
     }
 }
 
@@ -205,7 +205,7 @@ fn text_tail(n: Value, s: Value) -> Value {
             let result: String = chars[start..].iter().collect();
             Value::Text(result.into())
         }
-        (_, other) => undef_unary!("text.tail", other),
+        (_, other) => Value::undef_unary("text.tail", other, 0),
     }
 }
 
@@ -223,7 +223,7 @@ fn text_split(sep: Value, target: Value) -> Value {
                 .collect();
             normalize_tuple(parts)
         }
-        (_, other) => undef_unary!("text.split", other),
+        (_, other) => Value::undef_unary("text.split", other, 0),
     }
 }
 
@@ -237,12 +237,12 @@ fn text_join(sep: Value) -> Value {
                 for item in items.items() {
                     match item {
                         Value::Text(t) => strings.push(t.to_string()),
-                        other => return undef_unary!("text.join", other), // `return` exits the whole builtin closure, not just the loop.
+                        other => return Value::undef_unary("text.join", other, 0), // `return` exits the whole builtin closure, not just the loop.
                     }
                 }
                 Value::Text(strings.join(s1.as_ref()).into())
             }
-            _ => undef_unary!("text.join", items),
+            _ => Value::undef_unary("text.join", items, 0),
         }
     }))
 }

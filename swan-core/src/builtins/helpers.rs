@@ -5,32 +5,6 @@ use crate::value::{BuiltinFn, Value};
 
 
 
-// ----------------------------------------------------------------------------
-//  Macros
-// ----------------------------------------------------------------------------
-
-#[macro_export]
-macro_rules! undef_unary {
-    ($op:expr, $val:expr) => {
-        Value::Undefined(Undef::UnaryOperation {
-            op: $op,
-            val: Box::new($val),
-            pos: 0,
-        })
-    };
-}
-
-pub(crate) use undef_unary;
-
-
-
-
-
-
-// ----------------------------------------------------------------------------
-//  PRIVATE HELPERS
-// ----------------------------------------------------------------------------
-
 /// Normalizes a sequence of items:
 /// - 0 items -> `Value::Nothing`
 /// - 1 item  -> `items[0]`

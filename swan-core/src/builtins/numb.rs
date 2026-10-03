@@ -11,8 +11,7 @@
 //! numb.from("abc")      -> undefined
 //! ```
 
-// `Undef` is kept in scope because `undef_unary!` may expand to code that refers to it.
-use crate::value::{Scope, Undef, Value};
+use crate::value::{Scope, Value};
 use super::helpers::*;
 
 
@@ -55,9 +54,9 @@ fn numb_from(val: Value) -> Value {
         Value::Bool(b) => Value::Numb(if *b { 1.0 } else { 0.0 }),
         Value::Text(s) => match s.parse::<f64>() {
             Ok(n)  => Value::Numb(n),
-            Err(_) => undef_unary!("numb.from", val), // not a valid number literal
+            Err(_) => Value::undef_unary("numb.from", val, 0), // not a valid number literal
         },
-        _ => undef_unary!("numb.from", val),          // unsupported type
+        _ => Value::undef_unary("numb.from", val, 0),          // unsupported type
     }
 }
 
