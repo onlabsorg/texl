@@ -4,9 +4,12 @@ resolver = "3"
 
 members = [
     "swan-core",
-    #"swan-cli",
-    #"swan-node",
-    "swan-js",
-    #"swan-py",
+    "texl-core",
+    #"texl-cli",
+    #"texl-py",
+    #"texl-js",
+    #"texl-node",
+    #"texl.nvim",
+    #"vscode-texl",
 ]
 
