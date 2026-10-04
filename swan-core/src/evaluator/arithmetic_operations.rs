@@ -10,7 +10,6 @@
 //! Numeric operations follow IEEE 754 semantics, so there are no numeric errors:
 //! division by zero yields `±inf` or `NaN`.
 
-use std::rc::Rc;
 use crate::value::Value;
 
 
@@ -48,7 +47,7 @@ pub fn eval_add(lhv: Value, rhv: Value, pos: usize) -> Value {
             let mut v = Vec::with_capacity(a.len() + b.len());
             v.extend_from_slice(&a);
             v.extend_from_slice(&b);
-            Value::List(Rc::new(v))
+            Value::list(v)
         }
 
         (lhv, rhv) => Value::undef_binary("sum", lhv, rhv, pos),
@@ -182,15 +181,18 @@ mod tests {
         assert_eq!(evaluate("\"\" + \"a\""), Value::Text("a".into()));
 
         // List concatenation
-        assert_eq!(evaluate("[1,2,3] + [4,5,6]"), Value::List(Rc::new(vec![
-                    Value::Numb(1.0),
-                    Value::Numb(2.0),
-                    Value::Numb(3.0),
-                    Value::Numb(4.0),
-                    Value::Numb(5.0),
-                    Value::Numb(6.0)
-                ])));
-        assert_eq!(evaluate("[] + [1]"), Value::List(Rc::new(vec![Value::Numb(1.0)])));
+        assert_eq!(
+            evaluate("[1,2,3] + [4,5,6]"), 
+            Value::list(vec![
+                Value::Numb(1.0),
+                Value::Numb(2.0),
+                Value::Numb(3.0),
+                Value::Numb(4.0),
+                Value::Numb(5.0),
+                Value::Numb(6.0)
+            ])
+        );
+        assert_eq!(evaluate("[] + [1]"), Value::list(vec![Value::Numb(1.0)]));
 
         // Broadcasting over tuples
         assert_eq!(evaluate("(1, 2) + (3, 4)"), Value::tuple(vec![
@@ -201,7 +203,7 @@ mod tests {
         // Unsupported operand types
         assert_undefined("1 + \"abc\"", "sum", Value::Numb(1.0), Value::Text("abc".into()), 2);
         assert_undefined("() + 1", "sum", Value::Nothing, Value::Numb(1.0), 3);
-        assert_undefined("[1] + \"a\"", "sum", Value::List(Rc::new(vec![Value::Numb(1.0)])), Value::Text("a".into()), 4);
+        assert_undefined("[1] + \"a\"", "sum", Value::list(vec![Value::Numb(1.0)]), Value::Text("a".into()), 4);
     }
 
     #[test]

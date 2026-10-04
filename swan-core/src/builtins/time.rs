@@ -303,7 +303,6 @@ fn parse_iso_string(s: &str) -> Option<f64> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::rc::Rc;
     use crate::evaluator::eval;
     use crate::lexer::Lexer;
     use crate::parser::Parser;
@@ -355,8 +354,8 @@ mod tests {
         assert_eq!(
             run("(d1,d2) = time.to_date(1780000000, 1780000009), d1.[minute, second], d2.[minute, second]"),
             Value::tuple(vec![
-                Value::List(Rc::new(vec![Value::Numb(26.0), Value::Numb(40.0)])),
-                Value::List(Rc::new(vec![Value::Numb(26.0), Value::Numb(49.0)])),
+                Value::list(vec![Value::Numb(26.0), Value::Numb(40.0)]),
+                Value::list(vec![Value::Numb(26.0), Value::Numb(49.0)]),
             ])
         );
 

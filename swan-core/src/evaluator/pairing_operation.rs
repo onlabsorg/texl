@@ -39,7 +39,6 @@ pub fn eval(lhv: Value, rhv: Value) -> Value {
 
 #[cfg(test)]
 mod tests {
-    use std::rc::Rc;
     use super::*;
     use crate::lexer::Lexer;
     use crate::parser::Parser;
@@ -105,7 +104,7 @@ mod tests {
 
         // Lists are single items: they are paired, not unpacked.
         assert_eq!(evaluate("[1,2] , 3"), Value::tuple(vec![
-            Value::List(Rc::new(vec![Value::Numb(1.0), Value::Numb(2.0)])),
+            Value::list(vec![Value::Numb(1.0), Value::Numb(2.0)]),
             Value::Numb(3.0),
         ]));
 

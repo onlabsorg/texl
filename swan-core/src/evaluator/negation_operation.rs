@@ -33,7 +33,6 @@ pub fn eval(val: Value, pos: usize) -> Value {
 
 #[cfg(test)]
 mod tests {
-    use std::rc::Rc;
     use super::*;
     use crate::lexer::Lexer;
     use crate::parser::Parser;
@@ -77,7 +76,7 @@ mod tests {
         for (src, operand) in [
             ("-\"abc\"", Value::Text("abc".into())),
             ("-TRUE",    Value::Bool(true)),
-            ("-[]",      Value::List(Rc::new(vec![]))),
+            ("-[]",      Value::list(vec![])),
         ] {
             match evaluate(src) {
                 Value::Undefined(Undef::UnaryOperation { op, val, pos }) => {

@@ -25,7 +25,6 @@ pub fn eval(val: Value) -> Value {
 
 #[cfg(test)]
 mod tests {
-    use std::rc::Rc;
     use super::*;
     use crate::lexer::Lexer;
     use crate::parser::Parser;
@@ -58,7 +57,7 @@ mod tests {
         // List
         assert_eq!(
             evaluate("+[1, 2]"),
-            Value::List(Rc::new(vec![Value::Numb(1.0), Value::Numb(2.0)]))
+            Value::list(vec![Value::Numb(1.0), Value::Numb(2.0)])
         );
 
         // Nothing

@@ -98,6 +98,12 @@ impl Value {
             pos
         })
     }
+
+    /// Helper to construct a list
+    #[inline]
+    pub fn list(items: Vec<Value>) -> Value {
+        Value::List(Rc::new(items))
+    }
     
     /// Helper to construct and normalize a tuple
     #[inline]
@@ -499,8 +505,8 @@ mod boolean_conversion_tests {
         assert!(bool::from(Value::Numb(1.5)));
         assert!(!bool::from(Value::Text("".into())));
         assert!(bool::from(Value::Text("hello".into())));
-        assert!(!bool::from(Value::List(Rc::new(vec![]))));
-        assert!(bool::from(Value::List(Rc::new(vec![Value::Numb(1.0)]))));
+        assert!(!bool::from(Value::list(vec![])));
+        assert!(bool::from(Value::list(vec![Value::Numb(1.0)])));
     }
 
     #[test]

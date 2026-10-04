@@ -118,7 +118,7 @@ pub fn eval(node: &Node, scope: &Scope) -> Value {
         Node::List(unary) => {
             let val = eval(&unary.opd, scope);
             let vec: Vec<_> = val.items().collect();
-            Value::List(Rc::new(vec))
+            Value::list(vec)
         }
 
         // Namespace creation: `{X}` - body is evaluated for side effects (bindings), result is discarded
@@ -548,7 +548,7 @@ fn eval_apply_list(list: &[Value], arg: Value, pos: usize) -> Value {
             Value::Nothing
         }
         // Argument is not a number
-        other => Value::undef_binary("application", Value::List(Rc::new(list.to_vec())), other, pos),
+        other => Value::undef_binary("application", Value::list(list.to_vec()), other, pos),
     }
 }
 
@@ -660,21 +660,27 @@ mod tests {
 
     #[test]
     fn list_literal() {
-        assert_eq!(evaluate("[7 , 2 , 9]"), Value::List(Rc::new(vec![
-                    Value::Numb(7.0),
+        assert_eq!(
+            evaluate("[7 , 2 , 9]"), 
+            Value::list(vec![
+                Value::Numb(7.0),
+                Value::Numb(2.0),
+                Value::Numb(9.0)
+            ])
+        );
+
+        assert_eq!(
+            evaluate("[7 , [2,9]]"), 
+            Value::list(vec![
+                Value::Numb(7.0),
+                Value::list(vec![
                     Value::Numb(2.0),
                     Value::Numb(9.0)
-        ])));
+                ])
+            ])
+        );
 
-        assert_eq!(evaluate("[7 , [2,9]]"), Value::List(Rc::new(vec![
-                    Value::Numb(7.0),
-                    Value::List(Rc::new(vec![
-                        Value::Numb(2.0),
-                        Value::Numb(9.0)
-                    ]))
-        ])));
-
-        assert_eq!(evaluate("[]"), Value::List(Rc::new(vec![])));
+        assert_eq!(evaluate("[]"), Value::list(vec![]));
     }
 
     #[test]

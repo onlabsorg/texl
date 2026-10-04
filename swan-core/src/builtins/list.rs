@@ -7,7 +7,6 @@
 //! need to handle a single (non-tuple) argument (or pair of arguments).
 //! Arguments of the wrong type produce `Value::Undefined`.
 
-use std::rc::Rc;
 use crate::value::{Scope, Value};
 use super::helpers::*;
 
@@ -58,7 +57,7 @@ fn list_reverse(val: Value) -> Value {
         Value::List(l) => {
             let mut rev = l.as_ref().clone();
             rev.reverse();
-            Value::List(Rc::new(rev))
+            Value::list(rev)
         }
         other => Value::undef_unary("list.reverse", other, 0),
     }
@@ -109,7 +108,7 @@ fn list_head(n: Value, list: Value) -> Value {
     match (&n, list) {
         (Value::Numb(n), Value::List(l)) => {
             let end = resolve_count(*n, l.len());
-            Value::List(Rc::new(l[..end].to_vec()))
+            Value::list(l[..end].to_vec())
         }
         (_, other) => Value::undef_unary("list.head", other, 0),
     }
@@ -122,7 +121,7 @@ fn list_tail(n: Value, list: Value) -> Value {
     match (&n, list) {
         (Value::Numb(n), Value::List(l)) => {
             let start = resolve_count(*n, l.len());
-            Value::List(Rc::new(l[start..].to_vec()))
+            Value::list(l[start..].to_vec())
         }
         (_, other) => Value::undef_unary("list.tail", other, 0),
     }
@@ -219,11 +218,11 @@ mod tests {
         // List
         assert_eq!(
             run("list.reverse[3,2,1]"),
-            Value::List(Rc::new(vec![
+            Value::list(vec![
                 Value::Numb(1.0),
                 Value::Numb(2.0),
                 Value::Numb(3.0),
-            ]))
+            ])
         );
         
         // Nothing (also when paired with a non-list, since Nothing short-circuits)
@@ -233,8 +232,8 @@ mod tests {
         assert_eq!(
             run("list.reverse([1,2], [3,4])"),
             Value::tuple(vec![
-                Value::List(Rc::new(vec![Value::Numb(2.0), Value::Numb(1.0)])),
-                Value::List(Rc::new(vec![Value::Numb(4.0), Value::Numb(3.0)])),
+                Value::list(vec![Value::Numb(2.0), Value::Numb(1.0)]),
+                Value::list(vec![Value::Numb(4.0), Value::Numb(3.0)]),
             ])
         );
 
@@ -322,31 +321,31 @@ mod tests {
         // Numb - List
         assert_eq!(
             run("list.head 3 [1,2,3,4,5,6]"), 
-            Value::List(Rc::new(vec![
+            Value::list(vec![
                 Value::Numb(1.0),
                 Value::Numb(2.0),
                 Value::Numb(3.0),
-            ]))
+            ])
         );
         assert_eq!(
             run("list.head 0 [1,2,3,4,5,6]"), 
-            Value::List(Rc::new(vec![]))
+            Value::list(vec![])
         );
         assert_eq!(
             run("list.head(-2) [1,2,3,4,5,6]"), 
-            Value::List(Rc::new(vec![
+            Value::list(vec![
                 Value::Numb(1.0),
                 Value::Numb(2.0),
                 Value::Numb(3.0),
                 Value::Numb(4.0),
-            ]))
+            ])
         );
         // Counts beyond the list length are clamped
         assert_eq!(
             run("list.head 10 [1,2,3]"),
-            Value::List(Rc::new(vec![Value::Numb(1.0), Value::Numb(2.0), Value::Numb(3.0)]))
+            Value::list(vec![Value::Numb(1.0), Value::Numb(2.0), Value::Numb(3.0)])
         );
-        assert_eq!(run("list.head(-10) [1,2,3]"), Value::List(Rc::new(vec![])));
+        assert_eq!(run("list.head(-10) [1,2,3]"), Value::list(vec![]));
 
         // Nothing (also when paired with a non-list, since Nothing short-circuits)
         assert_eq!(run("list.head ()"), Value::Nothing);
@@ -357,15 +356,15 @@ mod tests {
         assert_eq!(
             run("list.head (2, 3) [1,2,3,4,5,6]"), 
             Value::tuple(vec![
-                Value::List(Rc::new(vec![
+                Value::list(vec![
                     Value::Numb(1.0),
                     Value::Numb(2.0),
-                ])),
-                Value::List(Rc::new(vec![
+                ]),
+                Value::list(vec![
                     Value::Numb(1.0),
                     Value::Numb(2.0),
                     Value::Numb(3.0),
-                ])),
+                ]),
             ])
         );
 
@@ -373,24 +372,24 @@ mod tests {
         assert_eq!(
             run("list.head (2, 3) ([1,2,3,4,5], [6,7,8,9])"), 
             Value::tuple(vec![
-                Value::List(Rc::new(vec![
+                Value::list(vec![
                     Value::Numb(1.0),
                     Value::Numb(2.0),
-                ])),
-                Value::List(Rc::new(vec![
+                ]),
+                Value::list(vec![
                     Value::Numb(6.0),
                     Value::Numb(7.0),
-                ])),
-                Value::List(Rc::new(vec![
+                ]),
+                Value::list(vec![
                     Value::Numb(1.0),
                     Value::Numb(2.0),
                     Value::Numb(3.0),
-                ])),
-                Value::List(Rc::new(vec![
+                ]),
+                Value::list(vec![
                     Value::Numb(6.0),
                     Value::Numb(7.0),
                     Value::Numb(8.0),
-                ])),
+                ]),
             ])
         );
 
@@ -405,34 +404,34 @@ mod tests {
         // Numb - List
         assert_eq!(
             run("list.tail 4 [1,2,3,4,5,6]"), 
-            Value::List(Rc::new(vec![
+            Value::list(vec![
                 Value::Numb(5.0),
                 Value::Numb(6.0),
-            ]))
+            ])
         );
         assert_eq!(
             run("list.tail 0 [1,2,3,4,5,6]"), 
-            Value::List(Rc::new(vec![
+            Value::list(vec![
                 Value::Numb(1.0),
                 Value::Numb(2.0),
                 Value::Numb(3.0),
                 Value::Numb(4.0),
                 Value::Numb(5.0),
                 Value::Numb(6.0),
-            ]))
+            ])
         );
         assert_eq!(
             run("list.tail(-2) [1,2,3,4,5,6]"), 
-            Value::List(Rc::new(vec![
+            Value::list(vec![
                 Value::Numb(5.0),
                 Value::Numb(6.0),
-            ]))
+            ])
         );
         // Counts beyond the list length are clamped
-        assert_eq!(run("list.tail 10 [1,2,3]"), Value::List(Rc::new(vec![])));
+        assert_eq!(run("list.tail 10 [1,2,3]"), Value::list(vec![]));
         assert_eq!(
             run("list.tail(-10) [1,2,3]"),
-            Value::List(Rc::new(vec![Value::Numb(1.0), Value::Numb(2.0), Value::Numb(3.0)]))
+            Value::list(vec![Value::Numb(1.0), Value::Numb(2.0), Value::Numb(3.0)])
         );
 
         // Nothing (also when paired with a non-list, since Nothing short-circuits)
@@ -444,13 +443,13 @@ mod tests {
         assert_eq!(
             run("list.tail (5, 4) [1,2,3,4,5,6]"), 
             Value::tuple(vec![
-                Value::List(Rc::new(vec![
+                Value::list(vec![
                     Value::Numb(6.0),
-                ])),
-                Value::List(Rc::new(vec![
+                ]),
+                Value::list(vec![
                     Value::Numb(5.0),
                     Value::Numb(6.0),
-                ])),
+                ]),
             ])
         );
 
@@ -458,24 +457,24 @@ mod tests {
         assert_eq!(
             run("list.tail (3, 2) ([1,2,3,4,5], [6,7,8,9,10])"), 
             Value::tuple(vec![
-                Value::List(Rc::new(vec![
+                Value::list(vec![
                     Value::Numb(4.0),
                     Value::Numb(5.0),
-                ])),
-                Value::List(Rc::new(vec![
+                ]),
+                Value::list(vec![
                     Value::Numb(9.0),
                     Value::Numb(10.0),
-                ])),
-                Value::List(Rc::new(vec![
+                ]),
+                Value::list(vec![
                     Value::Numb(3.0),
                     Value::Numb(4.0),
                     Value::Numb(5.0),
-                ])),
-                Value::List(Rc::new(vec![
+                ]),
+                Value::list(vec![
                     Value::Numb(8.0),
                     Value::Numb(9.0),
                     Value::Numb(10.0),
-                ])),
+                ]),
             ])
         );
 
