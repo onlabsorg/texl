@@ -338,14 +338,14 @@ mod tests {
         // Number
         assert_eq!(
             run("d = time.to_date(1780000000), d.(year, month, day, hour, minute, second)"),
-            Value::Tuple(Rc::new(vec![
+            Value::tuple(vec![
                 Value::Numb(2026.0), // year
                 Value::Numb(5.0),    // month
                 Value::Numb(28.0),   // day
                 Value::Numb(20.0),   // hour (UTC)
                 Value::Numb(26.0),   // minute
                 Value::Numb(40.0),   // second
-            ]))
+            ])
         );
 
         // Nothing
@@ -354,10 +354,10 @@ mod tests {
         // Tuple
         assert_eq!(
             run("(d1,d2) = time.to_date(1780000000, 1780000009), d1.[minute, second], d2.[minute, second]"),
-            Value::Tuple(Rc::new(vec![
+            Value::tuple(vec![
                 Value::List(Rc::new(vec![Value::Numb(26.0), Value::Numb(40.0)])),
                 Value::List(Rc::new(vec![Value::Numb(26.0), Value::Numb(49.0)])),
-            ]))
+            ])
         );
 
         // Others
@@ -384,10 +384,10 @@ mod tests {
         let d2 = "{year:2026, month:5, day:28, hour:20, minute:26, second:49}";
         assert_eq!(
             run(&format!("time.from_date({}, {})", d1, d2)),
-            Value::Tuple(Rc::new(vec![
+            Value::tuple(vec![
                 Value::Numb(1780000000.0),
                 Value::Numb(1780000009.0),
-            ]))
+            ])
         );
 
         // Others
@@ -409,11 +409,11 @@ mod tests {
         // Tuple
         assert_eq!(
             run("time.week_day(1780000000, 1780259200, 1780345600)"),
-            Value::Tuple(Rc::new(vec![
+            Value::tuple(vec![
                 Value::Numb(4.0),
                 Value::Numb(0.0),
                 Value::Numb(1.0),
-            ]))
+            ])
         );
 
         // Others
@@ -435,10 +435,10 @@ mod tests {
         // Tuple
         assert_eq!(
             run("time.week_number(1780000000, 1780345600)"),
-            Value::Tuple(Rc::new(vec![
+            Value::tuple(vec![
                 Value::Numb(22.0),
                 Value::Numb(23.0),
-            ]))
+            ])
         );
 
         // Others
@@ -467,10 +467,10 @@ mod tests {
         // Tuple
         assert_eq!(
             run("time.to_string(1780000000, 1780000009)"),
-            Value::Tuple(Rc::new(vec![
+            Value::tuple(vec![
                 Value::Text("2026-05-28T20:26:40.000Z".into()),
                 Value::Text("2026-05-28T20:26:49.000Z".into()),
-            ]))
+            ])
         );
 
         // Others
@@ -505,10 +505,10 @@ mod tests {
         // Tuple
         assert_eq!(
             run(r#"time.from_string("2026-05-28T20:26:40Z", "2026-05-28T20:26:49Z")"#),
-            Value::Tuple(Rc::new(vec![
+            Value::tuple(vec![
                 Value::Numb(1780000000.0),
                 Value::Numb(1780000009.0),
-            ]))
+            ])
         );
 
         // Round trip

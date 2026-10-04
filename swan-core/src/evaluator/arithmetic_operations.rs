@@ -193,10 +193,10 @@ mod tests {
         assert_eq!(evaluate("[] + [1]"), Value::List(Rc::new(vec![Value::Numb(1.0)])));
 
         // Broadcasting over tuples
-        assert_eq!(evaluate("(1, 2) + (3, 4)"), Value::Tuple(Rc::new(vec![
+        assert_eq!(evaluate("(1, 2) + (3, 4)"), Value::tuple(vec![
                     Value::Numb(4.0),
                     Value::Numb(6.0),
-                ])));
+                ]));
 
         // Unsupported operand types
         assert_undefined("1 + \"abc\"", "sum", Value::Numb(1.0), Value::Text("abc".into()), 2);
@@ -213,10 +213,10 @@ mod tests {
         assert_eq!(evaluate("7 - 2"), Value::Numb(5.0));
 
         // Broadcasting over tuples
-        assert_eq!(evaluate("(10, 20) - (1, 2)"), Value::Tuple(Rc::new(vec![
+        assert_eq!(evaluate("(10, 20) - (1, 2)"), Value::tuple(vec![
                     Value::Numb(9.0),
                     Value::Numb(18.0),
-                ])));
+                ]));
 
         // Unsupported operand types
         assert_undefined("1 - \"abc\"", "subtraction", Value::Numb(1.0), Value::Text("abc".into()), 2);
@@ -237,10 +237,10 @@ mod tests {
         assert_eq!(evaluate("FALSE * FALSE"), Value::Bool(false));
 
         // Broadcasting over tuples
-        assert_eq!(evaluate("(2, 3) * (4, 5)"), Value::Tuple(Rc::new(vec![
+        assert_eq!(evaluate("(2, 3) * (4, 5)"), Value::tuple(vec![
                     Value::Numb(8.0),
                     Value::Numb(15.0),
-                ])));
+                ]));
 
         // Unsupported operand types
         assert_undefined("1 * \"abc\"", "product", Value::Numb(1.0), Value::Text("abc".into()), 2);
@@ -258,10 +258,10 @@ mod tests {
         assert!(matches!(evaluate("0 / 0"), Value::Numb(n) if n.is_nan()));
 
         // Broadcasting over tuples
-        assert_eq!(evaluate("(10, 20) / (2, 5)"), Value::Tuple(Rc::new(vec![
+        assert_eq!(evaluate("(10, 20) / (2, 5)"), Value::tuple(vec![
                     Value::Numb(5.0),
                     Value::Numb(4.0),
-                ])));
+                ]));
 
         // Unsupported operand types
         assert_undefined("1 / \"abc\"", "division", Value::Numb(1.0), Value::Text("abc".into()), 2);
@@ -278,10 +278,10 @@ mod tests {
         assert!(matches!(evaluate("5 % 0"), Value::Numb(n) if n.is_nan()));
 
         // Broadcasting over tuples
-        assert_eq!(evaluate("(10, 20) % (3, 7)"), Value::Tuple(Rc::new(vec![
+        assert_eq!(evaluate("(10, 20) % (3, 7)"), Value::tuple(vec![
                     Value::Numb(1.0),
                     Value::Numb(6.0),
-                ])));
+                ]));
 
         // Unsupported operand types
         assert_undefined("1 % \"abc\"", "modulo", Value::Numb(1.0), Value::Text("abc".into()), 2);
@@ -298,10 +298,10 @@ mod tests {
 
 
         // Broadcasting over tuples
-        assert_eq!(evaluate("(10, 2) ^ (2, 4)"), Value::Tuple(Rc::new(vec![
+        assert_eq!(evaluate("(10, 2) ^ (2, 4)"), Value::tuple(vec![
                     Value::Numb(100.0),
                     Value::Numb(16.0),
-                ])));
+                ]));
 
         // Unsupported operand types
         assert_undefined("1 ^ \"abc\"", "power", Value::Numb(1.0), Value::Text("abc".into()), 2);

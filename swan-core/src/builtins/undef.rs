@@ -112,7 +112,6 @@ fn inspect_value(val: &Value) -> Value {
 
 #[cfg(test)]
 mod tests {
-    use std::rc::Rc;
     use super::*;
     use crate::evaluator::eval;
     use crate::lexer::Lexer;
@@ -167,39 +166,39 @@ mod tests {
         // Inspecting Undef::Value
         assert_eq!(
             run("info = undef.inspect(undef.from 42), info.type, info.val"),
-            Value::Tuple(Rc::new(vec![
+            Value::tuple(vec![
                 Value::Text("Value".into()),
                 Value::Numb(42.0),
-            ]))
+            ])
         );
 
         // Inspecting an invalid operation (e.g. UnaryOperation)
         assert_eq!(
             run("info = undef.inspect(- \"abc\"), info.type, info.op, info.val, info.pos"),
-            Value::Tuple(Rc::new(vec![
+            Value::tuple(vec![
                 Value::Text("UnaryOperation".into()),
                 Value::Text("negation".into()),
                 Value::Text("abc".into()),
                 Value::Numb(21.0),
-            ]))
+            ])
         );
 
         // Recursive inspection of nested Undefined values
         assert_eq!(
             run("info = undef.inspect(undef.from(undef.from 42)), info.val.type, info.val.val"),
-            Value::Tuple(Rc::new(vec![
+            Value::tuple(vec![
                 Value::Text("Value".into()),
                 Value::Numb(42.0),
-            ]))
+            ])
         );
 
         // Recursive inspection inside Tuples (destructure the tuple to reach its items)
         assert_eq!(
             run("info = undef.inspect(undef.from(1, undef.from 2)), (a, b) = info.val, b.type, b.val"),
-            Value::Tuple(Rc::new(vec![
+            Value::tuple(vec![
                 Value::Text("Value".into()),
                 Value::Numb(2.0),
-            ]))
+            ])
         );
 
         // Non-undefined argument yields Undefined

@@ -69,7 +69,6 @@ fn numb_from(val: Value) -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::rc::Rc;
     use crate::evaluator::eval;
     use crate::lexer::Lexer;
     use crate::parser::Parser;
@@ -118,10 +117,10 @@ mod tests {
         // Tuple
         assert_eq!(
             run(r#"numb.from(TRUE, "42")"#),
-            Value::Tuple(Rc::new(vec![
+            Value::tuple(vec![
                 Value::Numb(1.0),
                 Value::Numb(42.0),
-            ]))
+            ])
         );
 
         // Others

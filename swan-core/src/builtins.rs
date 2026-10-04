@@ -143,7 +143,6 @@ fn parse_function(arg: Value) -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::rc::Rc;
 
     /// Evaluates `src` in a fresh root scope.
     fn run(src: &str) -> Value {
@@ -170,11 +169,11 @@ mod tests {
         // Tuple
         assert_eq!(
             run(r#"type(10, "abc", [1])"#),
-            Value::Tuple(Rc::new(vec![
+            Value::tuple(vec![
                 Value::Text("Numb".into()),
                 Value::Text("Text".into()),
                 Value::Text("List".into()),
-            ]))
+            ])
         );
     }
 
@@ -198,10 +197,10 @@ mod tests {
         // Tuple
         assert_eq!(
             run(r#"(f,g) = parse("2*x", "3*x"), f{x:10}, g{x:20}"#),
-            Value::Tuple(Rc::new(vec![
+            Value::tuple(vec![
                 Value::Numb(20.0),
                 Value::Numb(60.0),
-            ])),
+            ]),
         );
 
         // Invalid argument type returns Undefined

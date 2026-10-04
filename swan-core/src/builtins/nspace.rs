@@ -94,7 +94,6 @@ fn nspace_parent(val: Value) -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::rc::Rc;
     use crate::evaluator::eval;
     use crate::lexer::Lexer;
     use crate::parser::Parser;
@@ -128,7 +127,7 @@ mod tests {
         assert_eq!(run("nspace.size()"), Value::Nothing);
         assert_eq!(
             run("nspace.size({a:1, b:2}, {c:3, d:4, e:5})"), 
-            Value::Tuple(Rc::new(vec![Value::Numb(2.0), Value::Numb(3.0)]))
+            Value::tuple(vec![Value::Numb(2.0), Value::Numb(3.0)])
         );
         assert_eq!(run("nspace.size {}"), Value::Numb(0.0));
         assert!(is_undefined(&run("nspace.size 42")));
@@ -148,16 +147,16 @@ mod tests {
     fn test_enum() {
         assert_eq!(
             run("nspace.enum {a: 1, b: 2}"),
-            Value::Tuple(Rc::new(vec![Value::Text("a".into()), Value::Text("b".into())]))
+            Value::tuple(vec![Value::Text("a".into()), Value::Text("b".into())])
         );
         assert_eq!(run("nspace.enum()"), Value::Nothing);
         assert_eq!(
             run("nspace.enum({a:1, b:2}, {c:3})"),
-            Value::Tuple(Rc::new(vec![
+            Value::tuple(vec![
                     Value::Text("a".into()), 
                     Value::Text("b".into()),
                     Value::Text("c".into()),
-            ]))
+            ])
         );
         // empty -> Nothing; single key -> plain Text, not a 1-tuple
         assert_eq!(run("nspace.enum {}"), Value::Nothing);
@@ -165,7 +164,7 @@ mod tests {
         // keys are sorted regardless of definition order
         assert_eq!(
             run("nspace.enum {b: 1, a: 2}"),
-            Value::Tuple(Rc::new(vec![text("a"), text("b")]))
+            Value::tuple(vec![text("a"), text("b")])
         );
         // non-namespace -> Undefined
         assert!(is_undefined(&run("nspace.enum 42")));
@@ -174,7 +173,7 @@ mod tests {
         // the builtin namespace lists its own functions, sorted
         assert_eq!(
             run("nspace.enum nspace"),
-            Value::Tuple(Rc::new(vec![text("enum"), text("parent"), text("size")]))
+            Value::tuple(vec![text("enum"), text("parent"), text("size")])
         );
     }
 
@@ -199,7 +198,7 @@ mod tests {
         // (uppercase names sort before lowercase)
         assert_eq!(
             run("nspace.enum(nspace.parent nspace)"),
-            Value::Tuple(Rc::new(vec![text("FALSE"), text("TRUE"), text("nspace")]))
+            Value::tuple(vec![text("FALSE"), text("TRUE"), text("nspace")])
         );
         // Nothing in -> Nothing out
         assert_eq!(run("nspace.parent()"), Value::Nothing);
@@ -207,10 +206,10 @@ mod tests {
         // Tuples
         assert_eq!(
             run("(a,b) = nspace.parent(14, nspace.{}), a, b == nspace"), 
-            Value::Tuple(Rc::new(vec![
+            Value::tuple(vec![
                     Value::undef_unary("nspace.parent", Value::Numb(14.0), 0),
                     Value::Bool(true)
-            ]))
+            ])
         );
     }
 
@@ -225,7 +224,7 @@ mod tests {
         assert_eq!(nspace_size(Value::Namespace(scope.clone())), Value::Numb(2.0));
         assert_eq!(
             nspace_enum(Value::Namespace(scope)),
-            Value::Tuple(Rc::new(vec![text("x"), text("y")]))
+            Value::tuple(vec![text("x"), text("y")])
         );
     }
 

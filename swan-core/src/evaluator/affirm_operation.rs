@@ -67,7 +67,7 @@ mod tests {
         // Tuple: returned as is
         assert_eq!(
             evaluate("+(1, 2)"),
-            Value::Tuple(Rc::new(vec![Value::Numb(1.0), Value::Numb(2.0)]))
+            Value::tuple(vec![Value::Numb(1.0), Value::Numb(2.0)])
         );
     }
 }

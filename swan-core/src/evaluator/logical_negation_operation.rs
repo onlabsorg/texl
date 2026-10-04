@@ -29,7 +29,6 @@ pub fn eval(val: Value) -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::rc::Rc;
     use crate::lexer::Lexer;
     use crate::parser::Parser;
     use crate::value::Scope;
@@ -79,20 +78,20 @@ mod tests {
         // Tuple: negated item by item
         assert_eq!(
             evaluate("!(TRUE, 0)"),
-            Value::Tuple(Rc::new(vec![
+            Value::tuple(vec![
                 Value::Bool(false),
                 Value::Bool(true),
-            ]))
+            ])
         );
 
         // Nested tuple: flattened, then negated item by item
         assert_eq!(
             evaluate("!(0, (1, 0))"),
-            Value::Tuple(Rc::new(vec![
+            Value::tuple(vec![
                 Value::Bool(true),
                 Value::Bool(false),
                 Value::Bool(true),
-            ]))
+            ])
         );
     }
 }

@@ -255,7 +255,6 @@ fn text_join(sep: Value) -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::rc::Rc;
     use crate::evaluator::eval;
     use crate::lexer::Lexer;
     use crate::parser::Parser;
@@ -307,10 +306,10 @@ mod tests {
         // Tuple
         assert_eq!(
             run("text.from(21, TRUE)"),
-            Value::Tuple(Rc::new(vec![
+            Value::tuple(vec![
                 Value::Text("21".into()),
                 Value::Text("TRUE".into()),
-            ])),
+            ]),
         );
     }
 
@@ -327,10 +326,10 @@ mod tests {
         // Tuple
         assert_eq!(
             run("text.size(\"abc\", \"defgh\")"), 
-            Value::Tuple(Rc::new(vec![
+            Value::tuple(vec![
                 Value::Numb(3.0),
                 Value::Numb(5.0),
-            ]))
+            ])
         );
 
         // Others
@@ -343,11 +342,11 @@ mod tests {
         // Text
         assert_eq!(
             run(r#"text.enum "abc""#),
-            Value::Tuple(Rc::new(vec![
+            Value::tuple(vec![
                 Value::Text("a".into()),
                 Value::Text("b".into()),
                 Value::Text("c".into()),
-            ]))
+            ])
         );
 
         // Nothing
@@ -356,13 +355,13 @@ mod tests {
         // Tuple
         assert_eq!(
             run("text.enum(\"abc\", \"de\")"), 
-            Value::Tuple(Rc::new(vec![
+            Value::tuple(vec![
                 Value::Text("a".into()),
                 Value::Text("b".into()),
                 Value::Text("c".into()),
                 Value::Text("d".into()),
                 Value::Text("e".into()),
-            ]))
+            ])
         );
 
         // Others
@@ -383,10 +382,10 @@ mod tests {
         // Tuple
         assert_eq!(
             run("text.lower(\"ABC\", \"DEF\")"), 
-            Value::Tuple(Rc::new(vec![
+            Value::tuple(vec![
                 Value::Text("abc".into()),
                 Value::Text("def".into()),
-            ]))
+            ])
         );
 
         // Others
@@ -407,10 +406,10 @@ mod tests {
         // Tuple
         assert_eq!(
             run("text.upper(\"abc\", \"def\")"), 
-            Value::Tuple(Rc::new(vec![
+            Value::tuple(vec![
                 Value::Text("ABC".into()),
                 Value::Text("DEF".into()),
-            ]))
+            ])
         );
 
         // Others
@@ -432,10 +431,10 @@ mod tests {
         // Tuple
         assert_eq!(
             run("text.trim(\"  abc  \", \"  def  \")"), 
-            Value::Tuple(Rc::new(vec![
+            Value::tuple(vec![
                 Value::Text("abc".into()),
                 Value::Text("def".into()),
-            ]))
+            ])
         );
 
         // Others
@@ -457,10 +456,10 @@ mod tests {
         // Tuple
         assert_eq!(
             run("text.trim_head(\"  abc  \", \"  def  \")"), 
-            Value::Tuple(Rc::new(vec![
+            Value::tuple(vec![
                 Value::Text("abc  ".into()),
                 Value::Text("def  ".into()),
-            ]))
+            ])
         );
 
         // Others
@@ -482,10 +481,10 @@ mod tests {
         // Tuple
         assert_eq!(
             run("text.trim_tail(\"  abc  \", \"  def  \")"), 
-            Value::Tuple(Rc::new(vec![
+            Value::tuple(vec![
                 Value::Text("  abc".into()),
                 Value::Text("  def".into()),
-            ]))
+            ])
         );
 
         // Others
@@ -507,21 +506,21 @@ mod tests {
         // Tuple - Text
         assert_eq!(
             run("text.find (\"b\", \"d\") \"abcdefabcdef\""), 
-            Value::Tuple(Rc::new(vec![
+            Value::tuple(vec![
                 Value::Numb(1.0),
                 Value::Numb(3.0),
-            ]))
+            ])
         );
 
         // Tuple - Tuple
         assert_eq!(
             run("text.find (\"b\", \"d\") (\"abcdefabcdef\", \"aaaaabcccd\")"), 
-            Value::Tuple(Rc::new(vec![
+            Value::tuple(vec![
                 Value::Numb(1.0),
                 Value::Numb(5.0),
                 Value::Numb(3.0),
                 Value::Numb(9.0),
-            ]))
+            ])
         );
 
         // Others
@@ -544,21 +543,21 @@ mod tests {
         // Tuple - Text
         assert_eq!(
             run("text.rfind (\"b\", \"d\") \"abcdefabcdef\""), 
-            Value::Tuple(Rc::new(vec![
+            Value::tuple(vec![
                 Value::Numb(7.0),
                 Value::Numb(9.0),
-            ]))
+            ])
         );
 
         // Tuple - Tuple
         assert_eq!(
             run("text.rfind (\"b\", \"d\") (\"abcdefabcdef\", \"aaaaabcccd\")"), 
-            Value::Tuple(Rc::new(vec![
+            Value::tuple(vec![
                 Value::Numb(7.0),
                 Value::Numb(5.0),
                 Value::Numb(9.0),
                 Value::Numb(9.0),
-            ]))
+            ])
         );
 
         // Others
@@ -584,21 +583,21 @@ mod tests {
         // Tuple - Text
         assert_eq!(
             run("text.head (2, 3) \"abcdef\""), 
-            Value::Tuple(Rc::new(vec![
+            Value::tuple(vec![
                 Value::Text("ab".into()),
                 Value::Text("abc".into()),
-            ]))
+            ])
         );
 
         // Tuple - Tuple
         assert_eq!(
             run("text.head (2, 3) (\"abcd\", \"efgh\")"), 
-            Value::Tuple(Rc::new(vec![
+            Value::tuple(vec![
                 Value::Text("ab".into()),
                 Value::Text("ef".into()),
                 Value::Text("abc".into()),
                 Value::Text("efg".into()),
-            ]))
+            ])
         );
 
         // Others
@@ -624,21 +623,21 @@ mod tests {
         // Tuple - Text
         assert_eq!(
             run("text.tail (-2, -3) \"abcdef\""), 
-            Value::Tuple(Rc::new(vec![
+            Value::tuple(vec![
                 Value::Text("ef".into()),
                 Value::Text("def".into()),
-            ]))
+            ])
         );
 
         // Tuple - Tuple
         assert_eq!(
             run("text.tail (-2, -3) (\"abcd\", \"efgh\")"), 
-            Value::Tuple(Rc::new(vec![
+            Value::tuple(vec![
                 Value::Text("cd".into()),
                 Value::Text("gh".into()),
                 Value::Text("bcd".into()),
                 Value::Text("fgh".into()),
-            ]))
+            ])
         );
 
         // Others
@@ -652,11 +651,11 @@ mod tests {
         // Text - Text
         assert_eq!(
             run("text.split \":\" \"aa:bb:cc\""),
-            Value::Tuple(Rc::new(vec![
+            Value::tuple(vec![
                 Value::Text("aa".into()),
                 Value::Text("bb".into()),
                 Value::Text("cc".into()),
-            ]))
+            ])
         );
         assert_eq!(
             run("text.split \":\" \"aabbcc\""),
@@ -671,20 +670,20 @@ mod tests {
         // Tuple - Text
         assert_eq!(
             run("text.split (\".\", \":\") \"aa.:bb.:cc\""), 
-            Value::Tuple(Rc::new(vec![
+            Value::tuple(vec![
                 Value::Text("aa".into()),
                 Value::Text(":bb".into()),
                 Value::Text(":cc".into()),
                 Value::Text("aa.".into()),
                 Value::Text("bb.".into()),
                 Value::Text("cc".into()),
-            ]))
+            ])
         );
 
         // Tuple - Tuple
         assert_eq!(
             run("text.split (\".\", \":\") (\"aa.:bb.:cc\", \"abc:def\")"), 
-            Value::Tuple(Rc::new(vec![
+            Value::tuple(vec![
                 Value::Text("aa".into()),
                 Value::Text(":bb".into()),
                 Value::Text(":cc".into()),
@@ -694,7 +693,7 @@ mod tests {
                 Value::Text("cc".into()),
                 Value::Text("abc".into()),
                 Value::Text("def".into()),
-            ]))
+            ])
         );
 
         // Others
@@ -717,10 +716,10 @@ mod tests {
         // Tuple - Tuple
         assert_eq!(
             run(r#"text.join (".", ":") ("aa", "bb", "cc")"#), 
-            Value::Tuple(Rc::new(vec![
+            Value::tuple(vec![
                 Value::Text("aa.bb.cc".into()),
                 Value::Text("aa:bb:cc".into()),
-            ]))
+            ])
         );
 
         // Others

@@ -325,7 +325,7 @@ impl Value {
                     .iter()
                     .map(|item| f(item.clone()))
                     .collect();
-                Value::Tuple(Rc::new(mapped_items)).normalize()
+                Value::tuple(mapped_items)
             }
             _ => f(self.clone()),
         }
@@ -371,14 +371,10 @@ impl From<Value> for bool {
 mod tuple_tests {
     use super::*;
 
-    fn tuple(items: Vec<Value>) -> Value {
-        Value::Tuple(Rc::new(items))
-    }
-
     #[test]
     fn test_pairs_same_length() {
-        let t1 = tuple(vec![Value::Numb(1.0), Value::Numb(2.0), Value::Numb(3.0)]);
-        let t2 = tuple(vec![Value::Numb(10.0), Value::Numb(20.0), Value::Numb(30.0)]);
+        let t1 = Value::tuple(vec![Value::Numb(1.0), Value::Numb(2.0), Value::Numb(3.0)]);
+        let t2 = Value::tuple(vec![Value::Numb(10.0), Value::Numb(20.0), Value::Numb(30.0)]);
 
         let pairs: Vec<(Value, Value)> = t1.pair(&t2).collect();
         assert_eq!(pairs.len(), 3);
@@ -389,8 +385,8 @@ mod tuple_tests {
 
     #[test]
     fn test_pairs_first_longer() {
-        let t1 = tuple(vec![Value::Numb(1.0), Value::Numb(2.0), Value::Numb(3.0)]);
-        let t2 = tuple(vec![Value::Numb(10.0), Value::Numb(20.0)]);
+        let t1 = Value::tuple(vec![Value::Numb(1.0), Value::Numb(2.0), Value::Numb(3.0)]);
+        let t2 = Value::tuple(vec![Value::Numb(10.0), Value::Numb(20.0)]);
 
         let pairs: Vec<(Value, Value)> = t1.pair(&t2).collect();
         assert_eq!(pairs.len(), 3);
@@ -401,8 +397,8 @@ mod tuple_tests {
 
     #[test]
     fn test_pairs_second_longer() {
-        let t1 = tuple(vec![Value::Numb(1.0), Value::Numb(2.0)]);
-        let t2 = tuple(vec![Value::Numb(10.0), Value::Numb(20.0), Value::Numb(30.0)]);
+        let t1 = Value::tuple(vec![Value::Numb(1.0), Value::Numb(2.0)]);
+        let t2 = Value::tuple(vec![Value::Numb(10.0), Value::Numb(20.0), Value::Numb(30.0)]);
 
         let pairs: Vec<(Value, Value)> = t1.pair(&t2).collect();
         assert_eq!(pairs.len(), 3);
@@ -423,7 +419,7 @@ mod tuple_tests {
     #[test]
     fn test_pairs_first_empty() {
         let t1 = Value::Nothing;
-        let t2 = tuple(vec![Value::Numb(10.0), Value::Numb(20.0)]);
+        let t2 = Value::tuple(vec![Value::Numb(10.0), Value::Numb(20.0)]);
 
         let pairs: Vec<(Value, Value)> = t1.pair(&t2).collect();
         assert_eq!(pairs.len(), 2);
@@ -433,7 +429,7 @@ mod tuple_tests {
 
     #[test]
     fn test_pairs_second_empty() {
-        let t1 = tuple(vec![Value::Numb(1.0), Value::Numb(2.0)]);
+        let t1 = Value::tuple(vec![Value::Numb(1.0), Value::Numb(2.0)]);
         let t2 = Value::Nothing;
 
         let pairs: Vec<(Value, Value)> = t1.pair(&t2).collect();
@@ -454,9 +450,9 @@ mod tuple_tests {
 
     #[test]
     fn test_pairs_nested_tuples_flattened() {
-        let inner = tuple(vec![Value::Numb(2.0), Value::Numb(3.0)]);
-        let t1 = tuple(vec![Value::Numb(1.0), inner]);
-        let t2 = tuple(vec![Value::Numb(10.0), Value::Numb(20.0), Value::Numb(30.0)]);
+        let inner = Value::tuple(vec![Value::Numb(2.0), Value::Numb(3.0)]);
+        let t1 = Value::tuple(vec![Value::Numb(1.0), inner]);
+        let t2 = Value::tuple(vec![Value::Numb(10.0), Value::Numb(20.0), Value::Numb(30.0)]);
 
         let pairs: Vec<(Value, Value)> = t1.pair(&t2).collect();
         assert_eq!(pairs.len(), 3);
@@ -467,8 +463,8 @@ mod tuple_tests {
 
     #[test]
     fn test_pairs_skips_nothing_in_tuples() {
-        let t1 = tuple(vec![Value::Numb(1.0), Value::Nothing, Value::Numb(2.0)]);
-        let t2 = tuple(vec![Value::Numb(10.0), Value::Numb(20.0)]);
+        let t1 = Value::tuple(vec![Value::Numb(1.0), Value::Nothing, Value::Numb(2.0)]);
+        let t2 = Value::tuple(vec![Value::Numb(10.0), Value::Numb(20.0)]);
 
         let pairs: Vec<(Value, Value)> = t1.pair(&t2).collect();
         assert_eq!(pairs.len(), 2);
@@ -494,10 +490,6 @@ mod tuple_tests {
 mod boolean_conversion_tests {
     use super::*;
 
-    fn tuple(items: Vec<Value>) -> Value {
-        Value::Tuple(Rc::new(items))
-    }
-
     #[test]
     fn test_primitives_to_bool() {
         assert!(!bool::from(Value::Nothing));
@@ -514,7 +506,7 @@ mod boolean_conversion_tests {
     #[test]
     fn test_tuple_all_false_maps_to_false() {
         // A tuple where all items map to false
-        let all_false_tuple = tuple(vec![
+        let all_false_tuple = Value::tuple(vec![
             Value::Bool(false),
             Value::Numb(0.0),
             Value::Text("".into()),
@@ -527,7 +519,7 @@ mod boolean_conversion_tests {
     #[test]
     fn test_tuple_at_least_one_true_maps_to_true() {
         // A tuple where at least one item maps to true
-        let one_true_tuple = tuple(vec![
+        let one_true_tuple = Value::tuple(vec![
             Value::Bool(false),
             Value::Numb(0.0),
             Value::Text("truthy".into()),
@@ -540,8 +532,8 @@ mod boolean_conversion_tests {
     #[test]
     fn test_nested_tuple_all_false_maps_to_false() {
         // Nested tuples evaluate elements recursively via items()
-        let inner_false = tuple(vec![Value::Numb(0.0), Value::Bool(false)]);
-        let nested_all_false = tuple(vec![Value::Nothing, inner_false]);
+        let inner_false = Value::tuple(vec![Value::Numb(0.0), Value::Bool(false)]);
+        let nested_all_false = Value::tuple(vec![Value::Nothing, inner_false]);
 
         assert!(!bool::from(nested_all_false));
     }

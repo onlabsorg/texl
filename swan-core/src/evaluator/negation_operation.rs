@@ -60,17 +60,17 @@ mod tests {
         assert_eq!(evaluate("-()"), Value::Nothing);
 
         // Tuple: negated item by item
-        assert_eq!(evaluate("-(2, 3, 4)"), Value::Tuple(Rc::new(vec![
+        assert_eq!(evaluate("-(2, 3, 4)"), Value::tuple(vec![
             Value::Numb(-2.0),
             Value::Numb(-3.0),
             Value::Numb(-4.0)
-        ])));
+        ]));
 
         // Tuple with a non-numeric item: only that item becomes Undefined
-        assert_eq!(evaluate("-(1, \"a\")"), Value::Tuple(Rc::new(vec![
+        assert_eq!(evaluate("-(1, \"a\")"), Value::tuple(vec![
             Value::Numb(-1.0),
             Value::undef_unary("negation", Value::Text("a".into()), 0),
-        ])));
+        ]));
 
         // Other types: Undefined, carrying the operator, the operand and the position.
         // (`Undef`'s PartialEq ignores `pos`, so it is checked explicitly.)

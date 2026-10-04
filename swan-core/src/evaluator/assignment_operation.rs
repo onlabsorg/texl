@@ -98,7 +98,7 @@ mod tests {
         // --- Destructuring ---
         assert_eq!(
             evaluate("(a, b) = (1, 2), a, b"),
-            Value::Tuple(Rc::new(vec![Value::Numb(1.0), Value::Numb(2.0)]))
+            Value::tuple(vec![Value::Numb(1.0), Value::Numb(2.0)])
         );
 
         // --- More names than values: surplus names become Nothing ---
@@ -109,11 +109,11 @@ mod tests {
         // --- More values than names: surplus values are paired onto the last name ---
         assert_eq!(
             evaluate("a = (1, 2), a"),
-            Value::Tuple(Rc::new(vec![Value::Numb(1.0), Value::Numb(2.0)]))
+            Value::tuple(vec![Value::Numb(1.0), Value::Numb(2.0)])
         );
         assert_eq!(
             evaluate("(a, b) = (1, 2, 3), b"),
-            Value::Tuple(Rc::new(vec![Value::Numb(2.0), Value::Numb(3.0)]))
+            Value::tuple(vec![Value::Numb(2.0), Value::Numb(3.0)])
         );
         assert_eq!(evaluate("(a, b) = (1, 2, 3), a"), Value::Numb(1.0));
 

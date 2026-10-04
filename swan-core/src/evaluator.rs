@@ -46,11 +46,11 @@ macro_rules! map_pairs {
     ($lhv:expr, $rhv:expr, $eval_fn:expr) => {{
         let (lhv, rhv) = ($lhv, $rhv);
         if matches!(lhv, Value::Tuple(_)) || matches!(rhv, Value::Tuple(_)) {
-            Value::Tuple(Rc::new(
+            Value::tuple(
                 lhv.pair(&rhv)
                     .map(|(l,r)| $eval_fn(l,r))
                     .collect(),
-            )).normalize()
+            )
         } else if lhv == Value::Nothing && rhv == Value::Nothing {
             Value::Nothing
         } else {
@@ -70,11 +70,11 @@ macro_rules! map_values {
         match val {
             Value::Nothing => Value::Nothing,
             Value::Tuple(_) => {
-                Value::Tuple(Rc::new(
+                Value::tuple(
                     val.items()
                     .map($eval_fn)
                     .collect()
-                )).normalize()
+                )
             }
             _ => $eval_fn(val)
         }
@@ -423,17 +423,6 @@ fn invalid_names(op: &'static str, names: Value, pos: usize) -> Value {
     Value::undef_binary(op, names, Value::Nothing, pos)
 }
 
-/// Packs the per-item results of applying a list/namespace to a tuple of
-/// arguments. Unlike `Value::normalize`, `Nothing` results are kept so that
-/// result positions line up with argument positions.
-fn collect_results(items: Vec<Value>) -> Value {
-    match items.len() {
-        0 => Value::Nothing,
-        1 => items.into_iter().next().unwrap(),
-        _ => Value::Tuple(Rc::new(items)),
-    }
-}
-
 /// Evaluates an AST nodes that are supposed to resolve into names
 ///
 /// This functions resolves values or tuple at the left side of an
@@ -506,7 +495,7 @@ fn eval_apply(func: Value, arg: Value, pos: usize) -> Value {
                     .items()
                     .map(|idx| eval_apply_list(&list, idx, pos))
                     .collect();
-                collect_results(items)
+                Value::tuple(items)
             } else {
                 eval_apply_list(&list, arg, pos)
             }
@@ -519,7 +508,7 @@ fn eval_apply(func: Value, arg: Value, pos: usize) -> Value {
                     .items()
                     .map(|key| eval_apply_namespace(&scope, key, pos))
                     .collect();
-                collect_results(items)
+                Value::tuple(items)
             } else {
                 eval_apply_namespace(&scope, arg, pos)
             }
@@ -532,7 +521,7 @@ fn eval_apply(func: Value, arg: Value, pos: usize) -> Value {
                     .items()
                     .map(|idx| eval_apply_text(&text, idx, pos))
                     .collect();
-                collect_results(items)
+                Value::tuple(items)
             } else {
                 eval_apply_text(&text, arg, pos)
             }
@@ -716,10 +705,10 @@ mod tests {
         // --- Func ---
         assert_eq!(evaluate("f = (a) -> 2*a , f 5"), Value::Numb(10.0));
         assert_eq!(evaluate("f = (a,b) -> a+b , f(3,7)"), Value::Numb(10.0));
-        assert_eq!(evaluate("f = (a,b,c) -> (a,b)*c , f(2,3,4,5)"), Value::Tuple(Rc::new(vec![
-            Value::Numb(8.0),
-            Value::Numb(15.0),
-        ])));
+        assert_eq!(
+            evaluate("f = (a,b,c) -> (a,b)*c , f(2,3,4,5)"), 
+            Value::tuple(vec![Value::Numb(8.0), Value::Numb(15.0)])
+        );
         assert_eq!(evaluate("(()->3)()"), Value::Numb(3.0));
         assert_eq!(evaluate("(()->3) 10"), Value::Numb(3.0));
 
@@ -729,7 +718,7 @@ mod tests {
         // Tuple
         assert_eq!(
             evaluate("(x->2*x , x->3*x) 4"),
-            Value::Tuple(Rc::new(vec![Value::Numb(8.0), Value::Numb(12.0)]))
+            Value::tuple(vec![Value::Numb(8.0), Value::Numb(12.0)])
         );
 
         // --- List ---
@@ -747,11 +736,11 @@ mod tests {
         // Applying list to a Tuple
         assert_eq!(
             evaluate("[10, 20, 30] (0, 5, 2)"),
-            Value::Tuple(Rc::new(vec![Value::Numb(10.0), Value::Nothing, Value::Numb(30.0)]))
+            Value::tuple(vec![Value::Numb(10.0), Value::Numb(30.0)])
         );
         assert_eq!(
             evaluate("([1,2,3] , [10,20,30]) 1"),
-            Value::Tuple(Rc::new(vec![Value::Numb(2.0), Value::Numb(20.0)]))
+            Value::tuple(vec![Value::Numb(2.0), Value::Numb(20.0)])
         );
 
         // --- Namespace ---
@@ -769,12 +758,12 @@ mod tests {
         // Applying namespace to a Tuple
         assert_eq!(
             evaluate(r#"{x: 10, y: 20} ("x", "missing")"#),
-            Value::Tuple(Rc::new(vec![Value::Numb(10.0), Value::Nothing]))
+            Value::Numb(10.0),
         );
 
         assert_eq!(
             evaluate("({x:1, y:2} , {x:10, y:20}) \"y\""),
-            Value::Tuple(Rc::new(vec![Value::Numb(2.0), Value::Numb(20.0)]))
+            Value::tuple(vec![Value::Numb(2.0), Value::Numb(20.0)])
         );
 
         // --- Text ---
@@ -803,20 +792,19 @@ mod tests {
         // Applying text to a Tuple (Nothing is kept for positional alignment)
         assert_eq!(
             evaluate(r#""hello" (0, 10, 4)"#),
-            Value::Tuple(Rc::new(vec![
+            Value::tuple(vec![
                 Value::Text("h".into()),
-                Value::Nothing,
                 Value::Text("o".into()),
-            ]))
+            ])
         );
 
         // Applying a tuple of texts to a number
         assert_eq!(
             evaluate(r#"("abc", "xyz") 1"#),
-            Value::Tuple(Rc::new(vec![
+            Value::tuple(vec![
                 Value::Text("b".into()),
                 Value::Text("y".into()),
-            ]))
+            ])
         );
     }
 
@@ -841,14 +829,14 @@ mod tests {
 
         assert_eq!(
             evaluate("x : 5, x"),
-            Value::Tuple(Rc::new(vec![Value::Numb(5.0), Value::Numb(5.0)]))
+            Value::tuple(vec![Value::Numb(5.0), Value::Numb(5.0)])
         );
 
         // Destructuring labelling behaves like destructuring assignment,
         // but also yields the assigned values as the LabellingOp's result.
         assert_eq!(
             evaluate("(a, b) : (1, 2)"),
-            Value::Tuple(Rc::new(vec![Value::Numb(1.0), Value::Numb(2.0)]))
+            Value::tuple(vec![Value::Numb(1.0), Value::Numb(2.0)])
         );
 
         // Invalid left-hand names.
@@ -875,11 +863,11 @@ mod tests {
     fn mapping() {
 
         // Mapping tuple to function
-        assert_eq!(evaluate("f = a -> 2*a , (2,3,4) => f"), Value::Tuple(Rc::new(vec![
+        assert_eq!(evaluate("f = a -> 2*a , (2,3,4) => f"), Value::tuple(vec![
             Value::Numb(4.0),
             Value::Numb(6.0),
             Value::Numb(8.0),
-        ])));
+        ]));
 
         // Mapping value to function
         assert_eq!(evaluate("f = a -> 2*a , 2 => f"), Value::Numb(4.0));
@@ -893,12 +881,12 @@ mod tests {
         // Mapping tuple to tuple of functions
         assert_eq!(
             evaluate("f = a -> 2*a , g = b -> 3*b, (2,5) => (f,g)"),
-            Value::Tuple(Rc::new(vec![
+            Value::tuple(vec![
                 Value::Numb(4.0),
                 Value::Numb(6.0),
                 Value::Numb(10.0),
                 Value::Numb(15.0),
-            ]))
+            ])
         );
     }
 
@@ -920,10 +908,10 @@ mod tests {
         // Tuples get filtered by truthyness
         assert_eq!(
             evaluate("(TRUE, FALSE, TRUE, FALSE) ? (1,2,3,4)"),
-            Value::Tuple(Rc::new(vec![
+            Value::tuple(vec![
                 Value::Numb(1.0),
                 Value::Numb(3.0),
-            ]))
+            ])
         );
     }
 
@@ -954,10 +942,10 @@ mod tests {
         // Tuple
         assert_eq!(
             evaluate("(FALSE, 1) & (10, \"abc\")"),
-            Value::Tuple(Rc::new(vec![
+            Value::tuple(vec![
                 Value::Bool(false),
                 Value::Text("abc".into()),
-            ]))
+            ])
         );
         assert_eq!(evaluate("TRUE & (10, 1)"), Value::Numb(10.0));
     }
@@ -980,10 +968,10 @@ mod tests {
         // Tuple
         assert_eq!(
             evaluate("(FALSE, 1) | (10, \"abc\")"),
-            Value::Tuple(Rc::new(vec![
+            Value::tuple(vec![
                 Value::Numb(10.0),
                 Value::Numb(1.0),
-            ]))
+            ])
         );
         assert_eq!(evaluate("(FALSE, 0) | 10"), Value::Numb(10.0));
     }

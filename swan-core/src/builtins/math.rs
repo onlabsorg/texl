@@ -199,7 +199,6 @@ fn builtin_f64_curried(name: &'static str, f: fn(f64, f64) -> f64) -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::rc::Rc;
     use crate::evaluator::eval;
     use crate::lexer::Lexer;
     use crate::parser::Parser;
@@ -240,10 +239,10 @@ mod tests {
         assert_eq!(run("math.sqrt()"), Value::Nothing);
 
         // Tuples
-        assert_eq!(run("math.sqrt(9,4)"), Value::Tuple(Rc::new(vec![
-            Value::Numb(3.0),
-            Value::Numb(2.0),
-        ])));
+        assert_eq!(
+            run("math.sqrt(9,4)"), 
+            Value::tuple(vec![Value::Numb(3.0), Value::Numb(2.0)])
+        );
     }
 
     #[test]
@@ -261,10 +260,10 @@ mod tests {
         assert_eq!(run("math.abs()"), Value::Nothing);
 
         // Tuple
-        assert_eq!(run("math.abs(-5,3)"), Value::Tuple(Rc::new(vec![
+        assert_eq!(run("math.abs(-5,3)"), Value::tuple(vec![
             Value::Numb(5.0),
             Value::Numb(3.0),
-        ])));
+        ]));
     }
 
     #[test]
@@ -282,7 +281,7 @@ mod tests {
         // Tuple
         assert_eq!(
             run("math.floor(1.2, 3.8)"),
-            Value::Tuple(Rc::new(vec![Value::Numb(1.0), Value::Numb(3.0)]))
+            Value::tuple(vec![Value::Numb(1.0), Value::Numb(3.0)])
         );
     }
 
@@ -301,7 +300,7 @@ mod tests {
         // Tuple
         assert_eq!(
             run("math.ceil(1.2, 3.8)"),
-            Value::Tuple(Rc::new(vec![Value::Numb(2.0), Value::Numb(4.0)]))
+            Value::tuple(vec![Value::Numb(2.0), Value::Numb(4.0)])
         );
     }
 
@@ -320,7 +319,7 @@ mod tests {
         // Tuple
         assert_eq!(
             run("math.round(1.2, 3.8)"),
-            Value::Tuple(Rc::new(vec![Value::Numb(1.0), Value::Numb(4.0)]))
+            Value::tuple(vec![Value::Numb(1.0), Value::Numb(4.0)])
         );
     }
 
@@ -339,7 +338,7 @@ mod tests {
         // Tuple
         assert_eq!(
             run("math.trunc(1.9, -2.9)"),
-            Value::Tuple(Rc::new(vec![Value::Numb(1.0), Value::Numb(-2.0)]))
+            Value::tuple(vec![Value::Numb(1.0), Value::Numb(-2.0)])
         );
     }
 
@@ -357,7 +356,7 @@ mod tests {
         // Tuple
         assert_eq!(
             run("math.sin(0, 0)"),
-            Value::Tuple(Rc::new(vec![Value::Numb(0.0), Value::Numb(0.0)]))
+            Value::tuple(vec![Value::Numb(0.0), Value::Numb(0.0)])
         );
     }
 
@@ -375,7 +374,7 @@ mod tests {
         // Tuple
         assert_eq!(
             run("math.cos(0, 0)"),
-            Value::Tuple(Rc::new(vec![Value::Numb(1.0), Value::Numb(1.0)]))
+            Value::tuple(vec![Value::Numb(1.0), Value::Numb(1.0)])
         );
     }
 
@@ -393,7 +392,7 @@ mod tests {
         // Tuple
         assert_eq!(
             run("math.tan(0, 0)"),
-            Value::Tuple(Rc::new(vec![Value::Numb(0.0), Value::Numb(0.0)]))
+            Value::tuple(vec![Value::Numb(0.0), Value::Numb(0.0)])
         );
     }
 
@@ -412,7 +411,7 @@ mod tests {
         // Tuple
         assert_eq!(
             run("math.asin(0, 0)"),
-            Value::Tuple(Rc::new(vec![Value::Numb(0.0), Value::Numb(0.0)]))
+            Value::tuple(vec![Value::Numb(0.0), Value::Numb(0.0)])
         );
     }
 
@@ -431,7 +430,7 @@ mod tests {
         // Tuple
         assert_eq!(
             run("math.acos(1, 1)"),
-            Value::Tuple(Rc::new(vec![Value::Numb(0.0), Value::Numb(0.0)]))
+            Value::tuple(vec![Value::Numb(0.0), Value::Numb(0.0)])
         );
     }
 
@@ -449,7 +448,7 @@ mod tests {
         // Tuple
         assert_eq!(
             run("math.atan(0, 0)"),
-            Value::Tuple(Rc::new(vec![Value::Numb(0.0), Value::Numb(0.0)]))
+            Value::tuple(vec![Value::Numb(0.0), Value::Numb(0.0)])
         );
     }
 
@@ -467,7 +466,7 @@ mod tests {
         // Tuple
         assert_eq!(
             run("math.sinh(0, 0)"),
-            Value::Tuple(Rc::new(vec![Value::Numb(0.0), Value::Numb(0.0)]))
+            Value::tuple(vec![Value::Numb(0.0), Value::Numb(0.0)])
         );
     }
 
@@ -485,7 +484,7 @@ mod tests {
         // Tuple
         assert_eq!(
             run("math.cosh(0, 0)"),
-            Value::Tuple(Rc::new(vec![Value::Numb(1.0), Value::Numb(1.0)]))
+            Value::tuple(vec![Value::Numb(1.0), Value::Numb(1.0)])
         );
     }
 
@@ -503,7 +502,7 @@ mod tests {
         // Tuple
         assert_eq!(
             run("math.tanh(0, 0)"),
-            Value::Tuple(Rc::new(vec![Value::Numb(0.0), Value::Numb(0.0)]))
+            Value::tuple(vec![Value::Numb(0.0), Value::Numb(0.0)])
         );
     }
 
@@ -521,7 +520,7 @@ mod tests {
         // Tuple
         assert_eq!(
             run("math.asinh(0, 0)"),
-            Value::Tuple(Rc::new(vec![Value::Numb(0.0), Value::Numb(0.0)]))
+            Value::tuple(vec![Value::Numb(0.0), Value::Numb(0.0)])
         );
     }
 
@@ -540,7 +539,7 @@ mod tests {
         // Tuple
         assert_eq!(
             run("math.acosh(1, 1)"),
-            Value::Tuple(Rc::new(vec![Value::Numb(0.0), Value::Numb(0.0)]))
+            Value::tuple(vec![Value::Numb(0.0), Value::Numb(0.0)])
         );
     }
 
@@ -559,7 +558,7 @@ mod tests {
         // Tuple
         assert_eq!(
             run("math.atanh(0, 0)"),
-            Value::Tuple(Rc::new(vec![Value::Numb(0.0), Value::Numb(0.0)]))
+            Value::tuple(vec![Value::Numb(0.0), Value::Numb(0.0)])
         );
     }
 
@@ -577,7 +576,7 @@ mod tests {
         // Tuple
         assert_eq!(
             run("math.exp(0, 0)"),
-            Value::Tuple(Rc::new(vec![Value::Numb(1.0), Value::Numb(1.0)]))
+            Value::tuple(vec![Value::Numb(1.0), Value::Numb(1.0)])
         );
     }
 
@@ -596,7 +595,7 @@ mod tests {
         // Tuple
         assert_eq!(
             run("math.ln(math.E, math.E)"),
-            Value::Tuple(Rc::new(vec![Value::Numb(1.0), Value::Numb(1.0)]))
+            Value::tuple(vec![Value::Numb(1.0), Value::Numb(1.0)])
         );
     }
 
@@ -615,12 +614,13 @@ mod tests {
         // Tuple
         assert_eq!(
             run("math.log2(8, 16)"),
-            Value::Tuple(Rc::new(vec![Value::Numb(3.0), Value::Numb(4.0)]))
+            Value::tuple(vec![Value::Numb(3.0), Value::Numb(4.0)])
         );
     }
 
     #[test]
     fn test_log10() {
+
         // Numb
         assert_eq!(run("math.log10 100"), Value::Numb(2.0));
 
@@ -634,7 +634,7 @@ mod tests {
         // Tuple
         assert_eq!(
             run("math.log10(100, 1000)"),
-            Value::Tuple(Rc::new(vec![Value::Numb(2.0), Value::Numb(3.0)]))
+            Value::tuple(vec![Value::Numb(2.0), Value::Numb(3.0)])
         );
     }
 
@@ -659,16 +659,16 @@ mod tests {
         assert_eq!(run("math.pow()"), Value::Nothing);
 
         // Tuples
-        assert_eq!(run("math.pow(3, 4) 2"), Value::Tuple(Rc::new(vec![
+        assert_eq!(run("math.pow(3, 4) 2"), Value::tuple(vec![
             Value::Numb(8.0),
             Value::Numb(16.0),
-        ])));
-        assert_eq!(run("math.pow(3, 4) (2, 5)"), Value::Tuple(Rc::new(vec![
+        ]));
+        assert_eq!(run("math.pow(3, 4) (2, 5)"), Value::tuple(vec![
             Value::Numb(  8.0), 
             Value::Numb(125.0),
             Value::Numb( 16.0), 
             Value::Numb(625.0),
-        ])));
+        ]));
     }
 
     #[test]
@@ -686,16 +686,16 @@ mod tests {
         assert_eq!(run("math.log()"), Value::Nothing);
 
         // Tuples
-        assert_eq!(run("math.log(10, 100) 10000"), Value::Tuple(Rc::new(vec![
+        assert_eq!(run("math.log(10, 100) 10000"), Value::tuple(vec![
             Value::Numb(4.0),
             Value::Numb(2.0),
-        ])));
-        assert_eq!(run("math.log(10, 100) (100, 10000)"), Value::Tuple(Rc::new(vec![
+        ]));
+        assert_eq!(run("math.log(10, 100) (100, 10000)"), Value::tuple(vec![
             Value::Numb(2.0), 
             Value::Numb(4.0),
             Value::Numb(1.0), 
             Value::Numb(2.0),
-        ])));
+        ]));
     }
 
     #[test]
@@ -718,7 +718,7 @@ mod tests {
         // Tuple
         assert_eq!(
             run("math.atan2 1 (0, 0)"),
-            Value::Tuple(Rc::new(vec![Value::Numb(0.0), Value::Numb(0.0)]))
+            Value::tuple(vec![Value::Numb(0.0), Value::Numb(0.0)])
         );
     }
 
@@ -739,7 +739,7 @@ mod tests {
         // Tuple
         assert_eq!(
             run("math.hypot 3 (4, 4)"),
-            Value::Tuple(Rc::new(vec![Value::Numb(5.0), Value::Numb(5.0)]))
+            Value::tuple(vec![Value::Numb(5.0), Value::Numb(5.0)])
         );
     }
 

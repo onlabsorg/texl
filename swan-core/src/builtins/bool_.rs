@@ -58,7 +58,6 @@ fn bool_all(val: Value) -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::rc::Rc;
     use crate::evaluator::eval;
     use crate::lexer::Lexer;
     use crate::parser::Parser;
@@ -119,10 +118,7 @@ mod tests {
         // Tuple: converted element-wise, not reduced
         assert_eq!(
             run("bool.from(1, [])"), 
-            Value::Tuple(Rc::new(vec![
-                Value::Bool(true),
-                Value::Bool(false),
-            ])),
+            Value::tuple(vec![Value::Bool(true), Value::Bool(false)]),
         );
     }
 

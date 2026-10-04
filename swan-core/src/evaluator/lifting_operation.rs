@@ -40,7 +40,6 @@ pub fn eval(name: Value, scope: &Scope, pos: usize) -> Value {
 
 #[cfg(test)]
 mod tests {
-    use std::rc::Rc;
     use super::*;
     use crate::lexer::Lexer;
     use crate::parser::Parser;
@@ -68,10 +67,10 @@ mod tests {
         // Tuple
         assert_eq!(
             evaluate("{x=1}.{x=2,y=3}.$(x,y)"),
-            Value::Tuple(Rc::new(vec![
+            Value::tuple(vec![
                 Value::Numb(1.0),
                 Value::Numb(3.0),
-            ]))
+            ])
         );
 
         // Invalid operand: not a name, so the result is an Undefined lifting operation

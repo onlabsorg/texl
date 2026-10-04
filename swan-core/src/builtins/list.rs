@@ -171,10 +171,10 @@ mod tests {
         // Tuple
         assert_eq!(
             run("list.size([1,2,3], [4,5,6,7,8])"), 
-            Value::Tuple(Rc::new(vec![
+            Value::tuple(vec![
                 Value::Numb(3.0),
                 Value::Numb(5.0),
-            ]))
+            ])
         );
 
         // Others
@@ -187,11 +187,11 @@ mod tests {
         // List
         assert_eq!(
             run("list.enum [1,2,3]"),
-            Value::Tuple(Rc::new(vec![
+            Value::tuple(vec![
                 Value::Numb(1.0),
                 Value::Numb(2.0),
                 Value::Numb(3.0),
-            ]))
+            ])
         );
 
         // Nothing (also when paired with a non-list, since Nothing short-circuits)
@@ -200,13 +200,13 @@ mod tests {
         // Tuple
         assert_eq!(
             run("list.enum([1,2,3], [4,5])"), 
-            Value::Tuple(Rc::new(vec![
+            Value::tuple(vec![
                 Value::Numb(1.0),
                 Value::Numb(2.0),
                 Value::Numb(3.0),
                 Value::Numb(4.0),
                 Value::Numb(5.0),
-            ]))
+            ])
         );
 
         // Others
@@ -232,10 +232,10 @@ mod tests {
         // Tuple
         assert_eq!(
             run("list.reverse([1,2], [3,4])"),
-            Value::Tuple(Rc::new(vec![
+            Value::tuple(vec![
                 Value::List(Rc::new(vec![Value::Numb(2.0), Value::Numb(1.0)])),
                 Value::List(Rc::new(vec![Value::Numb(4.0), Value::Numb(3.0)])),
-            ]))
+            ])
         );
 
         // Others
@@ -258,21 +258,21 @@ mod tests {
         // Tuple - List: each item/count is applied to the same list
         assert_eq!(
             run("list.find (2,4) [1,2,3,4,5,1,2,3,4,5]"), 
-            Value::Tuple(Rc::new(vec![
+            Value::tuple(vec![
                 Value::Numb(1.0),
                 Value::Numb(3.0),
-            ]))
+            ])
         );
 
         // Tuple - Tuple: items/counts are paired with lists; results are flattened in order
         assert_eq!(
             run("list.find (2,4) ([1,2,3,4,5,1,2,3,4,5], [2,4,6,2,4,6])"), 
-            Value::Tuple(Rc::new(vec![
+            Value::tuple(vec![
                 Value::Numb(1.0),
                 Value::Numb(0.0),
                 Value::Numb(3.0),
                 Value::Numb(1.0),
-            ]))
+            ])
         );
 
         // Others
@@ -295,21 +295,21 @@ mod tests {
         // Tuple - List: each item/count is applied to the same list
         assert_eq!(
             run("list.rfind (2,4) [1,2,3,4,5,1,2,3,4,5]"), 
-            Value::Tuple(Rc::new(vec![
+            Value::tuple(vec![
                 Value::Numb(6.0),
                 Value::Numb(8.0),
-            ]))
+            ])
         );
 
         // Tuple - Tuple: items/counts are paired with lists; results are flattened in order
         assert_eq!(
             run("list.rfind (2,4) ([1,2,3,4,5,1,2,3,4,5], [2,4,6,2,4,6])"), 
-            Value::Tuple(Rc::new(vec![
+            Value::tuple(vec![
                 Value::Numb(6.0),
                 Value::Numb(3.0),
                 Value::Numb(8.0),
                 Value::Numb(4.0),
-            ]))
+            ])
         );
 
         // Others
@@ -356,7 +356,7 @@ mod tests {
         // Tuple - List: each item/count is applied to the same list
         assert_eq!(
             run("list.head (2, 3) [1,2,3,4,5,6]"), 
-            Value::Tuple(Rc::new(vec![
+            Value::tuple(vec![
                 Value::List(Rc::new(vec![
                     Value::Numb(1.0),
                     Value::Numb(2.0),
@@ -366,13 +366,13 @@ mod tests {
                     Value::Numb(2.0),
                     Value::Numb(3.0),
                 ])),
-            ]))
+            ])
         );
 
         // Tuple - Tuple: items/counts are paired with lists; results are flattened in order
         assert_eq!(
             run("list.head (2, 3) ([1,2,3,4,5], [6,7,8,9])"), 
-            Value::Tuple(Rc::new(vec![
+            Value::tuple(vec![
                 Value::List(Rc::new(vec![
                     Value::Numb(1.0),
                     Value::Numb(2.0),
@@ -391,7 +391,7 @@ mod tests {
                     Value::Numb(7.0),
                     Value::Numb(8.0),
                 ])),
-            ]))
+            ])
         );
 
         // Others
@@ -443,7 +443,7 @@ mod tests {
         // Tuple - List: each item/count is applied to the same list
         assert_eq!(
             run("list.tail (5, 4) [1,2,3,4,5,6]"), 
-            Value::Tuple(Rc::new(vec![
+            Value::tuple(vec![
                 Value::List(Rc::new(vec![
                     Value::Numb(6.0),
                 ])),
@@ -451,13 +451,13 @@ mod tests {
                     Value::Numb(5.0),
                     Value::Numb(6.0),
                 ])),
-            ]))
+            ])
         );
 
         // Tuple - Tuple: items/counts are paired with lists; results are flattened in order
         assert_eq!(
             run("list.tail (3, 2) ([1,2,3,4,5], [6,7,8,9,10])"), 
-            Value::Tuple(Rc::new(vec![
+            Value::tuple(vec![
                 Value::List(Rc::new(vec![
                     Value::Numb(4.0),
                     Value::Numb(5.0),
@@ -476,7 +476,7 @@ mod tests {
                     Value::Numb(9.0),
                     Value::Numb(10.0),
                 ])),
-            ]))
+            ])
         );
 
         // Others
