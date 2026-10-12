@@ -344,6 +344,10 @@ impl<'a> Lexer<'a> {
         else if ch == '=' && self.next_char_is('>') {
             self.next_char(); (ch_pos, Token::MappingOp)
         }
+        else if ch == '~' && self.next_char_is('>') {
+            self.next_char();
+            (ch_pos, Token::ThenOp)
+        }
 
         // --- Single-character tokens -------------------------------------------
         else {

@@ -14,6 +14,9 @@ pub use undef::Undef;
 mod func;
 pub use func::BuiltinFn;
 
+mod promise;
+pub use promise::Promise;
+
 
 
 // ----------------------------------------------------------------------------
@@ -58,6 +61,9 @@ pub enum Value {
 
     /// A native Rust function callable from Swan.
     Builtin(BuiltinFn),
+
+    /// Promise
+    Promise(Promise),
 
     /// Undefined value
     ///
@@ -131,6 +137,7 @@ impl PartialEq for Value {
             (Value::Tuple(a),     Value::Tuple(b))     => a == b,
             (Value::Namespace(a), Value::Namespace(b)) => a == b,
             (Value::Undefined(a), Value::Undefined(b)) => a == b,
+            (Value::Promise(a),   Value::Promise(b))   => Rc::ptr_eq(&a.0, &b.0),
             (Value::Nothing,      Value::Nothing)      => true,
             // Every other pair is never equal
             _ => false,

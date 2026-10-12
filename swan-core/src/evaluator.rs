@@ -16,11 +16,10 @@ mod negation_operation;
 mod logical_negation_operation;
 mod lifting_operation;
 
-// Binary / binding operations
+// Binary operations
 mod pairing_operation;
 mod assignment_operation;
-
-// Binary operations with tuple broadcasting
+mod then_operation;
 mod arithmetic_operations;
 mod comparison_operations;
 
@@ -198,6 +197,13 @@ pub fn eval(node: &Node, scope: &Scope) -> Value {
             let args = eval(&bin.lho, scope);
             let func = eval(&bin.rho, scope);
             map_values!(args, |a: Value| map_values!(func.clone(), |f| eval_apply(f, a.clone(), bin.pos)))
+        }
+
+        // Promise chaining (P then F): `P ~> F`
+        Node::ThenOp(bin) => {
+            let promises = eval(&bin.lho, scope);
+            let func     = eval(&bin.rho, scope);
+            map_values!(promises, |p| then_operation::eval(p, func.clone(), bin.pos))
         }
 
         // Assignment: `name = V` - evaluates to Nothing, binds names in scope
@@ -478,7 +484,7 @@ fn eval_names(node: &Node) -> Value {
 /// - `Value::Namespace`: lookup by text key, or by a tuple of keys.
 /// - `Value::Text`: character indexing by number, or by a tuple of numbers.
 /// - Anything else: returns `Undefined(application)`.
-fn eval_apply(func: Value, arg: Value, pos: usize) -> Value {
+pub fn eval_apply(func: Value, arg: Value, pos: usize) -> Value {
     match func {
         Value::Builtin(ref f) => f.call(arg),
 

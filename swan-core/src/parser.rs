@@ -71,6 +71,7 @@ fn lbp(token: &Token) -> u32 {
         Token::LabellingOp           => 12,   // :
 
         Token::MappingOp             => 13,   // =>
+        Token::ThenOp                => 13,   // ~>
 
         Token::ReverseCompositionOp  => 14,   // >>
         Token::CompositionOp         => 14,   // <<
@@ -119,6 +120,7 @@ fn rbp(token: &Token) -> u32 {
         Token::PowerOp              => lbp(token) - 1,   // ^
         Token::FunctionDefinitionOp => lbp(token) - 1,   // ->
         Token::MappingOp            => lbp(token) - 1,   // =>
+        Token::ThenOp               => lbp(token) - 1,   // ~>
 
         // All other infix operators are left-associative.
         _ => lbp(token),
@@ -544,6 +546,7 @@ impl<'a> Parser<'a> {
             // Function-related
             Token::FunctionDefinitionOp => Node::FunctionDefinitionOp(bin(lhs, rhs)),
             Token::MappingOp            => Node::MappingOp(bin(lhs, rhs)),
+            Token::ThenOp               => Node::ThenOp(bin(lhs, rhs)),
 
             // Composition
             Token::CompositionOp        => Node::CompositionOp(bin(lhs, rhs)),

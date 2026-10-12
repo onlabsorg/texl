@@ -64,6 +64,9 @@ pub enum Token<'a> {
     /// `=>` (precedence 13) — mapping (anonymous function shorthand).
     MappingOp,
 
+    /// `~>` (precedence 13) — chaining promises
+    ThenOp,
+
     /// `>>` (precedence 14) — reverse composition / pipe (left-to-right).
     ReverseCompositionOp,
     /// `<<` (precedence 14) — composition (right-to-left).

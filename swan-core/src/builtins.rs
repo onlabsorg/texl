@@ -31,6 +31,7 @@ mod numb;
 mod text;
 mod list;
 mod nspace;
+mod promise;
 mod undef;
 mod math;
 mod time;
@@ -62,14 +63,15 @@ pub fn root_scope() -> Scope {
     let scope = Scope::new();
 
     // Each namespace is registered under its own name, e.g. `math.sqrt`.
-    scope.set("bool"  , bool_::create_namespace(&scope));
-    scope.set("numb"  , numb::create_namespace(&scope));
-    scope.set("text"  , text::create_namespace(&scope));
-    scope.set("list"  , list::create_namespace(&scope));
-    scope.set("nspace", nspace::create_namespace(&scope));
-    scope.set("undef" , undef::create_namespace(&scope));
-    scope.set("math"  , math::create_namespace(&scope));
-    scope.set("time"  , time::create_namespace(&scope));
+    scope.set("bool"   , bool_::create_namespace(&scope));
+    scope.set("numb"   , numb::create_namespace(&scope));
+    scope.set("text"   , text::create_namespace(&scope));
+    scope.set("list"   , list::create_namespace(&scope));
+    scope.set("nspace" , nspace::create_namespace(&scope));
+    scope.set("promise", promise::create_namespace(&scope));
+    scope.set("undef"  , undef::create_namespace(&scope));
+    scope.set("math"   , math::create_namespace(&scope));
+    scope.set("time"   , time::create_namespace(&scope));
 
     scope.set("TRUE" , Value::Bool(true));
     scope.set("FALSE", Value::Bool(false));
@@ -101,9 +103,10 @@ fn type_function(val: Value) -> Value {
         Value::List(_) => "List",
         Value::Namespace(_) => "Namespace",
         Value::Func { .. } | Value::Builtin(_) => "Func",
+        Value::Promise(_)   => "Promise",
         Value::Undefined(_) => "Undefined",
-        Value::Tuple(_) => "Tuple",
-        Value::Name(_) => "Name",
+        Value::Tuple(_)     => "Tuple",
+        Value::Name(_)      => "Name",
     };
     Value::Text(n.into())
 }

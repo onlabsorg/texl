@@ -57,6 +57,7 @@ pub enum Node {
     AssignmentOp(BinaryOp),         // =
     LabellingOp(BinaryOp),          // :
     SubcontextingOp(BinaryOp),      // .
+    ThenOp(BinaryOp),               // ~>
 
 
     // Binary Operations :: Arithmetic
@@ -120,6 +121,7 @@ impl Node {
             Self::AssignmentOp(binary)         => binary.pos,
             Self::LabellingOp(binary)          => binary.pos,
             Self::SubcontextingOp(binary)      => binary.pos,
+            Self::ThenOp(binary)               => binary.pos,
 
             Self::PowerOp(binary)       => binary.pos,
             Self::ProductOp(binary)     => binary.pos,

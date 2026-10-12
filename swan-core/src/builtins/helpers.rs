@@ -10,8 +10,9 @@ pub fn map_1(name: &'static str, f: impl Fn(Value) -> Value + 'static + Clone) -
     Value::Builtin(BuiltinFn::new(name, move |arg| arg.map(f.clone())))
 }
 
-/// Wraps a curried 2-argument built-in function so that if given tuples,
-/// it pairs the tuple elements using `arg1.pair(&arg2)` and returns a mapped `Tuple`.
+/// Wraps a truly curried 2-argument built-in: `f arg1 arg2`.
+/// Each application is mapped over tuples via `map_1`.
+/// Note: calling it with one tuple `(a, b)` does NOT work; use `binary_tuple` for that.
 pub fn map_curried(
     name: &'static str,
     f: impl Fn(Value, Value) -> Value + 'static + Copy,
