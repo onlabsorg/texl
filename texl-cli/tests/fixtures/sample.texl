@@ -1,0 +1,17 @@
+<% 
+    name = "Marcello",
+    users_count = 33,
+    pending_items = 71,
+    is_active = TRUE
+%>
+Hello, <% name %>!
+
+Today's Statistics:
+- Total Users: <% users_count %>
+- Pending Items: <% pending_items %>
+- System Active: <% is_active %>
+
+Summary:
+- Combined Score: <% users_count + pending_items %>
+- Status Check: <% is_active ? "All systems operational" ; "System warning" %>
+- Coordinates: <% (10, 20, "Zone A") %>
