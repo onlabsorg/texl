@@ -1,0 +1,4 @@
+#!/bin/bash
+
+wasm-pack build texl-wasm --target web --out-dir pkg-web
+wasm-pack build texl-wasm --target nodejs --out-dir pkg-node

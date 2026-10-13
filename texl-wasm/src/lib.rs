@@ -1,7 +1,6 @@
 use wasm_bindgen::prelude::*;
-use js_sys::{Object, Reflect, Array, Function}; //, Number, JsString, Boolean};
-
-use swan_core::value::{Scope, Value, BuiltinFn};
+use js_sys::{Object, Reflect, Array, Function};
+use swan_core::value::{Scope, Value, BuiltinFn, Promise};
 use texl_core::{context, template};
 
 /// Opaque wrapper around a Swan Scope for JS
@@ -63,8 +62,23 @@ pub fn create_context(js_obj: Option<Object>) -> Result<TexlContext, JsValue> {
 }
 
 #[wasm_bindgen]
-pub fn render(template_str: &str, ctx: &TexlContext) -> String {
-    template::render(template_str, &ctx.scope)
+/// Renders a template asynchronously. Returns a JS Promise<string>; any Swan
+/// promises (including wrapped JS promises / async functions) are awaited.
+pub fn render(template_str: String, ctx: &TexlContext) -> js_sys::Promise {
+    let scope = ctx.scope.clone();
+    wasm_bindgen_futures::future_to_promise(async move {
+        let out = template::render(&template_str, &scope).await;
+        Ok(JsValue::from_str(&out))
+    })
+}
+
+/// True for native Promises and any other "thenable" (object with a callable `then`).
+fn is_thenable(val: &JsValue) -> bool {
+    val.is_instance_of::<js_sys::Promise>()
+        || (val.is_object()
+            && Reflect::get(val, &JsValue::from_str("then"))
+                .map(|t| t.is_function())
+                .unwrap_or(false))
 }
 
 // ----------------------------------------------------------------------------
@@ -87,8 +101,24 @@ fn js_to_swan_value(val: JsValue) -> Result<Value, JsValue> {
             items.push(js_to_swan_value(arr.get(i))?);
         }
         Ok(Value::list(items))
+    } else if is_thenable(&val) {
+        let swan_promise = Promise::new();
+        let sp = swan_promise.clone();
+        // Normalises thenables / foreign-realm promises into a native Promise
+        let js_promise = js_sys::Promise::resolve(&val);
+        wasm_bindgen_futures::spawn_local(async move {
+            let result = wasm_bindgen_futures::JsFuture::from(js_promise).await;
+            let v = match result {
+                Ok(v)  => js_to_swan_value(v).unwrap_or(Value::Nothing),
+                Err(_) => Value::Nothing, // Swan promises never reject
+            };
+            sp.resolve(v);
+        });
+        Ok(Value::Promise(swan_promise))
     } else if val.is_function() {
         // Wrap JS Function as a Swan BuiltinFn
+        // If the JS function is async (returns a Promise), the result is converted by
+        // js_to_swan_value into a Swan Promise, so Swan sees it as a promise-returning function.
         let js_fn: Function = val.into();
         
         let builtin = BuiltinFn::new("js_callback", move |arg: Value| {
@@ -149,6 +179,17 @@ fn swan_value_to_js(val: &Value) -> JsValue {
                 let _ = Reflect::set(&obj, &JsValue::from_str(&k), &swan_value_to_js(&v));
             }
             obj.into()
+        }
+        Value::Promise(swan_promise) => {
+            let swan_promise = swan_promise.clone();
+            let js_promise = js_sys::Promise::new(&mut |resolve: Function, _reject: Function| {
+                // `then` fires immediately if already resolved, otherwise on resolution.
+                swan_promise.then(move |v| {
+                    let _ = resolve.call1(&JsValue::UNDEFINED, &swan_value_to_js(&v));
+                    Value::Nothing
+                });
+            });
+            js_promise.into()
         }
         _ => JsValue::UNDEFINED,
     }
