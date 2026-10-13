@@ -1,7 +1,56 @@
+//! Evaluation of the `then` operator (`~>`).
+//!
+//! `P ~> F` chains the function `F` onto the promise `P` and returns a new
+//! child promise.
+//!
+//! # Semantics
+//!
+//! - **Promise target:** `F` is registered as a continuation of `P`.
+//!   - If `P` is already resolved, `F` runs immediately.
+//!   - Otherwise it runs when `P` resolves.
+//!   - The child promise resolves with the result of applying `F` to `P`'s
+//!     value, using the normal function-application rules (`eval_apply`).
+//! - **Multiple children:** one promise may be chained several times. Each
+//!   chained function gets its own independent child promise.
+//! - **Tuple of functions:** `P ~> (F, G)` chains each function and returns a
+//!   tuple of child promises, one per function.
+//! - **Tuple of promises:** `(P, Q) ~> F` chains `F` onto each promise and
+//!   yields a tuple of child promises.
+//! - **Undefined results:** a Swan promise never rejects. If a chained
+//!   function returns an `Undefined` value, the child promise resolves to
+//!   `Nothing` instead.
+//! - **Non-promise target:** the result is
+//!   `Undefined(BinaryOperation { op: "then", .. })`.
+//!
+//! # Examples
+//!
+//! ```text
+//! p = promise.create(),
+//! c = p ~> (x -> x + 1),   // c is a new, pending promise
+//! promise.resolve p 1,     // c now resolves to 2
+//! ```
 
 use crate::value::Value;
 
 
+/// Evaluates `target ~> func`.
+///
+/// # Arguments
+///
+/// * `target` - The value on the left of `~>`. Must be a `Value::Promise`.
+/// * `func`   - The function, or tuple of functions, on the right of `~>`.
+///   Tuples are iterated with `Value::items`, so each contained function is
+///   chained separately.
+/// * `pos`    - Source position, used for error reporting and passed to
+///   function application.
+///
+/// # Returns
+///
+/// * For a `Promise` target, one child promise per function in `func`,
+///   collected with `Value::tuple`. A single function yields a single child
+///   promise; several functions yield a tuple of child promises.
+/// * For any other target, `Undefined(BinaryOperation { op: "then", .. })`
+///   built from `target`, `func` and `pos`.
 pub fn eval(target: Value, func: Value, pos: usize) -> Value {
     match target {
         Value::Promise(promise) => {
@@ -25,6 +74,12 @@ pub fn eval(target: Value, func: Value, pos: usize) -> Value {
 // ----------------------------------------------------------------------------
 
 #[cfg(test)]
+/// Tests for the `~>` operator, covering:
+/// - basic chaining and non-promise error handling
+/// - resolve-then-chain and chain-then-resolve ordering
+/// - multiple and nested children
+/// - `Nothing` and `Undefined` results
+/// - tuple arguments, tuple targets, and asynchronous assignment via `bind`
 mod tests {
     use super::*;
     use crate::lexer::Lexer;

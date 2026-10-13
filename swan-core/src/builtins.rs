@@ -135,6 +135,7 @@ fn type_function(val: Value) -> Value {
     Value::Text(n.into())
 }
 
+
 /// Builtin `parse` function:
 ///   - takes a `Text` containing source code and parses it immediately.
 ///   - returns a builtin function named `"eval"`.

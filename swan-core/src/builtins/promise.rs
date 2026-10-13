@@ -1,32 +1,72 @@
 //! The `promise` built-in namespace.
 //!
-//! Provides functions to create, chain, and resolve non-rejecting promises:
-//! - `promise.create()` : returns a new pending Promise.
-//! - `promise.chain p f` : curried; applies `f` to the value of promise `p` and returns a child promise.
-//! - `promise.resolve p v` : curried; resolves promise `p` with value `v`.
+//! Provides functions to create and resolve non-rejecting promises. A promise
+//! is a single-assignment placeholder (`Value::Promise`) that starts out
+//! pending and later receives a value.
+//!
+//! # Functions
+//!
+//! - `promise.create ()`   : returns a new pending promise. The argument is
+//!   ignored; by convention it is `()` (`Nothing`).
+//! - `promise.resolve p v` : curried. `promise.resolve p` returns a function
+//!   that, when applied to `v`, resolves `p` with `v` and returns `Nothing`.
+//!
+//! # Semantics
+//!
+//! - Promises never reject. There is no error state.
+//! - If the resolving value is `Undefined`, the promise is resolved with
+//!   `Nothing` instead.
+//! - Tuples are stored as-is. They are not mapped over or flattened, so
+//!   `promise.resolve p (1, 2)` resolves `p` with the tuple `(1, 2)`.
+//! - If the first argument to `promise.resolve` is not a promise, the result is
+//!   `Undefined` (binary operation `promise.resolve`, with the offending value
+//!   as left operand and `Nothing` as right operand). No function is returned.
+//!
+//! # Example
+//!
+//! ```text
+//! p = promise.create (),
+//! promise.resolve p 42,
+//! p                        # a promise already resolved with 42
+//! ```
+//!
+//! Note: chaining (`promise.chain`) is not provided by this module.
 
 use crate::value::{BuiltinFn, Promise, Scope, Value};
 
 /// Builds the `promise` namespace as a child of `parent`.
+///
+/// The returned `Value::Namespace` binds:
+/// - `create`  -> `promise.create`  (see [`promise_create`])
+/// - `resolve` -> `promise.resolve` (see [`promise_resolve`])
+///
+/// The caller is expected to bind the result under the name `promise` in
+/// `parent` (or an enclosing scope).
 pub fn create_namespace(parent: &Scope) -> Value {
     let promise_scope = parent.new_child();
 
-    // Zero-arg constructor
     promise_scope.set("create", Value::Builtin(BuiltinFn::new("promise.create", promise_create)));
 
-    // promise.resolve p v
     promise_scope.set("resolve", Value::Builtin(BuiltinFn::new("promise.resolve", promise_resolve)));
 
     Value::Namespace(promise_scope)
 }
 
-/// `promise.create()`: creates a new pending `Value::Promise`.
+/// `promise.create ()`: creates a new pending `Value::Promise`.
+///
+/// The argument is ignored (conventionally `Nothing`, written `()`).
 fn promise_create(_arg: Value) -> Value {
     Value::Promise(Promise::new())
 }
 
-/// `promise.resolve p`: given a promise, returns a function that takes the resolving
-/// value `v`, resolves `p` with it, and returns `Nothing`.
+/// `promise.resolve p`: the first stage of the curried `promise.resolve p v`.
+///
+/// - If `p` is a `Value::Promise`, returns a builtin function that takes the
+///   resolving value `v`, resolves `p` with it, and returns `Nothing`.
+///   An `Undefined` value `v` is stored as `Nothing`; tuples are stored
+///   unchanged.
+/// - Otherwise returns `Undefined` (binary operation `promise.resolve`,
+///   with `p` as left operand and `Nothing` as right operand).
 fn promise_resolve(p: Value) -> Value {
     match p {
         Value::Promise(promise) => Value::Builtin(BuiltinFn::new(

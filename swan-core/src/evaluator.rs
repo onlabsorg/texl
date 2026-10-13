@@ -1,9 +1,38 @@
-//! This module evaluates AST nodes into `Value`s.
+//! Evaluator: turns AST nodes into Swan `Value`s.
 //!
-//! The `eval` function is infallible: all errors are returned as `Value::Undefined(...)`.
-//! Operations that need non-trivial logic are delegated to sub-modules. This file handles
-//! literals, grouping, function definition and application, mapping, labelling, subcontexting,
-//! logic, conditional and composition.
+//! # Entry point
+//! [`eval`] takes a `&Node` and a `&Scope` and returns a `Value`. It is
+//! **infallible**: every error (syntax errors, invalid names, type mismatches)
+//! is returned as a `Value::Undefined(...)`, and errors in sub-expressions
+//! propagate as ordinary values. It never panics.
+//!
+//! # What lives where
+//! This file handles literals, identifier lookup, grouping (`[]`, `{}`),
+//! function definition and application, pairing dispatch, mapping, assignment,
+//! labelling, subcontexting, promise chaining (`~>`), logic (`&`, `|`),
+//! conditional (`?`, `;`), composition (`<<`, `>>`) and syntax-error nodes.
+//! Operations with non-trivial logic are delegated to the sub-modules declared
+//! below (unary operators, pairing, assignment, `~>`, arithmetic and comparison).
+//!
+//! # Tuple semantics
+//! Tuples are flat and normalized (`Nothing` items are dropped). Operators are
+//! lifted over tuples by two internal macros:
+//! - `map_values!` for unary operations: `Nothing` gives `Nothing`, a tuple is
+//!   mapped item by item, any other value goes straight to the operation.
+//! - `map_pairs!` for binary operations: tuples are paired element-wise
+//!   (the shorter side is padded with `Nothing`) and the result is normalized.
+//!
+//! # Evaluation order
+//! Operands are evaluated eagerly, left then right. The only exception is the
+//! alternative operator `A ; B`, whose right operand is evaluated only when `A`
+//! is `Nothing`. For `->`, `=` and `:` the left operand is not evaluated; it is
+//! resolved into names by `eval_names`.
+//!
+//! # Scopes
+//! - `{X}` evaluates `X` in a new child scope and returns it as a `Namespace`.
+//! - `A -> B` captures the current scope as a closure; applying it evaluates
+//!   the body in a child of that closure scope.
+//! - `ns.X` evaluates `X` inside the scope of the namespace `ns`.
 
 use std::rc::Rc;
 use crate::ast::Node;
@@ -11,16 +40,25 @@ use crate::value::{Scope, Value, Undef, BuiltinFn};
 
 
 // Unary operations
+/// Unary `+X`.
 mod affirm_operation;
+/// Unary `-X` (numeric negation).
 mod negation_operation;
+/// Unary `!X` (logical negation).
 mod logical_negation_operation;
+/// Unary `$X` (lifting: looks up names in the scope).
 mod lifting_operation;
 
 // Binary operations
+/// `X , Y` (tuple construction with flattening and normalization).
 mod pairing_operation;
+/// Binding of names to values; shared by `=`, `:` and function application.
 pub(crate) mod assignment_operation;
+/// `P ~> F` (promise chaining).
 mod then_operation;
+/// `+ - * / % ^` on numbers (and other supported types).
 mod arithmetic_operations;
+/// `== != > >= < <=`.
 mod comparison_operations;
 
 
@@ -40,7 +78,7 @@ mod comparison_operations;
 /// A `Nothing` against a non-tuple value is passed through to `$eval_fn` as is.
 /// The result of a tuple broadcast is normalized.
 ///
-/// Requires `Rc` and `Value` to be in scope.
+/// Requires `Value` to be in scope. Both operands are evaluated by the caller before the macro is used.
 macro_rules! map_pairs {
     ($lhv:expr, $rhv:expr, $eval_fn:expr) => {{
         let (lhv, rhv) = ($lhv, $rhv);
@@ -63,6 +101,10 @@ macro_rules! map_pairs {
 /// `Nothing` gives `Nothing`.
 /// A `Tuple` is mapped item by item (flattened) and the result is normalized.
 /// Any other value is passed directly to `$eval_fn`.
+///
+/// The `$eval_fn` must be a callable taking one `Value`.
+/// Requires `Value` to be in scope.
+/// Note that `$val` is evaluated once and moved into the macro.
 macro_rules! map_values {
     ($val:expr, $eval_fn:expr) => {{
         let val = $val;
@@ -91,6 +133,23 @@ macro_rules! map_values {
 /// This function is **infallible**: it never panics. All error conditions are
 /// encoded as `Value::Undefined(...)` so that Swan's "errors are values" semantics
 /// are preserved throughout, and sub-expression errors propagate as `Undefined` values. (#14)
+///
+/// # Arguments
+/// - `node`: the AST node to evaluate.
+/// - `scope`: the environment used for identifier lookup. Assignment and labelling
+///   write into this scope (not into a parent).
+///
+/// # Error values produced directly here
+/// - `Undef::Termination` for `Node::Unclosed` (missing closing bracket).
+/// - `Undef::Token` for `Node::UnexpectedToken`.
+/// - `Undef::BinaryOperation` named `"function_definition"`, `"assignment"` or
+///   `"labelling"` when the left side is not a valid name or tuple of names
+///   (the `lhv` holds the `Undef::Name` describing the offending node).
+/// - `Undef::BinaryOperation` named `"subcontexting"` when the left side is not
+///   a namespace.
+/// - `Undef::BinaryOperation` named `"application"` (see [`eval_apply`]).
+///
+/// Errors from the delegated sub-modules are documented there.
 pub fn eval(node: &Node, scope: &Scope) -> Value {
     match node {
 
@@ -132,6 +191,7 @@ pub fn eval(node: &Node, scope: &Scope) -> Value {
         // ===== Unary Operations =====
 
         // Unary affirm operation: `+X`
+        // (not broadcast via map_values!: the sub-module handles any value itself)
         Node::AffirmOp(unary) => {
             let val = eval(&unary.opd, scope);
             affirm_operation::eval(val)
@@ -174,18 +234,17 @@ pub fn eval(node: &Node, scope: &Scope) -> Value {
         }
 
         // `f x` — function application.
-        // A tuple of callables is broadcast through `map_values!`, with the same argument given to each function.
         Node::ApplicationOp(bin) => {
             // The left-hand operand must evaluate to a callable (Builtin or Func).
             // The right-hand operand is the argument (possibly a Tuple for multiple
-            // arguments). Builtin closures receive the whole argument Value and are
-            // responsible for destructuring it if needed.
+            // arguments).
+            // Functions are broadcast: for a tuple of callables each one receives the same whole argument.
             let func = eval(&bin.lho, scope);
             let args = eval(&bin.rho, scope);
             map_values!(func, |f| eval_apply(f, args.clone(), bin.pos))
         }
 
-        // Pairing operation: `X , Y`
+        // Pairing: `X , Y` - flattens both sides into a normalized tuple.
         Node::PairingOp(bin) => {
             let lhv = eval(&bin.lho, scope);
             let rhv = eval(&bin.rho, scope);
@@ -199,14 +258,14 @@ pub fn eval(node: &Node, scope: &Scope) -> Value {
             map_values!(args, |a: Value| map_values!(func.clone(), |f| eval_apply(f, a.clone(), bin.pos)))
         }
 
-        // Promise chaining (P then F): `P ~> F`
+        // Promise chaining: `P ~> F` - each promise in `P` (tuples are broadcast) is chained to `F`; the result of each is a new promise.
         Node::ThenOp(bin) => {
             let promises = eval(&bin.lho, scope);
             let func     = eval(&bin.rho, scope);
             map_values!(promises, |p| then_operation::eval(p, func.clone(), bin.pos))
         }
 
-        // Assignment: `name = V` - evaluates to Nothing, binds names in scope
+        // Assignment: `name = V` - evaluates to Nothing, binds names in scope. Invalid names give an Undefined and nothing is bound.
         Node::AssignmentOp(bin) => {
             let names = eval_names(&bin.lho);
             if matches!(names, Value::Undefined(_)) {
@@ -218,7 +277,7 @@ pub fn eval(node: &Node, scope: &Scope) -> Value {
             Value::Nothing
         }
 
-        // Labelling: `name : V` - evaluates to V, binds names in scope
+        // Labelling: `name : V` - evaluates to V, binds names in scope. Invalid names give an Undefined and nothing is bound.
         Node::LabellingOp(bin) => {
             let names = eval_names(&bin.lho);
             if matches!(names, Value::Undefined(_)) {
@@ -315,7 +374,7 @@ pub fn eval(node: &Node, scope: &Scope) -> Value {
             map_pairs!(lhv, rhv, |l,r| comparison_operations::eval_greater_than(l, r, bin.pos))
         }
 
-        // Non-greater-than: `A <= B`
+        // Greater-than-or-equal: `A >= B`
         Node::GreaterThanOrEqualToOp(bin) => {
             let lhv = eval(&bin.lho, scope);
             let rhv = eval(&bin.rho, scope);
@@ -329,7 +388,7 @@ pub fn eval(node: &Node, scope: &Scope) -> Value {
             map_pairs!(lhv, rhv, |l,r| comparison_operations::eval_less_than(l, r, bin.pos))
         }
 
-        // Non-less-than: `A >= B`
+        // Less-than-or-equal: `A <= B`
         Node::LessThanOrEqualToOp(bin) => {
             let lhv = eval(&bin.lho, scope);
             let rhv = eval(&bin.rho, scope);
@@ -371,7 +430,7 @@ pub fn eval(node: &Node, scope: &Scope) -> Value {
             })
         }
 
-        // Alternative: `A ; B` - RHO is evaluated lazily, and only if LHO is Nothing.
+        // Alternative: `A ; B` - RHO is evaluated lazily, and only if LHO is exactly Nothing (a tuple is never Nothing, so it is returned as is).
         Node::AlternativeOp(bin) => {
             let lhv = eval(&bin.lho, scope);
             match lhv {
@@ -424,18 +483,29 @@ pub fn eval(node: &Node, scope: &Scope) -> Value {
 // EVAL HELPERS
 
 /// Builds the `Undefined` value returned when the left-hand side of a binding
-/// operation (`->`, `=`, `:`) is not a valid name or tuple of names.
+/// operation is not a valid name or tuple of names.
+///
+/// - `op`: the operation name (`"function_definition"`, `"assignment"` or `"labelling"`).
+/// - `names`: the `Undefined(Undef::Name{..})` returned by [`eval_names`].
+/// - `pos`: position of the operator.
+///
+/// The result is `Undef::BinaryOperation { op, lhv: names, rhv: Nothing, pos }`.
 fn invalid_names(op: &'static str, names: Value, pos: usize) -> Value {
     Value::undef_binary(op, names, Value::Nothing, pos)
 }
 
-/// Evaluates an AST nodes that are supposed to resolve into names
+/// Resolves an AST node into names, without evaluating it.
 ///
-/// This functions resolves values or tuple at the left side of an
-/// assignment operation or at the left side of a function definition.
-/// Those values can be either an identifier or a tuple of identifiers.
-/// It returns `Value::Name`, `Value::Nothing`, or a tuple of names,
-/// and `Undefined(Undef::Name{pos})` for anything else.
+/// Used for the left side of `=`, `:` and `->`, which must be an identifier,
+/// `()`, or a pairing (`,`) of those (parentheses do not matter).
+///
+/// Returns:
+/// - `Value::Name` for an identifier.
+/// - `Value::Nothing` for `()` or an empty expression.
+/// - A normalized tuple of names for pairings.
+/// - `Undefined(Undef::Name{pos})` for any other node, where `pos` is the
+///   position of the offending node. In a pairing, the first `Undefined`
+///   (left side first) is propagated unchanged.
 fn eval_names(node: &Node) -> Value {
     match node {
 
@@ -474,16 +544,27 @@ fn eval_names(node: &Node) -> Value {
 //  APPLICATION OPERATION
 // ----------------------------------------------------------------------------
 
-/// `func arg` — applies a callable Swan value to an argument.
+/// `func arg` - applies a callable or indexable Swan value to an argument.
+///
+/// `pos` is the source position of the application, used in error values.
 ///
 /// Dispatches on the type of `func`:
 ///
-/// - `Value::Builtin(f)`: calls the native Rust function directly.
-/// - `Value::Func { ... }`: a child scope of the closure is created, the parameters are bound to the argument, and the body is evaluated.
-/// - `Value::List`: indexing by number, or by a tuple of numbers.
-/// - `Value::Namespace`: lookup by text key, or by a tuple of keys.
-/// - `Value::Text`: character indexing by number, or by a tuple of numbers.
-/// - Anything else: returns `Undefined(application)`.
+/// - `Value::Builtin(f)`: calls the native Rust function with the whole `arg`.
+/// - `Value::Func { ... }`: creates a child scope of the closure, binds the
+///   parameters to `arg` (destructuring tuples, see `assignment_operation`),
+///   and evaluates the body there.
+/// - `Value::List`: indexing by a zero-based number. A tuple argument gives a
+///   tuple of results, normalized (so out-of-range indices are dropped).
+/// - `Value::Namespace`: own-only lookup by text key. A tuple argument gives a
+///   normalized tuple of results (missing keys are dropped).
+/// - `Value::Text`: character indexing by a zero-based number. A tuple argument
+///   gives a normalized tuple of results.
+/// - Anything else (including `Nothing` and `Undefined`): returns
+///   `Undef::BinaryOperation { op: "application", lhv: func, rhv: arg, pos }`.
+///
+/// Broadcasting over a tuple of *callables* is not done here; the callers
+/// (`ApplicationOp`, `MappingOp`) do it with `map_values!`.
 pub fn eval_apply(func: Value, arg: Value, pos: usize) -> Value {
     match func {
         Value::Builtin(ref f) => f.call(arg),
@@ -540,7 +621,7 @@ pub fn eval_apply(func: Value, arg: Value, pos: usize) -> Value {
 /// Applies a List to a single index `arg`.
 ///
 /// Negative, fractional or out-of-range indices give `Nothing`.
-/// Non-numbers give `Undefined`.
+/// Non-numbers give `Undefined`. `pos` is used for the `Undefined` returned for a non-number index.
 fn eval_apply_list(list: &[Value], arg: Value, pos: usize) -> Value {
     match arg {
         Value::Numb(n) => {
@@ -563,7 +644,7 @@ fn eval_apply_list(list: &[Value], arg: Value, pos: usize) -> Value {
 /// Returns the character at position `arg` as a one-character `Text`.
 /// Indexing is by Unicode character (`char`), not by byte, and is zero-based.
 /// Negative, fractional or out-of-range indices give `Nothing`.
-/// Non-numbers give `Undefined`.
+/// Non-numbers give `Undefined`. `pos` is used for the `Undefined` returned for a non-number index.
 fn eval_apply_text(text: &Rc<str>, arg: Value, pos: usize) -> Value {
     match arg {
         Value::Numb(n) => {
@@ -582,11 +663,12 @@ fn eval_apply_text(text: &Rc<str>, arg: Value, pos: usize) -> Value {
 
 /// Applies a Namespace to a single key `arg`.
 ///
-/// Own-only lookup per Swan spec §3.7.
+/// Own-only lookup per Swan spec §3.7: parent scopes are not searched.
+/// A missing key gives `Nothing`; a non-text key gives
+/// `Undef::BinaryOperation { op: "application", .. }`.
 fn eval_apply_namespace(scope: &Scope, arg: Value, pos: usize) -> Value {
     match arg {
         Value::Text(t) => {
-            // Own-only lookup per Swan spec §3.7
             let found = scope.0.borrow().bindings.get(t.as_ref()).cloned();
             found.unwrap_or(Value::Nothing)
         }
@@ -601,7 +683,13 @@ fn eval_apply_namespace(scope: &Scope, arg: Value, pos: usize) -> Value {
 //  FUNCTION COMPOSITION OPERATION
 // ----------------------------------------------------------------------------
 
-/// `f << g` builds a builtin that computes `f(g(x))`.
+/// `f << g` builds a `Builtin` named `"composed"` that computes `f(g(x))`.
+///
+/// Both functions are applied with [`eval_apply`] and the whole argument `x`
+/// is passed to `g`; its whole result is passed to `f`. Applying errors become
+/// `Undefined` values, as usual. `pos` is the position of the composition
+/// operator and is used for any application error. `>>` calls this with its
+/// operands swapped. Tuple operands are broadcast by the caller using `map_pairs!`.
 fn eval_composition(f: Value, g: Value, pos: usize) -> Value {
     Value::Builtin(BuiltinFn::new("composed", move |x:Value| {
         let y = eval_apply(g.clone(), x, pos);    // y = g(x)
@@ -616,12 +704,14 @@ fn eval_composition(f: Value, g: Value, pos: usize) -> Value {
 // ----------------------------------------------------------------------------
 
 #[cfg(test)]
+/// Tests for the constructs handled directly in this file. Operations delegated to sub-modules are tested in their own modules.
 mod tests {
     use super::*;
     use std::assert_matches;
     use crate::lexer::Lexer;
     use crate::parser::Parser;
 
+    /// Parses and evaluates `src` in a fresh scope that has `TRUE` and `FALSE` defined.
     fn evaluate(src: &str) -> Value {
         let mut parser = Parser::new(Lexer::new(src));
         let ast = parser.parse();
@@ -630,9 +720,6 @@ mod tests {
         scope.set("FALSE", Value::Bool(false));
         eval(&ast, &scope)
     }
-
-    // Operations delegated to sub-modules (affirm, negation, logical negation,
-    // lifting, pairing, arithmetic, comparison) are tested in their own modules.
 
     #[test]
     fn number_literal() {

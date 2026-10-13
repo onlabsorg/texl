@@ -1,3 +1,30 @@
+//! Runtime values of the Swan language.
+//!
+//! The central type is [`Value`], which represents every first-class Swan
+//! value: scalars (`Nothing`, `Bool`, `Numb`, `Text`), collections (`List`,
+//! `Namespace`, `Tuple`), callables (`Func`, `Builtin`), asynchronous results
+//! (`Promise`), and the non-throwing error value `Undefined`.
+//!
+//! # Tuples
+//!
+//! Every `Value` is conceptually a tuple. `Nothing` is the empty tuple, any
+//! non-`Tuple` value is a one-element tuple, and `Value::Tuple` is a tuple of
+//! two or more items. [`Value::items`], [`Value::pair`], [`Value::map`] and
+//! [`Value::normalize`] all work with this view. Tuples are always flat and
+//! never contain `Nothing` once normalized.
+//!
+//! # Submodules
+//!
+//! - [`Scope`]: lexical environment, also used as the storage of `Namespace`.
+//! - [`Undef`]: description of why an operation was undefined.
+//! - [`BuiltinFn`]: wrapper around a native Rust function.
+//! - [`Promise`]: single-assignment asynchronous value.
+//!
+//! # Comparison and conversion
+//!
+//! `Value` implements `PartialEq` and `PartialOrd` by hand (see the impl docs)
+//! and converts to `bool` through `From<Value> for bool`.
+
 use std::rc::Rc;
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -5,15 +32,19 @@ use std::cmp::Ordering;
 use std::fmt;
 use crate::ast::Node;
 
+// Lexical scopes and namespaces
 mod scope;
 pub use scope::Scope;
 
+// Explanations of why an operation is undefined
 mod undef;
 pub use undef::Undef;
 
+// Native Rust functions callable from Swan
 mod func;
 pub use func::BuiltinFn;
 
+// Single-assignment asynchronous values
 mod promise;
 pub use promise::Promise;
 
@@ -23,68 +54,73 @@ pub use promise::Promise;
 //  Value  (every first-class Swan value)
 // ----------------------------------------------------------------------------
 
+/// Any first-class Swan value.
+///
+/// Cloning is cheap: heap-backed variants (`Text`, `List`, `Tuple`, `Name`)
+/// use `Rc`, and `Scope`, `Promise` and `BuiltinFn` are handles that share
+/// state when cloned.
 #[derive(Debug, Clone)]
 pub enum Value {
 
-    /// Empty tuple
+    /// The empty tuple `()`. Also the result of failed lookups such as out-of-range list indexing.
     Nothing,
 
-    /// Boolean value
+    /// A boolean, `TRUE` or `FALSE`.
     Bool(bool),
 
-    /// Number
+    /// A 64-bit floating-point number.
     Numb(f64),
 
-    /// Strings
+    /// An immutable UTF-8 string.
     Text(Rc<str>),
 
     /// An ordered, integer-indexed sequence — `[a, b, c]`.
     List(Rc<Vec<Value>>),
 
-    /// A first-class, flat key→value map — `{ x: 1, y: 2 }`.
+    /// A first-class namespace — `{ x: 1, y: 2 }`.
     ///
-    /// This wraps a *flat* `HashMap`; it does NOT have a parent chain.
-    /// Scope chaining is the responsibility of `Scope`, not `Value::Namespace`.
-    /// This makes namespace equality (deep key/value comparison) and merge
-    /// (`{a:1} + {b:2}  →  {a:1, b:2}`) straightforward.
+    /// Backed by a [`Scope`]. Applying a namespace to a `Text` key performs an
+    /// own-only lookup (parent scopes are not consulted) and yields `Nothing`
+    /// if the key is absent. Equality compares bindings (and parents) by value.
     Namespace(Scope),
 
     /// A user-defined function.
-    ///
-    /// `closure` captures the lexical `Scope` at definition time so that the
-    /// function body can look up free variables correctly when called later.
     Func {
+        /// Parameter pattern: a `Name` or a tuple of names.
         params:  Box<Value>,
+        /// Unevaluated body expression.
         body:    Box<Node>,
+        /// Scope captured at definition time.
         closure: Scope,
     },
 
     /// A native Rust function callable from Swan.
     Builtin(BuiltinFn),
 
-    /// Promise
+    /// A promise. It resolves at most once and never rejects; an `Undefined` result resolves to `Nothing`.
     Promise(Promise),
 
     /// Undefined value
     ///
-    /// Swan expression do not throw exceptions; they return Undefined
+    /// Swan expressions do not throw exceptions; they return `Undefined`
     /// values instead.
     Undefined(Undef),
 
     /// The Swan product type — a heterogeneous sequence of items produced by
     /// the comma operator `a, b, c`.  A Tuple of zero items is `Nothing`.
     /// A Tuple of exactly one item normalises to that item.
+    /// Construct with [`Value::tuple`] so the result is normalized.
     Tuple(Rc<Vec<Value>>),
 
     /// Name: identifiers at the left side of an assignment or
-    /// at the left side of a function operation
+    /// at the left side of a function operation. Produced only while evaluating binding positions; it has no meaning as a runtime result.
     Name(Rc<str>),
 }
 
 
 impl Value {
 
-    /// Helper to construct a unary operation Undefined value.
+    /// Builds `Undefined` for unary operation `op` applied to `val`; `pos` is the source byte offset.
     #[inline]
     pub fn undef_unary(op: &'static str, val: Value, pos: usize) -> Value {
         Value::Undefined(Undef::UnaryOperation {
@@ -94,7 +130,7 @@ impl Value {
         })
     }
 
-    /// Helper to construct a binary operation Undefined value.
+    /// Builds `Undefined` for binary operation `op` applied to `lhv` and `rhv`; `pos` is the source byte offset.
     #[inline]
     pub fn undef_binary(op: &'static str, lhv: Value, rhv: Value, pos: usize) -> Value {
         Value::Undefined(Undef::BinaryOperation {
@@ -105,13 +141,16 @@ impl Value {
         })
     }
 
-    /// Helper to construct a list
+    /// Builds a `List` from `items`.
     #[inline]
     pub fn list(items: Vec<Value>) -> Value {
         Value::List(Rc::new(items))
     }
     
-    /// Helper to construct and normalize a tuple
+    /// Builds a normalized tuple from `items`.
+    ///
+    /// Zero items give `Nothing`. One item gives that item. Nested tuples are
+    /// flattened and `Nothing` items are dropped (see [`Value::normalize`]).
     #[inline]
     pub fn tuple(items: Vec<Value>) -> Value {
         match items.len() {
@@ -127,6 +166,12 @@ impl Value {
 //  Implement equality and order for Value
 // ----------------------------------------------------------------------------
 
+/// Structural equality.
+///
+/// Values of different variants are never equal. `Promise`s are equal only
+/// if they are the same promise (pointer identity). `Func`, `Builtin` and
+/// `Name` are never equal to anything, including themselves. `Undefined`
+/// values compare by operation and operands, ignoring source position.
 impl PartialEq for Value {
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
@@ -145,6 +190,13 @@ impl PartialEq for Value {
     }
 }
 
+/// Partial ordering between values.
+///
+/// Only values of the same variant are comparable (`Bool`, `Numb`, `Text`,
+/// `List`, `Tuple`); lists and tuples compare lexicographically, with the
+/// shorter sequence ordering first. `Nothing` equals `Nothing` and orders
+/// before every other value. Every other pair returns `None`
+/// (e.g. `NaN`, mixed types, `Func`, `Builtin`, `Namespace`, `Promise`, `Undefined`).
 impl PartialOrd for Value {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         match (self, other) {
@@ -158,13 +210,14 @@ impl PartialOrd for Value {
             (Value::Nothing,  _)               => Some(Ordering::Less),
             (_,  Value::Nothing)               => Some(Ordering::Greater),
             
-            // Func and Undef are never equal to anything (including themselves).
+            // All other pairs are unordered.
             _ => None,
         }
     }
 }
 
-/// Helper function to perform lexicographical comparison between item iterators
+/// Helper function to perform lexicographical comparison between item iterators.
+/// Returns `None` as soon as two corresponding items are unordered.
 fn compare_iterators<'a>(
     mut it1: impl Iterator<Item = &'a Value>,
     mut it2: impl Iterator<Item = &'a Value>,
@@ -207,6 +260,7 @@ pub struct ValueIter {
 }
 
 impl ValueIter {
+    /// Creates an iterator over `value` viewed as a tuple: `Nothing` is empty, a `Tuple` yields its items, and any other value yields itself once.
     fn new(value: Value) -> Self {
         match value {
             Value::Nothing  => ValueIter { stack: Vec::new() },
@@ -255,6 +309,7 @@ impl std::iter::FusedIterator for ValueIter {}
 // ----------------------------------------------------------------------------
 
 #[derive(Debug, Clone)]
+/// Created by [`Value::pair`] or [`Pairs::new`].
 pub struct Pairs {
     iter1: ValueIter,
     iter2: ValueIter,
@@ -313,6 +368,12 @@ impl Value {
         Pairs::new(self, other)
     }
 
+    /// Returns the canonical form of this value.
+    ///
+    /// For a `Tuple`, nested tuples are flattened and `Nothing` items are
+    /// removed. The result is `Nothing` if no items remain, the sole item if
+    /// one remains, and a `Tuple` otherwise. Non-tuple values are returned
+    /// unchanged (cloned).
     pub fn normalize(&self) -> Self {
         if matches!(self, Value::Tuple(_)) {
             let flat_items: Vec<_> = self.items().collect();
@@ -330,6 +391,7 @@ impl Value {
     /// - `Value::Nothing` -> `Value::Nothing`
     /// - `Value::Tuple`   -> `Value::Tuple` containing `f(v1), f(v2), ..., f(vn)`
     /// - Any other value  -> `f(self)`
+    /// The result of mapping over a tuple is normalized, so items that map to `Nothing` are dropped.
     pub fn map(&self, f: impl Fn(Value) -> Value + 'static) -> Value {
         match self {
             Value::Nothing => Value::Nothing,
@@ -351,6 +413,17 @@ impl Value {
 //  Value type casting
 // ----------------------------------------------------------------------------
 
+/// Truthiness of a value.
+///
+/// - `Nothing` and `Undefined` are false.
+/// - `Bool` is itself; `Numb` is false only for `0`; `Text` and `List` are
+///   true when non-empty; `Namespace` is true when it has at least one binding.
+/// - `Func` and `Builtin` are always true.
+/// - A `Tuple` is true if at least one item is true.
+///
+/// # Panics
+///
+/// Panics for `Promise` and `Name`, which have no boolean meaning.
 impl From<Value> for bool {
     fn from(val: Value) -> Self {
         match val {
@@ -368,7 +441,7 @@ impl From<Value> for bool {
                 // If ALL items map to false, `.any()` returns false.
                 val.items().any(|item| bool::from(item))
             }
-            // For remaining types like Namespace, Func, Builtin, Name
+            // Remaining types (Promise, Name) have no boolean meaning
             _ => panic!("Can't convert value to boolean: {:?}", val),
         }
     }
@@ -383,6 +456,7 @@ impl From<Value> for bool {
 #[cfg(test)]
 mod tuple_tests {
     use super::*;
+    // Tests for tuple iteration, pairing and normalization.
 
     #[test]
     fn test_pairs_same_length() {
@@ -502,6 +576,7 @@ mod tuple_tests {
 #[cfg(test)]
 mod boolean_conversion_tests {
     use super::*;
+    // Tests for `From<Value> for bool`.
 
     #[test]
     fn test_primitives_to_bool() {
