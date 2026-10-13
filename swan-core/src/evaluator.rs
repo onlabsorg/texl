@@ -18,7 +18,7 @@ mod lifting_operation;
 
 // Binary operations
 mod pairing_operation;
-mod assignment_operation;
+pub(crate) mod assignment_operation;
 mod then_operation;
 mod arithmetic_operations;
 mod comparison_operations;

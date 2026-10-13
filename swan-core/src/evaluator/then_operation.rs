@@ -177,4 +177,15 @@ mod tests {
         assert_eq!(resolved(&items[0]), Some(Value::Numb(2.0)));
         assert_eq!(resolved(&items[1]), Some(Value::Numb(4.0)));
     }
+
+    #[test]
+    fn asynchronous_assignment() {
+        let src = r#"
+            p1 = promise.create(),
+            p2 = p1 ~> bind "x",
+            promise.resolve p1 10,
+            x
+        "#;
+        assert_eq!(run(src), Value::Numb(10.0));
+    }
 }

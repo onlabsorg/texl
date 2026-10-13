@@ -1,8 +1,10 @@
 // src/builtins.rs
 //
 // Purpose: this module builds the root scope and defines the built-ins that
-// live directly in it (`type`, `parse`, `TRUE`, `FALSE`). Every other
-// built-in lives in a submodule that exposes `create_namespace(&Scope) -> Value`.
+// live directly in it (`type`, `parse`, `TRUE`, `FALSE`).
+// `bind` and `label` are also defined here: they take a name (or tuple of names) and return
+// a function that binds the names globally. `bind` returns Nothing, `label` returns the values.
+// Every other built-in lives in a submodule that exposes `create_namespace(&Scope) -> Value`.
 //
 // Adding a root-level function:
 //   1. Write `fn my_fn(arg: Value) -> Value`.
@@ -16,10 +18,11 @@
 // so `math.pow 10` returns a function that takes the second argument.
 //
 
-use crate::value::{BuiltinFn, Scope, Value};
+use crate::value::{BuiltinFn, Scope, Undef, Value};
 use crate::lexer::Lexer;
 use crate::parser::Parser;
 use crate::evaluator::eval;
+use crate::evaluator::assignment_operation;
 
 // Shared helpers and macros (map_1, map_curried, ...).
 mod helpers;
@@ -79,9 +82,30 @@ pub fn root_scope() -> Scope {
     scope.set("type" , map_1("type" , type_function));
     scope.set("parse", map_1("parse", parse_function));
 
-    // Returns a fresh empty child scope. User code then defines and shadows
-    // names in the child and cannot overwrite the built-ins stored in the parent.
-    scope.new_child()
+    // Fresh empty child scope where user code runs. User code defines and shadows
+    // names here and cannot overwrite the built-ins stored in the parent.
+    let user_scope = scope.new_child();
+
+    // `bind` and `label` write into `user_scope`, so they are global from the point
+    // of view of user code, even when called from inside a function body.
+    // Each `move` closure needs its own clone.
+    //
+    // NOTE: this creates an Rc cycle (scope -> bind closure -> user_scope -> scope),
+    // so a root scope is never freed. `Scope` has no weak reference, so this is accepted.
+    let bind_target = user_scope.clone();
+    scope.set("bind", Value::Builtin(BuiltinFn::new(
+        "bind",
+        move |arg| set_global("bind", arg, bind_target.clone(), false)
+    )));
+
+    let label_target = user_scope.clone();
+    scope.set("label", Value::Builtin(BuiltinFn::new(
+        "label",
+        move |arg| set_global("label", arg, label_target.clone(), true)
+    )));
+
+    // Return the scope in which user code is evaluated
+    user_scope
 }
 
 
@@ -134,6 +158,52 @@ fn parse_function(arg: Value) -> Value {
             }))
         }
         other => Value::undef_unary("parse", other, 0),
+    }
+}
+
+
+/// Shared implementation of the builtins `bind` and `label`.
+///
+/// - `op`: `"bind"` or `"label"`, used as the label of the `Undefined` result.
+/// - `name_arg`: a `Text`, a tuple of `Text`s, or `Nothing`. These are the names.
+/// - `target_scope`: the scope where the names are bound.
+/// - `retval`: `false` for `bind` (like `=`, returns `Nothing`),
+///   `true` for `label` (like `:`, returns the bound values).
+///
+/// Returns a builtin function that takes the values and binds the names to them
+/// using `assignment_operation::eval`. That is the same function behind `=` and `:`,
+/// so mismatched numbers of names and values follow the same rules as those operators.
+/// If `name_arg` is not valid names, returns `Undefined` (unary operation `op`).
+fn set_global(op: &'static str, name_arg: Value, target_scope: Scope, retval: bool) -> Value {
+
+    // Convert Text / tuple of Text into Name / tuple of Name
+    let names = wrap_names(&name_arg);
+    if matches!(names, Value::Undefined(_)) {
+        return Value::undef_unary(op, name_arg, 0);
+    }
+
+    Value::Builtin(BuiltinFn::new(op, move |val| {
+        assignment_operation::eval(&target_scope, &names, &val);
+        if retval { val } else { Value::Nothing }
+    }))
+}
+
+/// Converts a runtime value into a validated name or tuple of names.
+/// `Text` gives a `Name`, `Nothing` stays `Nothing`, and a tuple of `Text`s gives a
+/// tuple of `Name`s. Anything else gives `Undefined(Undef::Name)`.
+fn wrap_names(val: &Value) -> Value {
+    match val {
+        Value::Nothing => Value::Nothing,
+        Value::Text(s) => Value::Name(s.clone()),
+        Value::Tuple(items) => {
+            let mapped: Vec<Value> = items.iter().map(wrap_names).collect();
+            if mapped.iter().any(|v| matches!(v, Value::Undefined(_))) {
+                Value::Undefined(Undef::Name { pos: 0 })
+            } else {
+                Value::tuple(mapped)
+            }
+        }
+        _ => Value::Undefined(Undef::Name { pos: 0 }),
     }
 }
 
@@ -208,5 +278,79 @@ mod tests {
 
         // Invalid argument type returns Undefined
         assert!(matches!(run("parse 123"), Value::Undefined(_)));
+    }
+
+    #[test]
+    fn test_bind() {
+        // bind returns Nothing, but the name is bound
+        assert_eq!(run(r#"(bind "x") 5"#), Value::Nothing);
+        assert_eq!(run(r#"(bind "x") 5, x"#), Value::Numb(5.0));
+
+        // Tuple of names
+        assert_eq!(run(r#"(bind ("a","b")) (1,2), a + b"#), Value::Numb(3.0));
+
+        // Nothing as names: values are discarded
+        assert_eq!(run(r#"(bind ()) 5"#), Value::Nothing);
+
+        // Binding is global, even when called inside a function body
+        assert_eq!(run(r#"f = v -> (bind "y") v, f 7, y"#), Value::Numb(7.0));
+
+        // Mismatched counts behave exactly like `=`
+        assert_eq!(
+            run(r#"(bind ("a","b")) (1,2,3), (a,b)"#),
+            run("(a,b) = (1,2,3), (a,b)")
+        );
+        assert_eq!(
+            run(r#"(bind ("a","b")) 1, (a,b)"#),
+            run("(a,b) = 1, (a,b)")
+        );
+        assert_eq!(
+            run(r#"(bind "a") (1,2), a"#),
+            run("a = (1,2), a")
+        );
+
+        // Invalid names give Undefined labelled "bind"
+        assert!(matches!(run("bind 5"), Value::Undefined(Undef::UnaryOperation { op: "bind", .. })));
+        assert!(matches!(run(r#"bind ("a", 5)"#), Value::Undefined(Undef::UnaryOperation { op: "bind", .. })));
+    }
+
+    #[test]
+    fn test_label() {
+        // label returns the value and binds the name
+        assert_eq!(run(r#"(label "x") 5"#), Value::Numb(5.0));
+        assert_eq!(
+            run(r#"(label "x") 5, x"#),
+            Value::tuple(vec![Value::Numb(5.0), Value::Numb(5.0)])
+        );
+
+        // Tuple of names returns the tuple of values
+        assert_eq!(
+            run(r#"(label ("a","b")) (1,2)"#),
+            Value::tuple(vec![Value::Numb(1.0), Value::Numb(2.0)])
+        );
+
+        // Binding is global, even when called inside a function body
+        assert_eq!(
+            run(r#"f = v -> (label "y") v, f 7, y"#),
+            Value::tuple(vec![Value::Numb(7.0), Value::Numb(7.0)])
+        );
+
+        // Mismatched counts behave exactly like `:`
+        assert_eq!(
+            run(r#"(label ("a","b")) (1,2,3)"#),
+            run("(a,b) : (1,2,3)")
+        );
+        assert_eq!(
+            run(r#"(label ("a","b")) 1"#),
+            run("(a,b) : 1")
+        );
+        assert_eq!(
+            run(r#"(label "a") (1,2)"#),
+            run("a = (1,2), a")
+        );
+
+        // Invalid names give Undefined labelled "label"
+        assert!(matches!(run("label 5"), Value::Undefined(Undef::UnaryOperation { op: "label", .. })));
+        assert!(matches!(run(r#"label ("a", 5)"#), Value::Undefined(Undef::UnaryOperation { op: "label", .. })));
     }
 }
