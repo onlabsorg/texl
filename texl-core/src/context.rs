@@ -32,40 +32,53 @@
 //! [`create_texl_namespace`] and [`create_import_texl_namespace`]; otherwise it
 //! will be missing from either the root-level or the per-document namespace.
 
+use crate::helpers::promise_async;
+use crate::modules;
 use swan_core::builtins::root_scope;
 use swan_core::value::{BuiltinFn, Scope, Value};
-use crate::modules;
 
+/// Helper to create the `texl.import` built-in.
+///
+/// Wraps the asynchronous [`modules::import`] in a Swan Promise, checks
+/// the cache to prevent duplicate fetches, and returns the pending promise.
+fn create_import_builtin(parent_scope: Scope, registry: modules::Registry) -> Value {
+    Value::Builtin(BuiltinFn::new("texl.import", move |arg| {
+        match arg {
+            Value::Text(uri) => {
+                let norm_url = match registry.normalize_url(&uri) {
+                    Ok(url) => url,
+                    Err(err) => return Value::undef_unary("import.invalid_uri", Value::Text(err.into()), 0),
+                };
+
+                // Deduplicate in-flight and already loaded requests
+                if let Some(cached) = registry.get_cached(&norm_url) {
+                    return cached;
+                }
+
+                let registry_clone = registry.clone();
+                let uri_str = uri.to_string();
+                let parent_scope_clone = parent_scope.clone();
+                let norm_url_key = norm_url.clone();
+
+                let promise = promise_async(
+                    registry.spawner().as_ref(),
+                    async move {
+                        modules::import(registry_clone, uri_str, parent_scope_clone).await
+                    },
+                );
+
+                registry.set_cached(norm_url_key, promise.clone());
+                promise
+            }
+            other => Value::undef_unary("texl.import", other, 0),
+        }
+    }))
+}
 
 /// Constructs the `texl` built-in namespace as a child scope of `parent`.
-///
-/// The returned [`Value::Namespace`] currently contains:
-///
-/// - `import`: a builtin `texl.import(uri)` that takes a [`Value::Text`] URI
-///   and loads the module through [`modules::import`] using `registry`.
-///   Imports are resolved against `parent` (captured by the closure). Any
-///   non-text argument yields an undefined value
-///   (`Value::undef_unary("texl.import", arg, 0)`).
-///
-/// # Arguments
-///
-/// * `parent`   - Scope the namespace is parented to and that `import` uses.
-/// * `registry` - Module registry used to resolve imported URIs.
 fn create_texl_namespace(parent: &Scope, registry: modules::Registry) -> Value {
     let texl_scope = parent.new_child();
-
-    // Bind modules::import to texl.import
-    let parent_scope = parent.clone();
-    texl_scope.set(
-        "import",
-        Value::Builtin(BuiltinFn::new("texl.import", move |arg| {
-            match arg {
-                Value::Text(uri) => modules::import(registry.clone(), &uri, &parent_scope),
-                other => Value::undef_unary("texl.import", other, 0),
-            }
-        })),
-    );
-
+    texl_scope.set("import", create_import_builtin(parent.clone(), registry));
     Value::Namespace(texl_scope)
 }
 
@@ -76,52 +89,13 @@ fn create_texl_namespace(parent: &Scope, registry: modules::Registry) -> Value {
 /// here. Its `import` builtin passes `parent_scope` to [`modules::import`],
 /// so that `texl.import` called from within a document is resolved relative to
 /// that document's own scope.
-///
-/// This is used both for the caller-facing scope created by [`create`] and for
-/// each imported document.
-///
-/// # Arguments
-///
-/// * `parent_scope` - The document scope that `import` resolves against.
-/// * `registry`     - Module registry used to resolve imported URIs.
-///
-/// # Note
-///
-/// Keep the members of this namespace in sync with
-/// [`create_texl_namespace`].
 pub fn create_import_texl_namespace(parent_scope: &Scope, registry: modules::Registry) -> Value {
-    let parent_scope = parent_scope.clone();
     let texl_ns = Scope::new();
-    // Any other members of the `texl` namespace (see `context::create_texl_namespace`) must also be set here.
-    texl_ns.set(
-        "import",
-        Value::Builtin(BuiltinFn::new("texl.import", move |arg| {
-            match arg {
-                Value::Text(uri) => modules::import(registry.clone(), &uri, &parent_scope),
-                other => Value::undef_unary("texl.import", other, 0),
-            }
-        })),
-    );
+    texl_ns.set("import", create_import_builtin(parent_scope.clone(), registry));
     Value::Namespace(texl_ns)
 }
 
-
 /// Creates a new Texl evaluation scope.
-///
-/// The returned scope is a child of a root scope that holds all standard Swan
-/// built-ins and a `texl` namespace. The child has its own `texl` namespace
-/// (see [`create_import_texl_namespace`]) that shadows the root one, so
-/// `texl.import` resolves relative to the returned scope. Evaluating or
-/// binding names in the returned scope does not modify the built-in level.
-///
-/// # Arguments
-///
-/// * `registry` - Module registry used by `texl.import` to resolve URIs.
-///
-/// # Returns
-///
-/// A fresh [`Scope`] ready for evaluating Texl code or for host-side
-/// `get`/`set` of variables.
 pub fn create(registry: modules::Registry) -> Scope {
     // 1. Obtain the base swan root scope pre-populated with standard built-ins (math, text, time, etc.)
     let scope = root_scope();
@@ -133,7 +107,6 @@ pub fn create(registry: modules::Registry) -> Scope {
     let child_scope = scope.new_child();
 
     // 4. Ensure `texl.import` within a document imports relative to the document's own scope
-    // This creates a new `texl` namespace for each imported document.
     child_scope.set("texl", create_import_texl_namespace(&child_scope, registry));
 
     child_scope

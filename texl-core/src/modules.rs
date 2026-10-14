@@ -21,24 +21,18 @@
 //! The [`Registry`] caches documents by normalized URL (see [`Registry::normalize_url`]).
 //! A document is fetched at most once, and recursive imports do not loop, because the
 //! in-flight promise is cached before loading starts.
-//!
-//! # Asynchrony
-//!
-//! Imports run as background tasks. The host can install its own spawner with
-//! [`Registry::set_spawner`]. Otherwise tasks go to a thread-local fallback queue that
-//! the host must drive by calling [`run_pending`].
 
 use std::cell::RefCell;
-use std::collections::{HashMap, VecDeque};
+use std::collections::HashMap;
 use std::future::Future;
 use std::pin::Pin;
 use std::rc::Rc;
-use std::task::{Context, Waker};
 
-use swan_core::value::{Promise, Scope, Value};
+use swan_core::value::{Scope, Value};
 use url::Url;
 
 use crate::context::create_import_texl_namespace;
+use crate::helpers::{SpawnFn, Task};
 use crate::template;
 
 /// An external, host-provided document loader.
@@ -46,15 +40,6 @@ use crate::template;
 /// Receives the URI exactly as given to [`import`] (not normalized) and returns a future
 /// yielding the document source, or an error message. Build one with [`loader_fn`].
 pub type LoaderFn = Rc<dyn Fn(&str) -> Pin<Box<dyn Future<Output = Result<String, String>>>>>;
-
-/// A background task, as handed to a spawner. It is not `Send`: tasks run on the thread that created them.
-pub type Task = Pin<Box<dyn Future<Output = ()>>>;
-
-/// A host-provided function that runs a background task to completion.
-///
-/// The host decides how the task is driven (e.g. `wasm_bindgen_futures::spawn_local`
-/// or a local executor). Build one with [`spawner_fn`].
-pub type SpawnFn = Rc<dyn Fn(Task)>;
 
 /// Builds a [`LoaderFn`] from a plain closure returning a future.
 ///
@@ -68,57 +53,6 @@ where
     Rc::new(move |uri: &str| -> Pin<Box<dyn Future<Output = Result<String, String>>>> {
         Box::pin(f(uri.to_string()))
     })
-}
-
-/// Builds a [`SpawnFn`] from a plain closure.
-pub fn spawner_fn(f: impl Fn(Task) + 'static) -> SpawnFn {
-    Rc::new(f)
-}
-
-thread_local! {
-    /// Queue of tasks spawned via [`spawn_default`], awaiting [`run_pending`].
-    static LOCAL_TASKS: RefCell<VecDeque<Task>> = RefCell::new(VecDeque::new());
-}
-
-/// Fallback spawner: queues the task on a thread-local queue.
-///
-/// The task does not run until [`run_pending`] is called.
-pub fn spawn_default(task: Task) {
-    LOCAL_TASKS.with(|q| q.borrow_mut().push_back(task));
-}
-
-/// Polls queued fallback tasks until no further progress is possible.
-///
-/// Uses a no-op waker, so it cannot be woken by external events. It stops when a full
-/// pass completes no task and spawns no new one. Tasks still waiting on external events
-/// stay queued, and a later call retries them.
-///
-/// Hosts that don't install their own spawner (see [`Registry::set_spawner`]) must call
-/// this to drive imports.
-pub fn run_pending() {
-    let mut cx = Context::from_waker(Waker::noop());
-    loop {
-        // Take the batch out first so tasks can call `spawn_default` while being polled.
-        let batch: VecDeque<Task> = LOCAL_TASKS.with(|q| std::mem::take(&mut *q.borrow_mut()));
-        if batch.is_empty() {
-            break;
-        }
-        let mut progressed = false;
-        let mut still_pending = 0;
-        for mut task in batch {
-            if task.as_mut().poll(&mut cx).is_ready() {
-                progressed = true;
-            } else {
-                still_pending += 1;
-                LOCAL_TASKS.with(|q| q.borrow_mut().push_back(task));
-            }
-        }
-        let queued = LOCAL_TASKS.with(|q| q.borrow().len());
-        // Nothing finished and nothing new was spawned: all remaining tasks wait on external events.
-        if !progressed && queued == still_pending {
-            break;
-        }
-    }
 }
 
 /// Host loader registry and document cache.
@@ -145,35 +79,19 @@ impl Registry {
     }
 
     /// Registers a custom loader for a specific scheme/protocol (e.g., "http", "https", "file", "ftp").
-    ///
-    /// The scheme is lowercased. Registering the same scheme again replaces the previous loader.
     pub fn register_loader(&self, protocol: impl Into<String>, loader: LoaderFn) {
         let scheme = protocol.into().to_lowercase();
         self.loaders.borrow_mut().insert(scheme, loader);
     }
 
     /// Sets the default loader for scheme-less/protocol-less URIs (e.g., "/path/to/file.texl").
-    ///
-    /// Used when the URI cannot be parsed as an absolute URL.
     pub fn set_default_loader(&self, loader: LoaderFn) {
         *self.default_loader.borrow_mut() = Some(loader);
     }
 
     /// Normalizes a URI into a unique caching key.
-    ///
-    /// - Absolute URLs are canonicalized by the `url` crate (lowercased scheme and host,
-    ///   default port removed, dot segments resolved), e.g.
-    ///   `HTTP://Example.COM:80/foo/../bar` becomes `http://example.com/bar`.
-    /// - Scheme-less URIs are treated as absolute paths: a leading `/` is ensured, dot
-    ///   segments are resolved, and any query is kept (a fragment is dropped), e.g.
-    ///   `relative/file.texl` becomes `/relative/file.texl`.
-    /// - Input that cannot be normalized either way is returned trimmed.
-    ///
-    /// The `Result` return type allows for future stricter validation; currently every
-    /// input yields `Ok`.
     pub fn normalize_url(&self, uri: &str) -> Result<String, String> {
         if let Ok(parsed) = Url::parse(uri) {
-            // Standard URL normalization (canonicalizes host, port, path, scheme)
             Ok(parsed.to_string())
         } else {
             if let Ok(dummy) = Url::parse(&format!("app:///{}", uri.trim_start_matches('/'))) {
@@ -190,30 +108,31 @@ impl Registry {
     }
 
     /// Installs a host spawner. Without one, tasks go to the fallback queue driven by `run_pending()`.
-    /// Replaces any previously installed spawner.
     pub fn set_spawner(&self, spawner: SpawnFn) {
         *self.spawner.borrow_mut() = Some(spawner);
     }
 
+    /// Gets a cloned reference to the active spawner, if any.
+    pub fn spawner(&self) -> Option<SpawnFn> {
+        self.spawner.borrow().clone()
+    }
+
     /// Runs a background task via the host spawner, or the fallback queue if none is set.
     pub fn spawn(&self, task: Task) {
-        let spawner = self.spawner.borrow().clone();
-        match spawner {
-            Some(s) => s(task),
-            None => spawn_default(task),
-        }
+        crate::helpers::spawn(self.spawner.borrow().as_ref(), task);
+    }
+
+    /// Fetches the cached value for a normalized URL, if it exists.
+    pub fn get_cached(&self, norm_url: &str) -> Option<Value> {
+        self.cache.borrow().get(norm_url).cloned()
+    }
+
+    /// Inserts a value into the document cache.
+    pub fn set_cached(&self, norm_url: String, val: Value) {
+        self.cache.borrow_mut().insert(norm_url, val);
     }
 
     /// Fetches the raw document source for `uri` using the matching loader.
-    ///
-    /// The URI is parsed with the `url` crate. If it is absolute, the loader registered
-    /// for its (lowercased) scheme is used; otherwise the default loader is used. The
-    /// loader receives `uri` as given, not normalized.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if no loader is registered for the scheme, if no default loader is
-    /// configured for a scheme-less URI, or if the loader itself fails.
     pub async fn load(&self, uri: &str) -> Result<String, String> {
         let loader = if let Ok(parsed) = Url::parse(uri) {
             let scheme = parsed.scheme().to_lowercase();
@@ -233,57 +152,18 @@ impl Registry {
     }
 }
 
-/// Imports a texl document.
+/// Asynchronously imports a texl document.
 ///
-/// Returns immediately. The result is normally a Swan promise that resolves to a
-/// `{url, source, context, rendering}` namespace (see the module docs), or to `Nothing`
-/// if loading fails (Swan promises never reject). If `doc_uri` cannot be normalized,
-/// it returns an `import.invalid_uri` undefined value instead of a promise.
+/// Loads, renders and updates the registry cache for the specified `doc_uri`. 
+/// Returns a namespace on success, or `Nothing` on failure.
 ///
-/// `scope` is the parent scope of the imported document's scope.
-///
-/// - Loaded and in-flight documents are served from the cache, so each document is
-///   fetched once and recursive imports don't loop. Awaiting an in-flight import of
-///   yourself inside a `<% %>` tag cannot complete; assigning it without rendering it
-///   is fine.
-/// - Failed loads are evicted from the cache so they can be retried.
-/// - Loading and rendering run as a background task started through
-///   [`Registry::spawn`]; the promise resolves when that task finishes.
-pub fn import(registry: Registry, doc_uri: &str, scope: &Scope) -> Value {
-    let norm_url = match registry.normalize_url(doc_uri) {
+/// If a failure occurs, the entry is evicted from the cache to allow retries.
+pub async fn import(registry: Registry, doc_uri: String, parent: Scope) -> Value {
+    let norm_url = match registry.normalize_url(&doc_uri) {
         Ok(url) => url,
         Err(err) => return Value::undef_unary("import.invalid_uri", Value::Text(err.into()), 0),
     };
 
-    let cached = registry.cache.borrow().get(&norm_url).cloned();
-    if let Some(v) = cached {
-        return v;
-    }
-
-    let promise = Promise::new();
-    let promise_val = Value::Promise(promise.clone());
-    registry.cache.borrow_mut().insert(norm_url.clone(), promise_val.clone());
-
-    let task = run_import(registry.clone(), doc_uri.to_string(), norm_url, scope.clone(), promise);
-    registry.spawn(Box::pin(task));
-    promise_val
-}
-
-/// Background task behind [`import`]: loads, renders and caches one document, then
-/// resolves `promise`.
-///
-/// On success, the document gets a child scope of `parent` with its own `texl`
-/// namespace (so templates can call `texl.import`). The result namespace is a separate
-/// scope holding only `url`, `source`, `context` and `rendering`, and it replaces the
-/// pending promise in the cache. On failure, the cache entry is removed and the promise
-/// resolves to `Nothing`.
-async fn run_import(
-    registry: Registry,
-    doc_uri: String,
-    norm_url: String,
-    parent: Scope,
-    promise: Promise,
-) {
     match registry.load(&doc_uri).await {
         Ok(source) => {
             // The document scope gets its own `texl` binding *before* rendering,
@@ -302,13 +182,13 @@ async fn run_import(
             result.set("rendering", Value::Text(rendering.into()));
 
             let result_val = Value::Namespace(result);
-            registry.cache.borrow_mut().insert(norm_url, result_val.clone());
-            promise.resolve(result_val);
+            registry.set_cached(norm_url, result_val.clone());
+            result_val
         }
         Err(_) => {
-            // Evict before resolving, so a retry triggered from a promise callback starts fresh.
+            // Evict before resolving, so a retry starts fresh.
             registry.cache.borrow_mut().remove(&norm_url);
-            promise.resolve(Value::Nothing);
+            Value::Nothing
         }
     }
 }
@@ -316,9 +196,10 @@ async fn run_import(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::helpers::{run_pending, spawner_fn};
     use std::cell::Cell;
     use std::pin::pin;
-    use std::task::Poll;
+    use std::task::{Context, Poll, Waker};
 
     // ---- helpers ----------------------------------------------------------
 
@@ -366,6 +247,22 @@ mod tests {
             async move { Ok::<String, String>(source.to_string()) }
         }));
         counter
+    }
+
+    /// Test helper simulating context::create's caching and promise-wrapping 
+    fn test_import(registry: Registry, doc_uri: &str, scope: &Scope) -> Value {
+        let norm_url = registry.normalize_url(doc_uri).unwrap();
+        if let Some(v) = registry.get_cached(&norm_url) {
+            return v;
+        }
+        let registry_clone = registry.clone();
+        let doc_uri_str = doc_uri.to_string();
+        let scope_clone = scope.clone();
+        let promise = crate::helpers::promise_async(registry.spawner().as_ref(), async move {
+            import(registry_clone, doc_uri_str, scope_clone).await
+        });
+        registry.set_cached(norm_url, promise.clone());
+        promise
     }
 
     // ---- registry / normalization ----------------------------------------
@@ -441,7 +338,7 @@ mod tests {
         let scope = Scope::new();
         scope.set("name", Value::Text("Texl".into()));
 
-        let result = await_promise(import(registry, "/templates/main.texl", &scope));
+        let result = await_promise(test_import(registry, "/templates/main.texl", &scope));
         let ns = match result {
             Value::Namespace(ns) => ns,
             other => panic!("Expected a Namespace, got {:?}", other),
@@ -475,11 +372,11 @@ mod tests {
         }));
         let scope = Scope::new();
 
-        let res1 = await_promise(import(registry.clone(), "http://example.com/cached.texl", &scope));
+        let res1 = await_promise(test_import(registry.clone(), "http://example.com/cached.texl", &scope));
         assert_eq!(counter.get(), 1);
 
         // Different spelling, same normalized URL.
-        let res2 = await_promise(import(registry.clone(), "HTTP://EXAMPLE.COM/cached.texl", &scope));
+        let res2 = await_promise(test_import(registry.clone(), "HTTP://EXAMPLE.COM/cached.texl", &scope));
         assert_eq!(counter.get(), 1);
 
         assert!(ns_ptr_eq(&res1, &res2));
@@ -491,8 +388,8 @@ mod tests {
         let counter = counting_loader(&registry, "shared");
         let scope = Scope::new();
 
-        let p1 = import(registry.clone(), "/shared.texl", &scope);
-        let p2 = import(registry.clone(), "/shared.texl", &scope);
+        let p1 = test_import(registry.clone(), "/shared.texl", &scope);
+        let p2 = test_import(registry.clone(), "/shared.texl", &scope);
         assert!(matches!(p1, Value::Promise(_)));
         assert!(matches!(p2, Value::Promise(_)));
         assert_eq!(counter.get(), 0); // nothing has run yet
@@ -522,12 +419,12 @@ mod tests {
         let scope = Scope::new();
 
         // Promises never reject: a failed load resolves to Nothing.
-        let first = await_promise(import(registry.clone(), "/retry.texl", &scope));
+        let first = await_promise(test_import(registry.clone(), "/retry.texl", &scope));
         assert_eq!(first, Value::Nothing);
         assert!(!registry.cache.borrow().contains_key("/retry.texl"));
 
         fail.set(false);
-        match await_promise(import(registry.clone(), "/retry.texl", &scope)) {
+        match await_promise(test_import(registry.clone(), "/retry.texl", &scope)) {
             Value::Namespace(ns) => {
                 assert_eq!(ns.get("rendering"), Value::Text("Recovered content".into()))
             }
@@ -541,7 +438,7 @@ mod tests {
         // The document imports itself without rendering the result.
         let counter = counting_loader(&registry, r#"<% p = texl.import("/rec.texl") %>done"#);
 
-        let promise_val = import(registry.clone(), "/rec.texl", &Scope::new());
+        let promise_val = test_import(registry.clone(), "/rec.texl", &Scope::new());
 
         // The in-flight promise is cached immediately.
         assert!(matches!(
@@ -563,11 +460,11 @@ mod tests {
         let registry = Registry::new();
         registry.set_spawner(spawner_fn(move |t| {
             s.set(s.get() + 1);
-            spawn_default(t);
+            crate::helpers::spawn_default(t);
         }));
         registry.set_default_loader(loader_fn(|_| async move { Ok::<String, String>("x".to_string()) }));
 
-        match await_promise(import(registry, "/x.texl", &Scope::new())) {
+        match await_promise(test_import(registry, "/x.texl", &Scope::new())) {
             Value::Namespace(ns) => assert_eq!(ns.get("rendering"), Value::Text("x".into())),
             other => panic!("Expected a Namespace, got {:?}", other),
         }
