@@ -5,3 +5,4 @@ edition = "2024"
 
 [dependencies]
 swan-core = { path = "../swan-core" }
+url = "2"

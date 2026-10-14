@@ -1,3 +1,39 @@
+//! Template rendering for Texl.
+//!
+//! A template is plain text containing Swan expressions delimited by `<%` and `%>`.
+//! [`render`] replaces each `<% expr %>` tag with the text form of the value that `expr`
+//! evaluates to, and copies all other text through unchanged.
+//!
+//! # Syntax
+//!
+//! - A tag starts at `<%` and ends at the *first* following `%>`. Tags cannot be nested,
+//!   and the sequence `%>` cannot appear inside an expression.
+//! - If a `<%` has no matching `%>`, rendering stops at that point and the rest of the
+//!   template, including the stray `<%`, is copied through literally.
+//!
+//! # Evaluation model
+//!
+//! - Tags are evaluated strictly in order, all against the same [`Scope`]. Assignments made
+//!   in one tag are therefore visible in later tags
+//!   (e.g. `<% count = 1 %>Count is <% count %>`).
+//! - If an expression yields a [`Value::Promise`], rendering suspends until the promise
+//!   resolves (repeating if the result is itself a promise) and then renders the resolved
+//!   value. This is why [`render`] is `async`.
+//! - The future is single-threaded: it holds `Rc` values and is not `Send`.
+//!
+//! # Output format
+//!
+//! See [`value_to_string`] for how each kind of value is rendered.
+//!
+//! # Example
+//!
+//! ```ignore
+//! let scope = Scope::new();
+//! scope.set("name", Value::Text("World".into()));
+//! let out = render("Hello <% name %>!", &scope).await;
+//! assert_eq!(out, "Hello World!");
+//! ```
+
 use swan_core::evaluator::eval;
 use swan_core::lexer::Lexer;
 use swan_core::parser::Parser;
@@ -10,18 +46,26 @@ use std::task::{Context, Poll, Waker};
 
 
 
-/// State shared between a `WaitForValue` future and the promise callback.
+/// State shared between a [`WaitForValue`] future and the promise callback that feeds it.
+///
+/// - `value`: set by the callback when the promise resolves; taken by the future on `poll`.
+/// - `waker`: the most recent waker registered by `poll`; used by the callback to wake the task.
 struct Shared {
     value: Option<Value>,
     waker: Option<Waker>,
 }
 
-/// Future that completes once the promise callback has stored a value.
+/// Future that completes once the promise callback has stored a value in the shared state.
+///
+/// Each `poll` either takes the stored value (`Ready`) or registers the current waker
+/// and returns `Pending`.
 struct WaitForValue(Rc<RefCell<Shared>>);
 
 impl Future for WaitForValue {
     type Output = Value;
 
+    /// Returns `Ready` with the value if the callback has already stored one;
+    /// otherwise stores a clone of `cx`'s waker and returns `Pending`.
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Value> {
         let mut shared = self.0.borrow_mut();
         if let Some(v) = shared.value.take() {
@@ -34,9 +78,14 @@ impl Future for WaitForValue {
 }
 
 
-/// If `val` is a promise, waits until it resolves and returns the resolved value.
-/// Repeats while the resolved value is itself a promise.
-/// Any non-promise value is returned unchanged.
+/// Waits for `val` to become a non-promise value and returns it.
+///
+/// If `val` is a [`Value::Promise`], a callback is registered with `Promise::then`
+/// (which runs immediately if the promise is already resolved) that stores the resolved
+/// value and wakes the awaiting task. This repeats while the resolved value is itself a
+/// promise. Any non-promise value is returned unchanged without suspending.
+///
+/// Promises never reject in Swan, so this function cannot fail.
 async fn resolve_promises(mut val: Value) -> Value {
     while let Value::Promise(p) = &val {
         let p = p.clone();
@@ -63,9 +112,22 @@ async fn resolve_promises(mut val: Value) -> Value {
 }
 
 
-/// Evaluates all Swan expressions enclosed between `<%` and `%>` in `template`,
-/// using the given `scope`, and returns the interpolated output string.
-/// If an expression evaluates to a promise, it is awaited and the resolved value is rendered.
+/// Renders `template`, evaluating every `<% ... %>` expression against `scope`.
+///
+/// For each tag, the expression text is lexed, parsed and evaluated with
+/// [`swan_core::evaluator::eval`]. If the result is a promise, it is awaited via
+/// [`resolve_promises`]. The final value is converted with [`value_to_string`] and
+/// appended to the output. Text outside tags is copied verbatim.
+///
+/// Evaluation mutates `scope`, so assignments persist across tags and after the call returns.
+/// An unclosed `<%` ends processing, and the remaining text is appended literally.
+///
+/// # Arguments
+/// * `template` - the template source text.
+/// * `scope` - the scope used to evaluate all expressions.
+///
+/// # Returns
+/// The fully interpolated string.
 pub async fn render(template: &str, scope: &Scope) -> String {
     let mut result = String::with_capacity(template.len());
     let mut cursor = 0;
@@ -111,7 +173,25 @@ pub async fn render(template: &str, scope: &Scope) -> String {
 }
 
 
-/// Converts a Swan `Value` into its rendered text format.
+/// Converts a Swan [`Value`] into its rendered text form.
+///
+/// | Value                  | Output                                              |
+/// |------------------------|-----------------------------------------------------|
+/// | `Text`                 | the string itself                                   |
+/// | `Numb`                 | Rust `f64` display (`30`, not `30.0`; `1.5`)        |
+/// | `Bool`                 | `TRUE` / `FALSE`                                    |
+/// | `Nothing`              | empty string                                        |
+/// | `Tuple`                | items rendered and joined with `", "`               |
+/// | `List`                 | `[[List of N]]`                                     |
+/// | `Namespace`            | `[[Namespace of N]]` (N = number of local bindings) |
+/// | `Func` / `Builtin`     | `[[Func]]`                                          |
+/// | `Undefined`            | `[[Undefined]]`                                     |
+/// | `Name`                 | the name text                                       |
+/// | `Promise` (resolved)   | the rendered resolved value                         |
+/// | `Promise` (pending)    | `[[Pending Promise]]`                               |
+///
+/// Top-level promises are already awaited by [`render`], so `[[Pending Promise]]` can
+/// only appear for promises nested inside other values, such as tuple items.
 fn value_to_string(val: Value) -> String {
     match val {
         Value::Text(s) => s.to_string(),
@@ -132,7 +212,7 @@ fn value_to_string(val: Value) -> String {
         }
         Value::Name(n) => n.to_string(),
 
-        // Handle Value::Promise
+        // Non-blocking: read the promise's current value without awaiting it.
         Value::Promise(promise) => {
             let inner_value = promise.0.borrow().value.clone();
             match inner_value {
@@ -145,6 +225,7 @@ fn value_to_string(val: Value) -> String {
 
 
 #[cfg(test)]
+/// Unit tests for template rendering, including promise handling.
 mod tests {
     use super::*;
     use swan_core::value::{Scope, Value};
@@ -153,7 +234,8 @@ mod tests {
     use std::sync::Arc;
     use std::task::Wake;
 
-    /// Helper to create a test scope pre-populated with standard variables and functions.
+    /// Builds a child scope containing `name` ("World"), `a` (10), `b` (20),
+    /// `is_valid` (TRUE) and `items` (a two-element list).
     fn create_test_scope() -> Scope {
         let scope = Scope::new();
         scope.set("name", Value::Text("World".into()));
@@ -164,11 +246,13 @@ mod tests {
         scope.new_child()
     }
 
+    /// Waker that does nothing; sufficient because `block_on` simply re-polls in a loop.
     struct NoopWake;
     impl Wake for NoopWake {
         fn wake(self: Arc<Self>) {}
     }
 
+    /// Minimal busy-polling executor that drives `fut` to completion on the current thread.
     fn block_on<F: Future>(fut: F) -> F::Output {
         let waker = Waker::from(Arc::new(NoopWake));
         let mut cx = Context::from_waker(&waker);
@@ -181,6 +265,7 @@ mod tests {
     }
 
     #[test]
+    /// Text without tags is returned unchanged.
     fn test_plain_text_without_expressions() {
         let scope = create_test_scope();
         let input = "Hello, world! No template tags here.";
@@ -188,6 +273,7 @@ mod tests {
     }
 
     #[test]
+    /// A single tag is replaced by its value.
     fn test_single_expression_interpolation() {
         let scope = create_test_scope();
         let input = "Hello <% name %>!";
@@ -195,6 +281,7 @@ mod tests {
     }
 
     #[test]
+    /// Multiple tags are evaluated, including arithmetic.
     fn test_multiple_expressions_and_arithmetic() {
         let scope = create_test_scope();
         let input = "Sum: <% a + b %>, Product: <% a * b %>";
@@ -202,6 +289,7 @@ mod tests {
     }
 
     #[test]
+    /// Booleans render as TRUE/FALSE and Nothing as an empty string.
     fn test_boolean_and_nothing_formatting() {
         let scope = create_test_scope();
         let input = "Valid: <% is_valid %>, Empty: <% () %>";
@@ -209,6 +297,7 @@ mod tests {
     }
 
     #[test]
+    /// Lists and namespaces render as placeholder summaries.
     fn test_structured_types_formatting() {
         let scope = create_test_scope();
         let input = "List: <% items %>, Namespace: <% { x: 1, y: 2 } %>";
@@ -216,6 +305,7 @@ mod tests {
     }
 
     #[test]
+    /// Tuple items are joined with ", ".
     fn test_tuple_formatting() {
         let scope = create_test_scope();
         let input = "Tuple: <% (a, b, name) %>";
@@ -223,6 +313,7 @@ mod tests {
     }
 
     #[test]
+    /// An unclosed "<%" causes the remaining text to be copied literally.
     fn test_unclosed_delimiter_tag() {
         let scope = create_test_scope();
         let input = "Hello <% name %, remaining text without closing tag <% a";
@@ -233,6 +324,7 @@ mod tests {
     }
 
     #[test]
+    /// Assignments in one tag are visible in later tags.
     fn test_state_mutation_across_tags() {
         let scope = create_test_scope();
         let input = "<% count = 1 %>Count is <% count %>, next is <% count = count + 1, count %>";
@@ -240,6 +332,7 @@ mod tests {
     }
 
     #[test]
+    /// An already-resolved promise renders its value without suspending.
     fn test_already_resolved_promise_is_rendered() {
         let scope = create_test_scope();
         let p = Promise::new();
@@ -249,6 +342,7 @@ mod tests {
     }
 
     #[test]
+    /// A pending promise suspends rendering until it resolves, then renders its value.
     fn test_pending_promise_is_awaited_then_rendered() {
         let scope = create_test_scope();
         let p = Promise::new();
