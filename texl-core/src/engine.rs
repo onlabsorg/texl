@@ -66,8 +66,10 @@ impl Engine {
             Ok(url) => url,
             Err(err) => return Value::undef_unary("import.invalid_uri", Value::Text(err.into()), 0),
         };
-        let doc_scope = self.create_scope();
-        self.load_internal(uri.to_string(), doc_scope, norm_url).await
+        // Relative imports inside the loaded document resolve against its own URL
+        let doc_scope = self.base_scope.new_child();
+        self.bind_texl_namespace(&doc_scope, Some(norm_url.clone()));
+        self.load_internal(doc_scope, norm_url).await
     }
 
     /// 5. Renders a template directly, creating a fresh scope automatically
@@ -81,23 +83,29 @@ impl Engine {
         // Create a child so document executions do not pollute the base_scope
         let child = self.base_scope.new_child();
 
-        // Create a standalone `texl` namespace and attach it
-        let texl_ns = Scope::new();
-        texl_ns.set("import", self.create_import_builtin(child.clone()));
-        child.set("texl", Value::Namespace(texl_ns));
+        // No backing document: relative imports resolve against the root `/`
+        self.bind_texl_namespace(&child, None);
 
         child
     }
 
     // --- Internal Helpers ---
 
+    /// Attaches a standalone `texl` namespace to `scope`, with an `import` builtin
+    /// that resolves relative paths against `base_url` (the URL of the document owning `scope`)
+    fn bind_texl_namespace(&self, scope: &Scope, base_url: Option<String>) {
+        let texl_ns = Scope::new();
+        texl_ns.set("import", self.create_import_builtin(scope.clone(), base_url));
+        scope.set("texl", Value::Namespace(texl_ns));
+    }
+
     /// Creates the `texl.import` builtin bound to a specific document scope
-    fn create_import_builtin(&self, parent_scope: Scope) -> Value {
+    fn create_import_builtin(&self, parent_scope: Scope, base_url: Option<String>) -> Value {
         let engine = self.clone();
         Value::Builtin(BuiltinFn::new("texl.import", move |arg| {
             match arg {
                 Value::Text(uri) => {
-                    let norm_url = match engine.normalize_url(&uri) {
+                    let norm_url = match engine.resolve_url(&uri, base_url.as_deref()) {
                         Ok(url) => url,
                         Err(err) => return Value::undef_unary("import.invalid_uri", Value::Text(err.into()), 0),
                     };
@@ -116,7 +124,6 @@ impl Engine {
                     }
 
                     let engine_clone = engine.clone();
-                    let uri_str = uri.to_string();
                     let norm_url_key = norm_url.clone();
                     let parent_scope_clone = parent_scope.clone();
 
@@ -127,12 +134,11 @@ impl Engine {
                             // 1. Create a child scope so the document inherits the caller's variables
                             let doc_scope = parent_scope_clone.new_child();
                             
-                            // 2. Bind the texl namespace securely to the new document scope
-                            let texl_ns = Scope::new();
-                            texl_ns.set("import", engine_clone.create_import_builtin(doc_scope.clone()));
-                            doc_scope.set("texl", Value::Namespace(texl_ns));
+                            // 2. Bind the texl namespace to the new document scope, using the
+                            //    imported document's URL as base for its own relative imports
+                            engine_clone.bind_texl_namespace(&doc_scope, Some(norm_url_key.clone()));
 
-                            engine_clone.load_internal(uri_str, doc_scope, norm_url_key).await
+                            engine_clone.load_internal(doc_scope, norm_url_key).await
                         },
                     );
 
@@ -145,8 +151,9 @@ impl Engine {
     }
 
     /// Core async loading logic used by both `load` and `texl.import`
-    async fn load_internal(&self, doc_uri: String, doc_scope: Scope, norm_url: String) -> Value {
-        let loader = if let Ok(parsed) = Url::parse(&doc_uri) {
+    /// `norm_url` is the resolved and normalized URL: it is what the loader receives and the cache key.
+    async fn load_internal(&self, doc_scope: Scope, norm_url: String) -> Value {
+        let loader = if let Ok(parsed) = Url::parse(&norm_url) {
             let scheme = parsed.scheme().to_lowercase();
             let l = self.loaders.borrow().get(&scheme).cloned();
             match l {
@@ -167,7 +174,7 @@ impl Engine {
             }
         };
 
-        match loader(&doc_uri).await {
+        match loader(&norm_url).await {
             Ok(source) => {
                 let rendering = template::render(&source, &doc_scope).await;
 
@@ -189,6 +196,32 @@ impl Engine {
             }
         }
     }
+    /// Resolves `uri` against `base_url` (the URL of the importing document) and normalizes it.
+    /// URIs with a scheme and absolute paths (starting with `/`) ignore the base; so do all
+    /// URIs when there is no base, in which case relative paths resolve against the root `/`.
+    fn resolve_url(&self, uri: &str, base_url: Option<&str>) -> Result<String, String> {
+        let base = match base_url {
+            Some(base) if Url::parse(uri).is_err() && !uri.starts_with('/') => base,
+            _ => return self.normalize_url(uri),
+        };
+
+        if let Ok(base) = Url::parse(base) {
+            // The base is a full URI (e.g. `http://host/dir/doc.texl`)
+            base.join(uri).map(|u| u.to_string()).map_err(|e| e.to_string())
+        } else {
+            // The base is a scheme-less path: resolve it under a dummy scheme, then strip it
+            let dummy_base = Url::parse(&format!("app:///{}", base.trim_start_matches('/')))
+                .map_err(|e| e.to_string())?;
+            let joined = dummy_base.join(uri).map_err(|e| e.to_string())?;
+            let mut norm = joined.path().to_string();
+            if let Some(q) = joined.query() {
+                norm.push('?');
+                norm.push_str(q);
+            }
+            Ok(norm)
+        }
+    }
+
     fn normalize_url(&self, uri: &str) -> Result<String, String> {
         if let Ok(parsed) = Url::parse(uri) {
             Ok(parsed.to_string())
@@ -336,6 +369,136 @@ mod tests {
         
         // main.texl loaded once, shared.texl loaded once, despite two `texl.import` calls
         assert_eq!(call_count.get(), 2);
+    }
+
+    /// Builds an engine whose loaders serve sources from `docs` (keyed by the URI the loader
+    /// receives) and record every URI they are asked to load.
+    fn engine_with_docs(docs: &[(&str, &str)]) -> (Engine, Rc<RefCell<Vec<String>>>) {
+        let engine = Engine::new(None);
+        let docs: Rc<HashMap<String, String>> = Rc::new(
+            docs.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect(),
+        );
+        let requested = Rc::new(RefCell::new(Vec::new()));
+
+        let make_loader = || {
+            let docs = docs.clone();
+            let requested = requested.clone();
+            loader_fn(move |uri| {
+                requested.borrow_mut().push(uri.clone());
+                let res = docs.get(&uri).cloned().ok_or(format!("not found: {}", uri));
+                async move { res }
+            })
+        };
+        engine.add_default_loader(make_loader());
+        engine.add_loader("http", make_loader());
+        (engine, requested)
+    }
+
+    const RENDERING: &str = "~> (ns -> ns.rendering)";
+
+    #[test]
+    fn test_engine_resolves_relative_imports_against_importing_document() {
+        let main = format!(r#"[main <% texl.import("parts/header.texl") {RENDERING} %>]"#);
+        let header = format!(r#"[header <% texl.import("../footer.texl") {RENDERING} %>]"#);
+        let footer = format!(r#"[footer <% texl.import("./parts/../parts/note.texl") {RENDERING} %>]"#);
+        let (engine, requested) = engine_with_docs(&[
+            ("/docs/main.texl", &main),
+            ("/docs/parts/header.texl", &header),
+            ("/docs/footer.texl", &footer),
+            ("/docs/parts/note.texl", "note"),
+        ]);
+
+        let out = block_on(engine.render(&format!(r#"<% texl.import("/docs/main.texl") {RENDERING} %>"#)));
+
+        assert_eq!(out, "[main [header [footer note]]]");
+        assert_eq!(
+            *requested.borrow(),
+            vec!["/docs/main.texl", "/docs/parts/header.texl", "/docs/footer.texl", "/docs/parts/note.texl"]
+        );
+    }
+
+    #[test]
+    fn test_engine_load_resolves_relative_imports_against_loaded_document() {
+        let main = format!(r#"<% texl.import("lib.texl") {RENDERING} %>"#);
+        let (engine, requested) = engine_with_docs(&[("/a/b/main.texl", &main), ("/a/b/lib.texl", "lib")]);
+
+        let ns = unwrap_namespace(block_on(engine.load("/a/b/main.texl")));
+
+        assert_eq!(ns.get("rendering"), Value::Text("lib".into()));
+        assert_eq!(*requested.borrow(), vec!["/a/b/main.texl", "/a/b/lib.texl"]);
+    }
+
+    #[test]
+    fn test_engine_absolute_paths_and_uris_ignore_importing_document() {
+        let main = format!(
+            r#"<% texl.import("/top.texl") {RENDERING} %>,<% texl.import("http://example.com/x/remote.texl") {RENDERING} %>"#
+        );
+        let (engine, requested) = engine_with_docs(&[
+            ("/docs/main.texl", &main),
+            ("/top.texl", "top"),
+            ("http://example.com/x/remote.texl", "remote"),
+        ]);
+
+        let out = block_on(engine.render(&format!(r#"<% texl.import("/docs/main.texl") {RENDERING} %>"#)));
+
+        assert_eq!(out, "top,remote");
+        assert_eq!(
+            *requested.borrow(),
+            vec!["/docs/main.texl", "/top.texl", "http://example.com/x/remote.texl"]
+        );
+    }
+
+    #[test]
+    fn test_engine_resolves_relative_imports_against_uri_documents() {
+        let main = format!(r#"<% texl.import("../lib/util.texl?v=1") {RENDERING} %>"#);
+        let (engine, requested) = engine_with_docs(&[
+            ("http://example.com/site/pages/main.texl", &main),
+            ("http://example.com/site/lib/util.texl?v=1", "util"),
+        ]);
+
+        let ns = unwrap_namespace(block_on(engine.load("http://example.com/site/pages/main.texl")));
+
+        assert_eq!(ns.get("rendering"), Value::Text("util".into()));
+        assert_eq!(
+            *requested.borrow(),
+            vec!["http://example.com/site/pages/main.texl", "http://example.com/site/lib/util.texl?v=1"]
+        );
+    }
+
+    #[test]
+    fn test_engine_relative_imports_without_document_resolve_against_root() {
+        let (engine, requested) = engine_with_docs(&[("/dir/doc.texl", "doc")]);
+
+        let out = block_on(engine.render(&format!(r#"<% texl.import("dir/doc.texl") {RENDERING} %>"#)));
+
+        assert_eq!(out, "doc");
+        assert_eq!(*requested.borrow(), vec!["/dir/doc.texl"]);
+    }
+
+    #[test]
+    fn test_engine_caches_relative_imports_by_resolved_url() {
+        // Same relative name from two different folders: two distinct documents
+        let a = format!(r#"<% texl.import("common.texl") {RENDERING} %>"#);
+        let b = format!(r#"<% texl.import("common.texl") {RENDERING} %>"#);
+        // Different relative names resolving to the same document: one load
+        let c = format!(r#"<% texl.import("../a/common.texl") {RENDERING} %>"#);
+        let (engine, requested) = engine_with_docs(&[
+            ("/a/main.texl", &a),
+            ("/b/main.texl", &b),
+            ("/c/main.texl", &c),
+            ("/a/common.texl", "A"),
+            ("/b/common.texl", "B"),
+        ]);
+
+        let out = block_on(engine.render(&format!(
+            r#"<% texl.import("/a/main.texl") {RENDERING} %><% texl.import("/b/main.texl") {RENDERING} %><% texl.import("/c/main.texl") {RENDERING} %>"#
+        )));
+
+        assert_eq!(out, "ABA");
+        assert_eq!(
+            *requested.borrow(),
+            vec!["/a/main.texl", "/a/common.texl", "/b/main.texl", "/b/common.texl", "/c/main.texl"]
+        );
     }
 
     #[test]
