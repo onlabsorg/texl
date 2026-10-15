@@ -197,17 +197,20 @@ impl Engine {
         }
     }
     /// Resolves `uri` against `base_url` (the URL of the importing document) and normalizes it.
-    /// URIs with a scheme and absolute paths (starting with `/`) ignore the base; so do all
-    /// URIs when there is no base, in which case relative paths resolve against the root `/`.
+    /// URIs with a scheme ignore the base. Absolute paths (starting with `/`) resolve against
+    /// the root of a full-URI base (`/p` from `http://host/dir/doc` is `http://host/p`), and
+    /// stay scheme-less otherwise. Without a base, relative paths resolve against the root `/`.
     fn resolve_url(&self, uri: &str, base_url: Option<&str>) -> Result<String, String> {
         let base = match base_url {
-            Some(base) if Url::parse(uri).is_err() && !uri.starts_with('/') => base,
+            Some(base) if Url::parse(uri).is_err() => base,
             _ => return self.normalize_url(uri),
         };
 
         if let Ok(base) = Url::parse(base) {
             // The base is a full URI (e.g. `http://host/dir/doc.texl`)
             base.join(uri).map(|u| u.to_string()).map_err(|e| e.to_string())
+        } else if uri.starts_with('/') {
+            self.normalize_url(uri)
         } else {
             // The base is a scheme-less path: resolve it under a dummy scheme, then strip it
             let dummy_base = Url::parse(&format!("app:///{}", base.trim_start_matches('/')))
@@ -462,6 +465,23 @@ mod tests {
         assert_eq!(
             *requested.borrow(),
             vec!["http://example.com/site/pages/main.texl", "http://example.com/site/lib/util.texl?v=1"]
+        );
+    }
+
+    #[test]
+    fn test_engine_resolves_absolute_paths_against_the_root_of_uri_documents() {
+        let main = format!(r#"<% texl.import("/lib/util.texl") {RENDERING} %>"#);
+        let (engine, requested) = engine_with_docs(&[
+            ("http://example.com/site/pages/main.texl", &main),
+            ("http://example.com/lib/util.texl", "util"),
+        ]);
+
+        let ns = unwrap_namespace(block_on(engine.load("http://example.com/site/pages/main.texl")));
+
+        assert_eq!(ns.get("rendering"), Value::Text("util".into()));
+        assert_eq!(
+            *requested.borrow(),
+            vec!["http://example.com/site/pages/main.texl", "http://example.com/lib/util.texl"]
         );
     }
 

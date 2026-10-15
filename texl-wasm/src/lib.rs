@@ -1,196 +1,154 @@
-use wasm_bindgen::prelude::*;
-use js_sys::{Object, Reflect, Array, Function};
-use swan_core::value::{Scope, Value, BuiltinFn, Promise};
-use texl_core::{context, template};
+//! Web bindings of the texl engine.
+//!
+//! ```js
+//! import init, { TexlEngine } from "./pkg/texl_wasm.js";
+//! await init();
+//! const engine = new TexlEngine({ reader: "Ada" });          // globals, optional base URL
+//! const doc = await engine.load("docs/main.texl");           // {uri, source, data, rendering} or null
+//! const text = await engine.render("Hello <% reader %>!");
+//! ```
 
-/// Opaque wrapper around a Swan Scope for JS
+mod convert;
+mod loader;
+
+use js_sys::{Array, Object, Reflect};
+use swan_core::value::{BuiltinFn, Scope, Value};
+use texl_core::helpers::spawner_fn;
+use texl_core::{Engine, loader_fn, template};
+use url::Url;
+use wasm_bindgen::prelude::*;
+
+use convert::{for_each_entry, js_to_swan_value, swan_value_to_js};
+
+/// A texl engine that loads documents over HTTP(S).
+///
+/// Documents with an `http://` or `https://` URL are fetched as they are. Imports
+/// resolve against the importing document: relative paths against its folder, absolute
+/// paths (`/dir/doc.texl`) against its root folder. Templates without a document URL
+/// (`render`, contexts) use the engine's base URL instead.
+#[wasm_bindgen]
+pub struct TexlEngine {
+    engine: Engine,
+    base_url: Option<Url>,
+}
+
+#[wasm_bindgen]
+impl TexlEngine {
+    /// Creates an engine. `globals` are bound in the scope of every document.
+    /// `baseUrl` defaults to the URL of the current page (or worker script).
+    #[wasm_bindgen(constructor)]
+    pub fn new(globals: Option<Object>, base_url: Option<String>) -> Result<TexlEngine, JsValue> {
+        let base_url = match base_url.or_else(location_href) {
+            Some(href) => Some(
+                Url::parse(&href).map_err(|e| JsValue::from_str(&format!("invalid base URL {href}: {e}")))?,
+            ),
+            None => None,
+        };
+
+        let engine = Engine::new(Some(spawner_fn(wasm_bindgen_futures::spawn_local)));
+        engine.add_loader("http", loader_fn(loader::load_http));
+        engine.add_loader("https", loader_fn(loader::load_http));
+        engine.add_default_loader(loader::root_loader(base_url.clone()));
+        use_js_clock(&engine);
+
+        if let Some(globals) = globals {
+            for_each_entry(&globals, |name, value| engine.add_builtin(&name, value))?;
+        }
+        Ok(TexlEngine { engine, base_url })
+    }
+
+    /// The URL that relative document URIs and absolute paths resolve against.
+    #[wasm_bindgen(getter, js_name = baseUrl)]
+    pub fn base_url(&self) -> Option<String> {
+        self.base_url.as_ref().map(Url::to_string)
+    }
+
+    /// Binds a global, visible to every document rendered afterwards.
+    pub fn set(&self, name: &str, value: JsValue) -> Result<(), JsValue> {
+        self.engine.add_builtin(name, js_to_swan_value(value)?);
+        Ok(())
+    }
+
+    /// Loads and renders the document at `uri`, resolved against the base URL.
+    /// Returns a JS Promise of `{uri, source, data, rendering}`, or of `null` if the
+    /// document cannot be loaded. Each document is loaded once per engine.
+    pub fn load(&self, uri: &str) -> js_sys::Promise {
+        let engine = self.engine.clone();
+        let url = loader::resolve_document_url(uri, self.base_url.as_ref());
+        wasm_bindgen_futures::future_to_promise(async move {
+            let url = url.map_err(|e| JsValue::from_str(&e))?;
+            Ok(swan_value_to_js(&engine.load(&url).await))
+        })
+    }
+
+    /// Renders a template in a fresh scope. Returns a JS Promise of the rendered text.
+    pub fn render(&self, template: String) -> js_sys::Promise {
+        let engine = self.engine.clone();
+        wasm_bindgen_futures::future_to_promise(async move {
+            Ok(JsValue::from_str(&engine.render(&template).await))
+        })
+    }
+
+    /// Creates a context: a scope that keeps its bindings across renders.
+    #[wasm_bindgen(js_name = createContext)]
+    pub fn create_context(&self, vars: Option<Object>) -> Result<TexlContext, JsValue> {
+        let scope = self.engine.create_scope();
+        if let Some(vars) = vars {
+            for_each_entry(&vars, |name, value| scope.set(name, value))?;
+        }
+        Ok(TexlContext { scope })
+    }
+}
+
+/// A scope of a [`TexlEngine`] whose bindings persist across renders: names
+/// assigned by a template can be read by later templates and by JS.
 #[wasm_bindgen]
 pub struct TexlContext {
-    pub(crate) scope: Scope,
+    scope: Scope,
 }
 
 #[wasm_bindgen]
 impl TexlContext {
-
     /// Retrieves a variable bound in the context by key
     pub fn get(&self, key: &str) -> JsValue {
-        let swan_val = self.scope.get(key);
-        swan_value_to_js(&swan_val)
+        swan_value_to_js(&self.scope.get(key))
     }
 
-    /// Sets or updates a variable in the local context scope.
+    /// Sets or updates a variable in the context scope.
     pub fn set(&self, key: &str, value: JsValue) -> Result<(), JsValue> {
-        let swan_val = js_to_swan_value(value)?;
-        self.scope.set(key, swan_val);
+        self.scope.set(key, js_to_swan_value(value)?);
         Ok(())
     }
 
-    /// Returns an array of keys bound locally in the current scope.
+    /// Returns the names bound in the context scope (not the engine globals), sorted.
     pub fn names(&self) -> Array {
-        let arr = Array::new();
-        let bindings = self.scope.0.borrow().bindings.clone();
-        
-        let mut keys: Vec<String> = bindings.keys().cloned().collect();
-        keys.sort(); // Sort keys alphabetically for predictable output
+        let mut keys: Vec<String> = self.scope.0.borrow().bindings.keys().cloned().collect();
+        keys.sort();
+        keys.iter().map(|k| JsValue::from_str(k)).collect()
+    }
 
-        for key in keys {
-            arr.push(&JsValue::from_str(&key));
-        }
-        arr
+    /// Renders a template in this context. Returns a JS Promise of the rendered text.
+    pub fn render(&self, template: String) -> js_sys::Promise {
+        let scope = self.scope.clone();
+        wasm_bindgen_futures::future_to_promise(async move {
+            Ok(JsValue::from_str(&template::render(&template, &scope).await))
+        })
     }
 }
 
-#[wasm_bindgen]
-pub fn create_context(js_obj: Option<Object>) -> Result<TexlContext, JsValue> {
-    // 1. Create standard base scope containing Swan built-ins + texl namespace
-    let scope = context::create();
-
-    // 2. Hydrate scope with properties passed from JavaScript
-    if let Some(obj) = js_obj {
-        let keys = Object::keys(&obj);
-        for i in 0..keys.length() {
-            let key = keys.get(i);
-            if let Some(key_str) = key.as_string() {
-                let js_val = Reflect::get(&obj, &key)?;
-                let swan_val = js_to_swan_value(js_val)?;
-                scope.set(key_str, swan_val);
-            }
-        }
-    }
-
-    Ok(TexlContext { scope })
+/// `location.href` of the current page or worker, if any.
+fn location_href() -> Option<String> {
+    let location = Reflect::get(&js_sys::global(), &JsValue::from_str("location")).ok()?;
+    Reflect::get(&location, &JsValue::from_str("href")).ok()?.as_string()
 }
 
-#[wasm_bindgen]
-/// Renders a template asynchronously. Returns a JS Promise<string>; any Swan
-/// promises (including wrapped JS promises / async functions) are awaited.
-pub fn render(template_str: String, ctx: &TexlContext) -> js_sys::Promise {
-    let scope = ctx.scope.clone();
-    wasm_bindgen_futures::future_to_promise(async move {
-        let out = template::render(&template_str, &scope).await;
-        Ok(JsValue::from_str(&out))
-    })
-}
-
-/// True for native Promises and any other "thenable" (object with a callable `then`).
-fn is_thenable(val: &JsValue) -> bool {
-    val.is_instance_of::<js_sys::Promise>()
-        || (val.is_object()
-            && Reflect::get(val, &JsValue::from_str("then"))
-                .map(|t| t.is_function())
-                .unwrap_or(false))
-}
-
-// ----------------------------------------------------------------------------
-// JS -> Swan Conversion
-// ----------------------------------------------------------------------------
-
-fn js_to_swan_value(val: JsValue) -> Result<Value, JsValue> {
-    if val.is_null() || val.is_undefined() {
-        Ok(Value::Nothing)
-    } else if let Some(b) = val.as_bool() {
-        Ok(Value::Bool(b))
-    } else if let Some(n) = val.as_f64() {
-        Ok(Value::Numb(n))
-    } else if let Some(s) = val.as_string() {
-        Ok(Value::Text(s.into()))
-    } else if Array::is_array(&val) {
-        let arr = Array::from(&val);
-        let mut items = Vec::with_capacity(arr.length() as usize);
-        for i in 0..arr.length() {
-            items.push(js_to_swan_value(arr.get(i))?);
-        }
-        Ok(Value::list(items))
-    } else if is_thenable(&val) {
-        let swan_promise = Promise::new();
-        let sp = swan_promise.clone();
-        // Normalises thenables / foreign-realm promises into a native Promise
-        let js_promise = js_sys::Promise::resolve(&val);
-        wasm_bindgen_futures::spawn_local(async move {
-            let result = wasm_bindgen_futures::JsFuture::from(js_promise).await;
-            let v = match result {
-                Ok(v)  => js_to_swan_value(v).unwrap_or(Value::Nothing),
-                Err(_) => Value::Nothing, // Swan promises never reject
-            };
-            sp.resolve(v);
-        });
-        Ok(Value::Promise(swan_promise))
-    } else if val.is_function() {
-        // Wrap JS Function as a Swan BuiltinFn
-        // If the JS function is async (returns a Promise), the result is converted by
-        // js_to_swan_value into a Swan Promise, so Swan sees it as a promise-returning function.
-        let js_fn: Function = val.into();
-        
-        let builtin = BuiltinFn::new("js_callback", move |arg: Value| {
-            let js_arg = swan_value_to_js(&arg);
-            match js_fn.call1(&JsValue::NULL, &js_arg) {
-                Ok(res) => js_to_swan_value(res).unwrap_or(Value::Nothing),
-                Err(_) => Value::Nothing,
-            }
-        });
-
-        Ok(Value::Builtin(builtin))
-    } else if val.is_object() {
-        // Convert JS Object to nested Swan Scope/Namespace
-        let obj: Object = val.into();
-        let sub_scope = Scope::new();
-        let keys = Object::keys(&obj);
-        for i in 0..keys.length() {
-            let key = keys.get(i);
-            if let Some(k_str) = key.as_string() {
-                let v = Reflect::get(&obj, &key)?;
-                sub_scope.set(k_str, js_to_swan_value(v)?);
-            }
-        }
-        Ok(Value::Namespace(sub_scope))
-    } else {
-        Ok(Value::Nothing)
-    }
-}
-
-// ----------------------------------------------------------------------------
-// Swan -> JS Conversion (used when invoking JS functions from Swan)
-// ----------------------------------------------------------------------------
-
-fn swan_value_to_js(val: &Value) -> JsValue {
-    match val {
-        Value::Nothing => JsValue::NULL,
-        Value::Bool(b) => JsValue::from_bool(*b),
-        Value::Numb(n) => JsValue::from_f64(*n),
-        Value::Text(s) => JsValue::from_str(s),
-        Value::List(items) => {
-            let arr = Array::new();
-            for item in items.iter() {
-                arr.push(&swan_value_to_js(item));
-            }
-            arr.into()
-        }
-        Value::Tuple(items) => {
-            let arr = Array::new();
-            for item in items.iter() {
-                arr.push(&swan_value_to_js(item));
-            }
-            arr.into()
-        }
-        Value::Namespace(scope) => {
-            let obj = Object::new();
-            let bindings = scope.0.borrow().bindings.clone();
-            for (k, v) in bindings {
-                let _ = Reflect::set(&obj, &JsValue::from_str(&k), &swan_value_to_js(&v));
-            }
-            obj.into()
-        }
-        Value::Promise(swan_promise) => {
-            let swan_promise = swan_promise.clone();
-            let js_promise = js_sys::Promise::new(&mut |resolve: Function, _reject: Function| {
-                // `then` fires immediately if already resolved, otherwise on resolution.
-                swan_promise.then(move |v| {
-                    let _ = resolve.call1(&JsValue::UNDEFINED, &swan_value_to_js(&v));
-                    Value::Nothing
-                });
-            });
-            js_promise.into()
-        }
-        _ => JsValue::UNDEFINED,
+/// Replaces `time.now`, which reads the system clock: wasm32-unknown-unknown has none
+/// and panics. The engine's `time` namespace is shared, so this changes it for every document.
+fn use_js_clock(engine: &Engine) {
+    if let Value::Namespace(time) = engine.create_scope().get("time") {
+        time.set(
+            "now",
+            Value::Builtin(BuiltinFn::new("time.now", |_| Value::Numb(js_sys::Date::now() / 1000.0))),
+        );
     }
 }

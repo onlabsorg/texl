@@ -9,7 +9,7 @@ Texl is a text-template engine whose `<% ... %>` tags contain expressions in **S
 - `swan-core` – the Swan language: lexer → parser → evaluator, runtime values, builtins. It has no dependencies.
 - `texl-core` – the template renderer plus the `Engine` (scope setup, document loading, `texl.import`). It depends on `swan-core` and `url`.
 - `texl-cli` – the `texl` binary (clap + tokio). It renders a file (a required path, so relative imports can be resolved) to stdout or `-o FILE`, using an `Engine` with a local file loader registered for `file://` and as the default loader.
-- `texl-wasm` – wasm-bindgen bindings (`create_context`, `render`, a `TexlContext` with `get`/`set`/`names`) for web and Node.
+- `texl-wasm` – wasm-bindgen bindings for the web only (a Node.js crate is planned separately): a `TexlEngine` class (`load`, `render`, `set`, `createContext`, `baseUrl`) and a `TexlContext` (`get`/`set`/`names`/`render`).
 
 Planned crates (`texl-py`, `texl.nvim`, `vscode-texl`) are commented out in the root `Cargo.toml`.
 
@@ -22,14 +22,13 @@ cargo test -p swan-core                       # one crate
 cargo test -p texl-core test_engine_caches    # tests whose name contains this string
 cargo run -p texl-cli -- texl-cli/tests/fixtures/sample.texl   # render a sample template
 
-./helper.sh build        # wasm-pack build of texl-wasm into texl-wasm/pkg-web and texl-wasm/pkg-node
-node texl-wasm/tests/test-texl-node.js        # JS integration tests (run ./helper.sh build first; they load pkg-node)
+cargo test -p texl-wasm --test browser       # builds texl-wasm with wasm-pack and runs tests/web/index.html in headless Chrome (skipped if either is missing)
+cargo run -p texl-wasm --example serve        # builds texl-wasm/pkg and serves the browser test page, to inspect it
+./helper.sh build        # wasm-pack build of texl-wasm into texl-wasm/pkg
 ./helper.sh repomix <dir>                      # writes <dir>.repomix.md, a single-file snapshot used as LLM context
 ```
 
-`helper.sh`, `*.repomix.md`, `*.todo.md` (the roadmap is `texl.todo.md`), `local/` and `pkg-*/` are gitignored local files.
-
-**Current state:** commit 28be11f replaced `texl_core::context` with `texl_core::Engine`. `texl-cli` has been moved to `Engine`, but `texl-wasm/src/lib.rs` still imports `texl_core::context`, so `cargo build` of the whole workspace fails until it is moved too. Meanwhile, use `cargo test -p swan-core -p texl-core -p texl-cli`.
+`helper.sh`, `*.repomix.md`, `*.todo.md` (the roadmap is `texl.todo.md`), `local/` and `texl-wasm/pkg/` are gitignored local files.
 
 ## Architecture
 
@@ -61,4 +60,8 @@ The full language spec is `swan-core/docs/swan_language_manual.md`. `swan-core/R
 
 ### texl-wasm
 
-This crate converts between JS values and Swan `Value`s in both directions. JS functions become builtins. JS Promises and async functions become Swan Promises (a rejection resolves to `Nothing`), and Swan Promises come back to JS as JS Promises. `render` returns a JS Promise.
+`TexlEngine` wraps an `Engine` that spawns tasks with `wasm_bindgen_futures::spawn_local`. `loader.rs` fetches `http://` and `https://` URLs with the global `fetch`. Imports inside a document fetched by URL resolve to full URLs (absolute paths against the document's root), so the default loader only receives scheme-less paths from templates without a document URL (`render`, contexts); it fetches them from the root folder of the engine's base URL, which defaults to `location.href`. `TexlEngine::load` resolves its URI against the base URL too. `time.now` is replaced with a JS-clock version, since `SystemTime::now` panics on wasm32-unknown-unknown.
+
+`convert.rs` converts between JS values and Swan `Value`s in both directions. JS functions become builtins. JS Promises and async functions become Swan Promises (a rejection resolves to `Nothing`), and Swan Promises come back to JS as JS Promises. `load` and `render` return JS Promises.
+
+The browser test (`tests/browser.rs`) serves the crate folder with a small std-only HTTP server (`tests/support/mod.rs`, shared with `examples/serve.rs`). The page renders `tests/web/fixtures/sample.texl` (the CLI sample plus a web section) and compares it with `sample.expected.txt`, then runs API checks; it sets `data-status="pass"` on `<body>` when all pass.

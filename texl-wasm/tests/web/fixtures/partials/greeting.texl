@@ -1,0 +1,3 @@
+Dear <% reader %>, this paragraph comes from partials/greeting.texl.
+It reads `reader` from the document that imported it, and it imports
+"signature.texl" from its own folder: <% texl.import("signature.texl") ~> (doc -> text.trim_tail doc.rendering) %>

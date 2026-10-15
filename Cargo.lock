@@ -449,6 +449,7 @@ dependencies = [
  "js-sys",
  "swan-core",
  "texl-core",
+ "url",
  "wasm-bindgen",
  "wasm-bindgen-futures",
 ]

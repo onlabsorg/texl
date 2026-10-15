@@ -22,6 +22,7 @@ target
 
 # Build folders
 pkg-*/
+texl-wasm/pkg/
 
 # Local only
 *.todo.md

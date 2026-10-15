@@ -1,0 +1,2 @@
+remote.texl was fetched by its full URL, so its relative imports are full URLs
+  too: <% texl.import("../lib/format.texl") ~> (doc -> doc.uri == origin + "/tests/web/fixtures/lib/format.texl" ? "same origin" ; doc.uri) %>

@@ -1,0 +1,160 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>texl-wasm tests</title>
+<style>
+  :root { --bg: #fafaf9; --fg: #1c1917; --muted: #78716c; --panel: #f0efed; --pass: #15803d; --fail: #b91c1c; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #1c1917; --fg: #e7e5e4; --muted: #a8a29e; --panel: #292524; --pass: #4ade80; --fail: #f87171; }
+  }
+  body { background: var(--bg); color: var(--fg); font: 15px/1.5 system-ui, sans-serif; max-width: 60rem; margin: 0 auto; padding: 1rem; }
+  h1 { font-size: 1.4rem; margin-bottom: .25rem; }
+  h2 { font-size: 1.1rem; margin-top: 2rem; }
+  p { color: var(--muted); margin-top: 0; }
+  pre { background: var(--panel); padding: 1rem; border-radius: 6px; overflow-x: auto; font-size: 13px; }
+  ul { list-style: none; padding: 0; }
+  li { font-family: ui-monospace, monospace; font-size: 13px; padding: .1rem 0; }
+  .pass { color: var(--pass); }
+  .fail { color: var(--fail); }
+  #status { font-weight: 600; }
+</style>
+</head>
+<body data-status="running">
+<h1>texl-wasm tests</h1>
+<p>Status: <span id="status">running…</span></p>
+
+<h2>Checks</h2>
+<ul id="checks"></ul>
+
+<h2>Rendered document</h2>
+<p><code>fixtures/sample.texl</code>, loaded with <code>engine.load</code>. Compared with <code>fixtures/sample.expected.txt</code>.</p>
+<pre id="rendering"></pre>
+
+<h2 id="expected-title" hidden>Expected document</h2>
+<pre id="expected" hidden></pre>
+
+<script type="module">
+import init, { TexlEngine } from "../../pkg/texl_wasm.js";
+
+const checks = document.getElementById("checks");
+let failures = 0;
+
+/// Records the outcome of a check. `actual` and `expected` are compared with `===`.
+function check(name, actual, expected) {
+    const ok = actual === expected;
+    if (!ok) failures++;
+    const li = document.createElement("li");
+    li.className = ok ? "pass" : "fail";
+    li.textContent = ok
+        ? `✓ ${name}`
+        : `✗ ${name}: expected ${JSON.stringify(expected)}, got ${JSON.stringify(actual)}`;
+    checks.append(li);
+}
+
+async function testSample() {
+    const engine = new TexlEngine({
+        origin: location.origin,
+        site: { name: "Texl on the web", tags: ["swan", "texl", "wasm"] },
+        shout: (s) => s.toUpperCase() + "!",
+        slow_double: async (x) => {
+            await new Promise((r) => setTimeout(r, 20));
+            return 2 * x;
+        },
+        later: new Promise((r) => setTimeout(() => r(42), 10)),
+    });
+    check("engine.baseUrl defaults to the page URL", engine.baseUrl, location.href);
+
+    const [doc, expected] = await Promise.all([
+        engine.load("fixtures/sample.texl"),
+        fetch("fixtures/sample.expected.txt").then((r) => r.text()),
+    ]);
+    const rendering = doc ? doc.rendering : "(the document could not be loaded)";
+    document.getElementById("rendering").textContent = rendering;
+    check("sample.texl renders as sample.expected.txt", rendering, expected);
+    if (rendering !== expected) {
+        document.getElementById("expected-title").hidden = false;
+        document.getElementById("expected").hidden = false;
+        document.getElementById("expected").textContent = expected;
+    }
+
+    check("load gives the document URI", doc?.uri, new URL("fixtures/sample.texl", location.href).href);
+    check("load gives the document source", typeof doc?.source, "string");
+    check("load gives the document data", doc?.data?.title, "Texl Sample Document");
+    check("load of a missing document gives null", await engine.load("fixtures/missing.texl"), null);
+}
+
+async function testEngine() {
+    const engine = new TexlEngine({ a: 10 }, "http://127.0.0.1:1/some/doc.texl");
+    check("an explicit base URL is used", engine.baseUrl, "http://127.0.0.1:1/some/doc.texl");
+    check("render uses the engine globals", await engine.render("a = <% a %>"), "a = 10");
+
+    engine.set("b", 32);
+    check("set adds a global", await engine.render("<% a + b %>"), "42");
+    check("render starts from a fresh scope", await engine.render("<% x = 1 %><% x %>|") + await engine.render("[<% x %>]"), "1|[]");
+    check(
+        "render fetches absolute paths from the root of the base URL",
+        await new TexlEngine().render('<% texl.import("/tests/web/fixtures/partials/counted.texl") ~> (doc -> doc.uri + ": " + doc.rendering) %>'),
+        "/tests/web/fixtures/partials/counted.texl: counted.texl has been evaluated 1 time(s)\n");
+    check("unreachable documents give Nothing", await engine.render("[<% texl.import(\"/nowhere.texl\") %>]"), "[]");
+
+    let threw = false;
+    try { new TexlEngine({}, "not a url"); } catch { threw = true; }
+    check("an invalid base URL throws", threw, true);
+}
+
+async function testContext() {
+    const engine = new TexlEngine({ g: "global" });
+    const context = engine.createContext({
+        a: 10,
+        b: 20,
+        name: "World",
+        double: (x) => 2 * x,
+        asyncDouble: async (x) => 2 * x,
+    });
+
+    check("names lists the context bindings", context.names().join(","), "a,asyncDouble,b,double,name,texl");
+    check("get reads a binding", context.get("a"), 10);
+    context.set("c", 30);
+    check("set adds a binding", context.get("c"), 30);
+
+    check("render interpolates", await context.render("Hello <% name %>!"), "Hello World!");
+    check("render sees the engine globals", await context.render("<% g %>"), "global");
+    check("render evaluates arithmetic", await context.render("Sum: <% a + b + c %>"), "Sum: 60");
+    check("render calls JS functions", await context.render("<% double(a) %>"), "20");
+    check("render awaits async JS functions", await context.render("<% asyncDouble(a) %>"), "20");
+
+    await context.render("<% x = a * 5 %><% y : b + 10 %>");
+    check("assignments persist in the context", context.get("x"), 50);
+    check("labels persist in the context", context.get("y"), 30);
+
+    context.set("later", new Promise((r) => setTimeout(() => r(42), 10)));
+    check("JS promises are awaited", await context.render("<% later %>"), "42");
+    context.set("bad", Promise.reject(new Error("boom")));
+    check("rejected promises give Nothing", await context.render("[<% bad %>]"), "[]");
+    context.set("badFn", async () => { throw new Error("boom"); });
+    check("throwing async functions give Nothing", await context.render("[<% badFn(1) %>]"), "[]");
+
+    await context.render("<% r = asyncDouble(a) %>");
+    const r = context.get("r");
+    check("Swan promises come back as JS promises", r instanceof Promise, true);
+    check("Swan promises resolve in JS", await r, 20);
+}
+
+const status = document.getElementById("status");
+try {
+    await init();
+    await testSample();
+    await testEngine();
+    await testContext();
+} catch (err) {
+    failures++;
+    check(`unexpected error: ${err}`, false, true);
+}
+status.textContent = failures === 0 ? "all checks passed" : `${failures} check(s) failed`;
+status.className = failures === 0 ? "pass" : "fail";
+document.body.dataset.status = failures === 0 ? "pass" : "fail";
+</script>
+</body>
+</html>

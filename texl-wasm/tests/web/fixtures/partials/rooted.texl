@@ -1,0 +1,2 @@
+rooted.texl was fetched from the origin of sample.texl, and so was its own
+  absolute import: <% texl.import("/tests/web/fixtures/lib/format.texl") ~> (doc -> doc.uri == origin + "/tests/web/fixtures/lib/format.texl" ? "same origin" ; doc.uri) %>
