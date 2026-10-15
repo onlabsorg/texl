@@ -83,24 +83,15 @@ impl Promise {
     /// resolves to `Value::Nothing` (see [`Promise::resolve`]).
     ///
     /// # Panics
-    /// When `self` is already resolved, `f` runs while `self`'s internal `RefCell`
-    /// is mutably borrowed. A callback that re-enters `self` (e.g. calls
-    /// `self.then(..)` or `self.resolve(..)` on the same promise) will panic with
-    /// a borrow error.
     pub fn then(&self, f: impl Fn(Value) -> Value + 'static) -> Value {
         let callback: PromiseCallback = Rc::new(f);
         let child = Promise::new();
         let child_val = Value::Promise(child.clone());
 
-        let mut inner = self.0.borrow_mut();
-
-        if let Some(ref v) = inner.value {
-            // Parent is already resolved: compute and resolve child immediately
-            let res = callback(v.clone());
-            child.resolve(res);
-        } else {
-            // Parent is pending: queue callback and child promise
-            inner.children.push((callback, child_val.clone()));
+        let resolved = self.0.borrow().value.clone();
+        match resolved {
+            Some(v) => child.resolve(callback(v)),
+            None => self.0.borrow_mut().children.push((callback, child_val.clone())),
         }
 
         child_val

@@ -30,7 +30,7 @@
 //! promise.resolve p 1,     // c now resolves to 2
 //! ```
 
-use crate::value::Value;
+use crate::value::{Promise, Value};
 
 
 /// Evaluates `target ~> func`.
@@ -52,18 +52,25 @@ use crate::value::Value;
 /// * For any other target, `Undefined(BinaryOperation { op: "then", .. })`
 ///   built from `target`, `func` and `pos`.
 pub fn eval(target: Value, func: Value, pos: usize) -> Value {
-    match target {
-        Value::Promise(promise) => {
-            // Chain the promise once per function. A single function yields a single
-            // child promise; a tuple of functions yields a tuple of child promises.
-            let children: Vec<Value> = func
-                .items()
-                .map(|f| promise.then_apply(f, pos))
-                .collect();
-            Value::tuple(children)
+    // If the target is already a promise, use it. 
+    // Otherwise, wrap the synchronous value in an immediately resolved promise.
+    let promise = match target {
+        Value::Promise(p) => p,
+        other => {
+            let p = Promise::new();
+            p.resolve(other);
+            p
         }
-        other => Value::undef_binary("then", other, func, pos),
-    }
+    };
+
+    // Chain the promise once per function. A single function yields a single
+    // child promise; a tuple of functions yields a tuple of child promises.
+    let children: Vec<Value> = func
+        .items()
+        .map(|f| promise.then_apply(f, pos))
+        .collect();
+    
+    Value::tuple(children)
 }
 
 
@@ -86,7 +93,7 @@ mod tests {
     use crate::parser::Parser;
     use crate::evaluator::eval;
     use crate::builtins::root_scope;
-    use crate::value::Undef;
+    // Removed `Undef` from imports since it is no longer used here
 
     /// Lex, parse and evaluate `src` in a fresh root scope.
     fn run(src: &str) -> Value {
@@ -119,8 +126,9 @@ mod tests {
         let c = super::eval(p.clone(), run("x -> x + 1"), 0);
         assert!(matches!(c, Value::Promise(_)));
 
-        // (b) `P ~> F` propagates non-promises to `Undefined`.
-        assert!(matches!(run("123 ~> (x->x)"), Value::Undefined(Undef::BinaryOperation{op: "then", ..})));
+        // (b) `P ~> F` wraps non-promises in an immediately resolved promise and chains the function.
+        let c2 = run("123 ~> (x -> x * 2)");
+        assert_eq!(resolved(&c2), Some(Value::Numb(246.0)));
     }
 
     #[test]
