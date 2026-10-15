@@ -8,7 +8,7 @@ Texl is a text-template engine whose `<% ... %>` tags contain expressions in **S
 
 - `swan-core` – the Swan language: lexer → parser → evaluator, runtime values, builtins. It has no dependencies.
 - `texl-core` – the template renderer plus the `Engine` (scope setup, document loading, `texl.import`). It depends on `swan-core` and `url`.
-- `texl-cli` – the `texl` binary (clap + tokio). It renders a file or stdin to stdout or `-o FILE`.
+- `texl-cli` – the `texl` binary (clap + tokio). It renders a file (a required path, so relative imports can be resolved) to stdout or `-o FILE`, using an `Engine` with a local file loader registered for `file://` and as the default loader.
 - `texl-wasm` – wasm-bindgen bindings (`create_context`, `render`, a `TexlContext` with `get`/`set`/`names`) for web and Node.
 
 Planned crates (`texl-py`, `texl.nvim`, `vscode-texl`) are commented out in the root `Cargo.toml`.
@@ -29,7 +29,7 @@ node texl-wasm/tests/test-texl-node.js        # JS integration tests (run ./help
 
 `helper.sh`, `*.repomix.md`, `*.todo.md` (the roadmap is `texl.todo.md`), `local/` and `pkg-*/` are gitignored local files.
 
-**Current state:** commit 28be11f replaced `texl_core::context` with `texl_core::Engine`. `texl-cli/src/main.rs` and `texl-wasm/src/lib.rs` still import `texl_core::context`, so `cargo build` of the whole workspace fails until they are moved to `Engine`. Meanwhile, use `cargo test -p swan-core -p texl-core`.
+**Current state:** commit 28be11f replaced `texl_core::context` with `texl_core::Engine`. `texl-cli` has been moved to `Engine`, but `texl-wasm/src/lib.rs` still imports `texl_core::context`, so `cargo build` of the whole workspace fails until it is moved too. Meanwhile, use `cargo test -p swan-core -p texl-core -p texl-cli`.
 
 ## Architecture
 
@@ -54,7 +54,7 @@ The full language spec is `swan-core/docs/swan_language_manual.md`. `swan-core/R
 - `template::render(template, &scope)` is `async`. It evaluates each `<% expr %>` in order against one shared scope, so assignments carry over to later tags. When a tag returns a `Value::Promise`, rendering waits for it to resolve before continuing.
 - `helpers.rs` keeps the core runtime-agnostic. The host can pass a `SpawnFn` to run background tasks (tokio, or `spawn_local` in wasm). If it does not, tasks go onto a thread-local queue that `run_pending()` drains. `promise_async(spawner, fut)` turns a Rust future into a Swan `Promise`.
 - `Engine::new(spawner)` holds the base scope (`root_scope()` plus anything added with `add_builtin`), loaders registered per URL scheme (`add_loader`), a default loader for scheme-less paths (`add_default_loader`), and a cache keyed by normalized URL.
-  - Every document scope gets a `texl` namespace whose `import` builtin is bound to that scope. `texl.import(uri)` always returns a Promise that resolves to `{url, source, context, rendering}`.
+  - Every document scope gets a `texl` namespace whose `import` builtin is bound to that scope. `texl.import(uri)` always returns a Promise that resolves to `{uri, source, data, rendering}`.
   - The cache holds the pending promise while a document is loading, so concurrent imports of the same document share one load. Once loading finishes, the cache holds the resolved namespace.
   - If no loader matches or the load fails, the result is `Nothing` and the cache entry is removed.
 - In tests, async code runs on a small busy-polling `block_on` that calls `helpers::run_pending()` on every iteration (see the tests in `engine.rs`).

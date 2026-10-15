@@ -1,0 +1,16 @@
+<%
+# A library document. Its rendering is empty: what matters are the functions it
+# defines, which importers reach through the document's `data`.
+
+# File name at the end of a path or URL
+basename = path -> text.tail (text.rfind "/" path + 1) path,
+
+# "1 apple", "3 apples"
+plural = (count, word) -> text.from count + " " + word + (count == 1 ? "" ; "s"),
+
+# Right-pads `s` with dots up to `width` characters (recursive)
+pad = width -> s -> text.size s >= width ? s ; pad width (s + "."),
+
+# Formats a price with two decimals at most
+price = amount -> "$" + text.from (math.round (amount * 100) / 100)
+%>

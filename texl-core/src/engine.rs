@@ -179,9 +179,9 @@ impl Engine {
                 let rendering = template::render(&source, &doc_scope).await;
 
                 let result = Scope::new();
-                result.set("url", Value::Text(norm_url.clone().into()));
+                result.set("uri", Value::Text(norm_url.clone().into()));
                 result.set("source", Value::Text(source.into()));
-                result.set("context", Value::Namespace(doc_scope));
+                result.set("data", Value::Namespace(doc_scope));
                 result.set("rendering", Value::Text(rendering.into()));
 
                 let result_val = Value::Namespace(result);
@@ -336,12 +336,12 @@ mod tests {
         let load_result = block_on(engine.load("/math.texl"));
         let ns = unwrap_namespace(load_result);
 
-        assert_eq!(ns.get("url"), Value::Text("/math.texl".into()));
+        assert_eq!(ns.get("uri"), Value::Text("/math.texl".into()));
         assert_eq!(ns.get("rendering"), Value::Text("Result is 50".into()));
         
-        // Ensure the evaluated context contains the assignments
-        let doc_ctx = unwrap_namespace(ns.get("context"));
-        assert_eq!(doc_ctx.get("result"), Value::Numb(50.0));
+        // Ensure the document data contains the assignments
+        let doc_data = unwrap_namespace(ns.get("data"));
+        assert_eq!(doc_data.get("result"), Value::Numb(50.0));
     }
 
     #[test]

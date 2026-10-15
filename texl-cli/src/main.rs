@@ -1,64 +1,78 @@
+mod loader;
+
 use clap::Parser;
-use is_terminal::IsTerminal;
 use std::fs::File;
-use std::io::{self, Read, Write};
+use std::io::{self, Write};
 use std::path::PathBuf;
-use texl_core::context;
-use texl_core::template;
+use std::process::ExitCode;
+use swan_core::value::Value;
+use texl_core::helpers::spawner_fn;
+use texl_core::{Engine, loader_fn};
+use tokio::task::LocalSet;
+use url::Url;
 
 #[derive(Parser, Debug)]
 #[command(
     name = "texl",
-    about = "Renders Texl template files or streams to the terminal or an output file."
+    about = "Renders a Texl template file to the terminal or an output file."
 )]
 struct Args {
-    /// Input file path. If omitted or set to "-", reads from stdin.
+    /// Template file to render. Relative imports resolve against its location.
     #[arg(value_name = "FILE")]
-    input: Option<PathBuf>,
+    input: PathBuf,
 
-    /// Output file path. If specified, output is redirected to this file.
+    /// Output file path. If omitted, the rendered document is written to stdout.
     #[arg(short, long, value_name = "OUTPUT")]
     output: Option<PathBuf>,
 }
 
-#[tokio::main]
-async fn main() -> io::Result<()> {
+#[tokio::main(flavor = "current_thread")]
+async fn main() -> ExitCode {
     let args = Args::parse();
 
-    // 1. Read input template from file or stdin
-    let template_source = match &args.input {
-        Some(path) if path.to_str() != Some("-") => std::fs::read_to_string(path)?,
-        _ => {
-            let mut stdin_buffer = String::new();
-            io::stdin().read_to_string(&mut stdin_buffer)?;
-            stdin_buffer
-        }
-    };
-
-    // 2. Initialize default Texl evaluation scope
-    let scope = context::create();
-
-    // 3. Render template
-    let rendered_output = template::render(&template_source, &scope).await;
-
-    // 4. Determine output stream destination
-    if let Some(out_path) = args.output {
-        // Write to specified file (-o | --output)
-        let mut file = File::create(out_path)?;
-        file.write_all(rendered_output.as_bytes())?;
-    } else {
-        // Write to stdout (terminal or redirected pipe `>>`)
-        let stdout = io::stdout();
-        let mut handle = stdout.lock();
-        handle.write_all(rendered_output.as_bytes())?;
-
-        // Optional terminal detection logic for special terminal rendering vs raw stream output
-        if handle.is_terminal() {
-            // Output is attached directly to terminal/TTY
-        } else {
-            // Output is redirected via `>` or `>>` to another stream/pipe
+    // The engine is single-threaded (`Rc`-based): its tasks run on a LocalSet
+    match LocalSet::new().run_until(run(args)).await {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(err) => {
+            eprintln!("texl: {err}");
+            ExitCode::FAILURE
         }
     }
+}
 
-    Ok(())
+/// Creates an engine that spawns its tasks on the current LocalSet and loads
+/// documents from the local file system, both as `file://` URLs and as plain paths.
+fn create_engine() -> Engine {
+    let engine = Engine::new(Some(spawner_fn(|task| {
+        tokio::task::spawn_local(task);
+    })));
+    engine.add_loader("file", loader_fn(loader::load_file));
+    engine.add_default_loader(loader_fn(loader::load_file));
+    engine
+}
+
+async fn run(args: Args) -> Result<(), String> {
+    // The main document is loaded by its absolute URL, so its relative imports can be resolved
+    let path = std::fs::canonicalize(&args.input)
+        .map_err(|e| format!("{}: {e}", args.input.display()))?;
+    let url = Url::from_file_path(&path)
+        .map_err(|_| format!("{}: not a valid file path", path.display()))?;
+
+    let engine = create_engine();
+    let rendering = match engine.load(url.as_str()).await {
+        Value::Namespace(doc) => match doc.get("rendering") {
+            Value::Text(text) => text,
+            _ => return Err(format!("{}: rendering failed", path.display())),
+        },
+        _ => return Err(format!("{}: could not be loaded", path.display())),
+    };
+
+    let write_result = match &args.output {
+        Some(out_path) => File::create(out_path).and_then(|mut f| f.write_all(rendering.as_bytes())),
+        None => io::stdout().lock().write_all(rendering.as_bytes()),
+    };
+    write_result.map_err(|e| match &args.output {
+        Some(out_path) => format!("{}: {e}", out_path.display()),
+        None => format!("stdout: {e}"),
+    })
 }

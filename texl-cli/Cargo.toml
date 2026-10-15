@@ -11,5 +11,5 @@ path = "src/main.rs"
 texl-core = { path = "../texl-core" }
 swan-core = { path = "../swan-core" }
 clap = { version = "4.4", features = ["derive"] }
-tokio = { version = "1.0", features = ["full"] }
-is-terminal = "0.4"
+tokio = { version = "1.0", features = ["rt", "macros", "fs"] }
+url = "2"

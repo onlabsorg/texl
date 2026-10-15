@@ -1,0 +1,1 @@
+<% bind "load_count" ((load_count ; 0) + 1) %>counted.texl has been evaluated <% load_count %> time(s)
