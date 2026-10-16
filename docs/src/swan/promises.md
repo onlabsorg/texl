@@ -79,7 +79,15 @@ callback bound. See [Waiting for values](../templates/async.md).
 
 ## Truth value
 
-A promise has no truth value. Test the value it resolves to, not the promise.
+As a condition, a promise is false while it is pending and true once it is
+resolved, whatever its value. So `p ? x` tests whether `p` has resolved, not
+its value. To test the value, use it inside `~>`:
 
-> **Known issue.** Using a promise as a condition (with `?`, `&`, `|`, `!` or
-> `bool.from`) currently stops the program.
+```swan
+p = promise.create ()
+p ? "resolved" ; "pending"        # => "pending"
+q = p ~> (v -> v ? "yes" ; "no")
+promise.resolve p FALSE
+p ? "resolved" ; "pending"        # => "resolved"
+q                                 # => Promise("no")
+```

@@ -22,8 +22,8 @@ bool.TRUE == TRUE    # => TRUE
 bool.from value -> Bool
 ```
 
-Returns the truth value of `value`: `FALSE` for `FALSE`, `0`, `""`, `[]`, `{}`
-and undefined values, `TRUE` for everything else.
+Returns the truth value of `value`: `FALSE` for `FALSE`, `0`, `""`, `[]`, `{}`,
+undefined values and pending promises, `TRUE` for everything else.
 
 ```swan
 bool.from 0          # => FALSE

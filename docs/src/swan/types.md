@@ -49,6 +49,7 @@ values are **false**:
 - `{}` (empty namespace)
 - `Nothing`
 - every `Undefined` value
+- a pending promise
 
 Every other value is **true**, including every function. A tuple is true if at
 least one of its items is true.
@@ -61,9 +62,15 @@ bool.from (x -> x)   # => TRUE
 bool.any (0, "", 3)  # => TRUE
 ```
 
-> **Known issue.** A promise has no truth value. Using a pending or resolved
-> promise as a condition currently stops the program. Wait for its value with
-> [`~>`](promises.md) and test the value instead.
+A [promise](promises.md) is false while it is pending and true once it is
+resolved, whatever its value:
+
+```swan
+p = promise.create ()
+bool.from p          # => FALSE
+promise.resolve p 0
+bool.from p          # => TRUE
+```
 
 ## Equality
 

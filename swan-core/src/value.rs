@@ -440,11 +440,10 @@ impl Value {
 /// - `Bool` is itself; `Numb` is false only for `0`; `Text` and `List` are
 ///   true when non-empty; `Namespace` is true when it has at least one binding.
 /// - `Func` and `Builtin` are always true.
+/// - A `Promise` is true once it is resolved (whatever its value) and false
+///   while it is pending.
+/// - A `Name` has no boolean meaning and is false.
 /// - A `Tuple` is true if at least one item is true.
-///
-/// # Panics
-///
-/// Panics for `Promise` and `Name`, which have no boolean meaning.
 impl From<Value> for bool {
     fn from(val: Value) -> Self {
         match val {
@@ -462,8 +461,8 @@ impl From<Value> for bool {
                 // If ALL items map to false, `.any()` returns false.
                 val.items().any(|item| bool::from(item))
             }
-            // Remaining types (Promise, Name) have no boolean meaning
-            _ => panic!("Can't convert value to boolean: {:?}", val),
+            Value::Promise(p)   => p.0.borrow().value.is_some(),
+            Value::Name(_)      => false,
         }
     }
 }
@@ -645,5 +644,24 @@ mod boolean_conversion_tests {
         let nested_all_false = Value::tuple(vec![Value::Nothing, inner_false]);
 
         assert!(!bool::from(nested_all_false));
+    }
+
+    #[test]
+    fn test_promise_is_true_once_resolved() {
+        let p = crate::value::Promise::new();
+        assert!(!bool::from(Value::Promise(p.clone())));
+
+        // Resolved: true, even when the value itself is false
+        p.resolve(Value::Bool(false));
+        assert!(bool::from(Value::Promise(p)));
+
+        let q = crate::value::Promise::new();
+        q.resolve(Value::Nothing);
+        assert!(bool::from(Value::Promise(q)));
+    }
+
+    #[test]
+    fn test_name_maps_to_false() {
+        assert!(!bool::from(Value::Name("x".into())));
     }
 }

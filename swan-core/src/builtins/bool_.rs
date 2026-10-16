@@ -192,4 +192,21 @@ mod tests {
         assert_eq!(run("bool.all(1,1,1,1)"), Value::Bool(true));
         assert_eq!(run("bool.all(1,1,0)"), Value::Bool(false));
     }
+
+    #[test]
+    fn test_promise() {
+        let scope = root_scope();
+        scope.set("promise", crate::builtins::promise::create_namespace(&scope));
+        let run_p = |src: &str| eval(&Parser::new(Lexer::new(src)).parse(), &scope);
+
+        // Pending: FALSE
+        assert_eq!(run_p("p = promise.create(), bool.from p"), Value::Bool(false));
+        assert_eq!(run_p("bool.any(promise.create(), 0)"),     Value::Bool(false));
+        assert_eq!(run_p("bool.all(promise.create(), 1)"),     Value::Bool(false));
+
+        // Resolved: TRUE, even when the value is false
+        assert_eq!(run_p("promise.resolve p FALSE, bool.from p"), Value::Bool(true));
+        assert_eq!(run_p("bool.any(p, 0)"),                       Value::Bool(true));
+        assert_eq!(run_p("bool.all(p, 1)"),                       Value::Bool(true));
+    }
 }

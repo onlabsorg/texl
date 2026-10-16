@@ -1115,4 +1115,26 @@ mod tests {
         assert_eq!(evaluate("ns = {a=10}, f = x -> 2*x, f ns.a"), Value::Numb(20.0));
         assert_eq!(evaluate("f = x -> {y:x}, (f 3).y"), Value::Numb(3.0));
     }
+
+    #[test]
+    fn promise_as_condition() {
+        // A promise is FALSE while pending and TRUE once resolved, whatever its value
+        let scope = crate::builtins::root_scope().new_child();
+        let run = |src: &str| eval(&Parser::new(Lexer::new(src)).parse(), &scope);
+
+        run("p = promise.create()");
+        assert_eq!(run("p ? 1"), Value::Nothing);
+        assert_eq!(run("p ? 1 ; 2"), Value::Numb(2.0));
+        assert_matches!(run("p & 1"), Value::Promise(_));
+        assert_eq!(run("p | 1"), Value::Numb(1.0));
+        assert_eq!(run("!p"), Value::Bool(true));
+        assert_eq!(run("(TRUE, p) ? (1, 2)"), Value::Numb(1.0));
+
+        run("promise.resolve p FALSE");
+        assert_eq!(run("p ? 1"), Value::Numb(1.0));
+        assert_eq!(run("p & 1"), Value::Numb(1.0));
+        assert_matches!(run("p | 1"), Value::Promise(_));
+        assert_eq!(run("!p"), Value::Bool(false));
+        assert_eq!(run("(TRUE, p) ? (1, 2)"), Value::tuple(vec![Value::Numb(1.0), Value::Numb(2.0)]));
+    }
 }

@@ -91,6 +91,4 @@ A `<%` without a matching `%>` makes the rest of the template plain text. A
 
 ## Known issues
 
-- Using a promise as a condition (`p ? a`, `!p`, `p & x`) stops the program.
-  Test the value of the promise instead, inside `~>`.
 - Infinite recursion stops the program instead of producing `Undefined`.

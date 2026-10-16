@@ -72,6 +72,15 @@ mod tests {
         // Func
         assert_eq!(evaluate("!(x->2*x)"), Value::Bool(false));
 
+        // Promise: true once resolved, false while pending
+        let p = crate::value::Promise::new();
+        let scope = Scope::new();
+        scope.set("p", Value::Promise(p.clone()));
+        let negate_p = || eval(&Parser::new(Lexer::new("!p")).parse(), &scope);
+        assert_eq!(negate_p(), Value::Bool(true));
+        p.resolve(Value::Bool(false));
+        assert_eq!(negate_p(), Value::Bool(false));
+
         // Nothing: passes through `map_values!` unchanged
         assert_eq!(evaluate("!()"), Value::Nothing);
 
