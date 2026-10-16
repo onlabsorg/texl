@@ -7,6 +7,13 @@ use super::*;
 //  Undefined
 // ----------------------------------------------------------------------------
 
+/// Why a value is undefined: the payload of [`Value::Undefined`].
+///
+/// Positions (`pos`) are byte offsets in the evaluated source. Built-in
+/// functions use position `0`. Two `Undef`s are equal when they have the same
+/// variant and contents, regardless of position.
+///
+/// The Swan built-in `undef.inspect` exposes these fields to Swan code.
 #[derive(Debug, Clone)]
 pub enum Undef {
 
@@ -16,36 +23,50 @@ pub enum Undef {
         /// If dunder-method dispatch (`__neg__`, etc.) is added later and
         /// user-defined error labels are needed, change this to `Rc<str>`.
         op : &'static str,
+        /// The operand.
         val: Box<Value>,
+        /// Source position of the operation.
         pos: usize,
     },
 
     /// The result of a binary operation that is not defined for the operand types.
     BinaryOperation {
+        /// Operation name, such as `"sum"` or `"application"`.
         op : &'static str,
+        /// The left-hand operand.
         lhv: Box<Value>,
+        /// The right-hand operand.
         rhv: Box<Value>,
+        /// Source position of the operation.
         pos: usize,
     },
 
-    /// The result of a grounp (...), [...] or {...}, wihtout closing parenthesig
+    /// Syntax error: a group `(...)`, `[...]` or `{...}` without its closing
+    /// bracket.
     Termination {
+        /// The missing closing bracket.
         expected: char,
+        /// Source position where the bracket was expected.
         pos: usize,
     },
 
-    /// The result of an undefined token
+    /// Syntax error: a token that is not valid where it appears.
     Token {
+        /// A description of the token.
         token: String,
+        /// Source position of the token.
         pos: usize,
     },
 
-    /// Used when a name is expected but another value is found
+    /// A name was expected (left of `=`, `:` or `->`, or after `$`), but
+    /// another expression was found.
     Name {
+        /// Source position of the offending expression.
         pos: usize
     },
 
-    /// A generic undefined value used mostly for user-defined undefined values
+    /// An undefined value created explicitly, for example by the Swan
+    /// built-in `undef.from`. It wraps an arbitrary value.
     Value(Box<Value>),
 }
 

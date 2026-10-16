@@ -23,15 +23,43 @@
 //!
 //! # Output format
 //!
-//! See [`value_to_string`] for how each kind of value is rendered.
+//! | Value                  | Output                                              |
+//! |------------------------|-----------------------------------------------------|
+//! | `Text`                 | the text itself                                     |
+//! | `Numb`                 | Rust `f64` display (`30`, not `30.0`; `1.5`)        |
+//! | `Bool`                 | `TRUE` / `FALSE`                                    |
+//! | `Nothing`              | empty text                                          |
+//! | `Tuple`                | the items, rendered and joined with `", "`          |
+//! | `List`                 | `[[List of N]]`                                     |
+//! | `Namespace`            | `[[Namespace of N]]` (N = number of local bindings) |
+//! | `Func`                 | `[[Func]]`                                          |
+//! | `Undefined`            | `[[Undefined]]`                                     |
+//! | `Promise` (resolved)   | the rendered resolved value                         |
+//! | `Promise` (pending)    | `[[Pending Promise]]`                               |
+//!
+//! Promises returned by a tag are awaited, so `[[Pending Promise]]` only
+//! appears for promises nested inside other values, such as tuple items.
 //!
 //! # Example
 //!
-//! ```ignore
-//! let scope = Scope::new();
+//! ```
+//! use swan_core::builtins::root_scope;
+//! use swan_core::value::Value;
+//! use texl_core::template::render;
+//!
+//! let scope = root_scope();
 //! scope.set("name", Value::Text("World".into()));
-//! let out = render("Hello <% name %>!", &scope).await;
+//! let out = block_on(render("Hello <% name %>!", &scope));
 //! assert_eq!(out, "Hello World!");
+//! # use std::{future::Future, pin::pin, task::{Context, Poll, Waker}};
+//! # fn block_on<F: Future>(fut: F) -> F::Output {
+//! #     let mut cx = Context::from_waker(Waker::noop());
+//! #     let mut fut = pin!(fut);
+//! #     loop {
+//! #         texl_core::helpers::run_pending();
+//! #         if let Poll::Ready(v) = fut.as_mut().poll(&mut cx) { return v; }
+//! #     }
+//! # }
 //! ```
 
 use swan_core::evaluator::eval;
@@ -115,9 +143,9 @@ async fn resolve_promises(mut val: Value) -> Value {
 /// Renders `template`, evaluating every `<% ... %>` expression against `scope`.
 ///
 /// For each tag, the expression text is lexed, parsed and evaluated with
-/// [`swan_core::evaluator::eval`]. If the result is a promise, it is awaited via
-/// [`resolve_promises`]. The final value is converted with [`value_to_string`] and
-/// appended to the output. Text outside tags is copied verbatim.
+/// [`swan_core::evaluator::eval`]. If the result is a promise, it is awaited.
+/// The final value is converted to text (see the [module documentation](self))
+/// and appended to the output. Text outside tags is copied verbatim.
 ///
 /// Evaluation mutates `scope`, so assignments persist across tags and after the call returns.
 /// An unclosed `<%` ends processing, and the remaining text is appended literally.

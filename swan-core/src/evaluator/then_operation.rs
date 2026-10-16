@@ -19,15 +19,15 @@
 //! - **Undefined results:** a Swan promise never rejects. If a chained
 //!   function returns an `Undefined` value, the child promise resolves to
 //!   `Nothing` instead.
-//! - **Non-promise target:** the result is
-//!   `Undefined(BinaryOperation { op: "then", .. })`.
+//! - **Non-promise target:** a value that is not a promise is wrapped in an
+//!   already resolved promise, so `3 ~> F` is a promise of `F 3`.
 //!
 //! # Examples
 //!
 //! ```text
 //! p = promise.create(),
-//! c = p ~> (x -> x + 1),   // c is a new, pending promise
-//! promise.resolve p 1,     // c now resolves to 2
+//! c = p ~> (x -> x + 1),   # c is a new, pending promise
+//! promise.resolve p 1,     # c now resolves to 2
 //! ```
 
 use crate::value::{Promise, Value};
@@ -37,7 +37,8 @@ use crate::value::{Promise, Value};
 ///
 /// # Arguments
 ///
-/// * `target` - The value on the left of `~>`. Must be a `Value::Promise`.
+/// * `target` - The value on the left of `~>`. A value that is not a
+///   `Value::Promise` is wrapped in an already resolved promise.
 /// * `func`   - The function, or tuple of functions, on the right of `~>`.
 ///   Tuples are iterated with `Value::items`, so each contained function is
 ///   chained separately.
@@ -46,11 +47,9 @@ use crate::value::{Promise, Value};
 ///
 /// # Returns
 ///
-/// * For a `Promise` target, one child promise per function in `func`,
-///   collected with `Value::tuple`. A single function yields a single child
-///   promise; several functions yield a tuple of child promises.
-/// * For any other target, `Undefined(BinaryOperation { op: "then", .. })`
-///   built from `target`, `func` and `pos`.
+/// One child promise per function in `func`, collected with `Value::tuple`.
+/// A single function yields a single child promise; several functions yield a
+/// tuple of child promises.
 pub fn eval(target: Value, func: Value, pos: usize) -> Value {
     // If the target is already a promise, use it. 
     // Otherwise, wrap the synchronous value in an immediately resolved promise.

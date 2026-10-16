@@ -1,0 +1,233 @@
+/*
+ * Texl documentation: shared design tokens and components.
+ *
+ * Every page of the site loads this file: the landing page, the manual
+ * (mdBook) and the API reference (rustdoc). `book.css` and `rustdoc.css` map
+ * these tokens onto the variables of mdBook and rustdoc.
+ *
+ * Tokens come in a light (`--tx-l-*`) and a dark (`--tx-d-*`) palette. The
+ * semantic tokens (`--tx-bg`, `--tx-fg`, ...) pick one of them: the system
+ * preference by default, or the theme chosen in mdBook or rustdoc.
+ */
+
+:root {
+    /* Fonts */
+    --tx-font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
+        "Helvetica Neue", Arial, sans-serif;
+    --tx-font-mono: ui-monospace, "SFMono-Regular", "JetBrains Mono", "Cascadia Code",
+        Menlo, Consolas, "DejaVu Sans Mono", monospace;
+
+    /* Sizes */
+    --tx-radius: 8px;
+    --tx-nav-height: 52px;
+    --tx-content-width: 46rem;
+
+    /* Light palette */
+    --tx-l-bg: #fbfaf7;
+    --tx-l-bg-raised: #ffffff;
+    --tx-l-fg: #1f2430;
+    --tx-l-muted: #5e6675;
+    --tx-l-border: #e3dfd6;
+    --tx-l-panel: #f2efe8;
+    --tx-l-accent: #0b6b6b;
+    --tx-l-accent-hover: #084f4f;
+    --tx-l-accent-soft: #dcefec;
+    --tx-l-tag: #b0501c;
+    --tx-l-code-comment: #7b8190;
+    --tx-l-code-string: #3a7a28;
+    --tx-l-code-number: #7a45b5;
+    --tx-l-code-builtin: #0b6b6b;
+    --tx-l-code-keyword: #a3367a;
+
+    /* Dark palette */
+    --tx-d-bg: #12161c;
+    --tx-d-bg-raised: #181d25;
+    --tx-d-fg: #e2e5ea;
+    --tx-d-muted: #9aa3b0;
+    --tx-d-border: #2a313c;
+    --tx-d-panel: #1b212a;
+    --tx-d-accent: #55c7bf;
+    --tx-d-accent-hover: #86dcd5;
+    --tx-d-accent-soft: #163634;
+    --tx-d-tag: #f0a25c;
+    --tx-d-code-comment: #7f8896;
+    --tx-d-code-string: #9fd27f;
+    --tx-d-code-number: #c9a2f5;
+    --tx-d-code-builtin: #55c7bf;
+    --tx-d-code-keyword: #f08fc6;
+}
+
+/* Semantic tokens: light by default. */
+:root {
+    --tx-bg: var(--tx-l-bg);
+    --tx-bg-raised: var(--tx-l-bg-raised);
+    --tx-fg: var(--tx-l-fg);
+    --tx-muted: var(--tx-l-muted);
+    --tx-border: var(--tx-l-border);
+    --tx-panel: var(--tx-l-panel);
+    --tx-accent: var(--tx-l-accent);
+    --tx-accent-hover: var(--tx-l-accent-hover);
+    --tx-accent-soft: var(--tx-l-accent-soft);
+    --tx-tag: var(--tx-l-tag);
+    --tx-code-comment: var(--tx-l-code-comment);
+    --tx-code-string: var(--tx-l-code-string);
+    --tx-code-number: var(--tx-l-code-number);
+    --tx-code-builtin: var(--tx-l-code-builtin);
+    --tx-code-keyword: var(--tx-l-code-keyword);
+    color-scheme: light;
+}
+
+/* Dark, following the system preference unless a page forces light. */
+@media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+        --tx-bg: var(--tx-d-bg);
+        --tx-bg-raised: var(--tx-d-bg-raised);
+        --tx-fg: var(--tx-d-fg);
+        --tx-muted: var(--tx-d-muted);
+        --tx-border: var(--tx-d-border);
+        --tx-panel: var(--tx-d-panel);
+        --tx-accent: var(--tx-d-accent);
+        --tx-accent-hover: var(--tx-d-accent-hover);
+        --tx-accent-soft: var(--tx-d-accent-soft);
+        --tx-tag: var(--tx-d-tag);
+        --tx-code-comment: var(--tx-d-code-comment);
+        --tx-code-string: var(--tx-d-code-string);
+        --tx-code-number: var(--tx-d-code-number);
+        --tx-code-builtin: var(--tx-d-code-builtin);
+        --tx-code-keyword: var(--tx-d-code-keyword);
+        color-scheme: dark;
+    }
+}
+
+/* ---------------------------------------------------------------------------
+ *  Site navigation bar, shared by the landing page and the API reference.
+ *  The manual adds the same links to mdBook's menu bar (see book.js).
+ * ------------------------------------------------------------------------- */
+
+.tx-nav {
+    display: flex;
+    align-items: center;
+    gap: 1.5rem;
+    height: var(--tx-nav-height);
+    padding: 0 16px;
+    background: var(--tx-bg-raised);
+    border-bottom: 1px solid var(--tx-border);
+    font-family: var(--tx-font-sans);
+    font-size: 15px;
+    box-sizing: border-box;
+}
+
+.tx-nav a {
+    color: var(--tx-muted);
+    text-decoration: none;
+}
+
+.tx-nav a:hover,
+.tx-nav a[aria-current="page"] {
+    color: var(--tx-accent);
+}
+
+.tx-nav .tx-links {
+    display: flex;
+    gap: 1.25rem;
+    margin-left: auto;
+    overflow-x: auto;
+    white-space: nowrap;
+}
+
+/* The wordmark: "texl" between template delimiters. */
+.tx-wordmark {
+    font-family: var(--tx-font-mono);
+    font-weight: 700;
+    font-size: 17px;
+    letter-spacing: -0.01em;
+    color: var(--tx-fg) !important;
+    white-space: nowrap;
+}
+
+.tx-wordmark .tx-delim {
+    color: var(--tx-tag);
+    font-weight: 600;
+}
+
+/* ---------------------------------------------------------------------------
+ *  Code highlighting (highlight.js classes), shared by every page.
+ * ------------------------------------------------------------------------- */
+
+.hljs-comment,
+.hljs-quote {
+    color: var(--tx-code-comment);
+    font-style: italic;
+}
+
+.hljs-string {
+    color: var(--tx-code-string);
+}
+
+.hljs-number,
+.hljs-literal {
+    color: var(--tx-code-number);
+}
+
+.hljs-built_in,
+.hljs-title {
+    color: var(--tx-code-builtin);
+}
+
+.hljs-keyword,
+.hljs-operator {
+    color: var(--tx-code-keyword);
+}
+
+.hljs-template-tag {
+    color: var(--tx-tag);
+    font-weight: 600;
+}
+
+.hljs {
+    color: var(--tx-fg);
+    background: var(--tx-panel);
+}
+
+.hljs-variable,
+.hljs-template-variable,
+.hljs-attr,
+.hljs-attribute,
+.hljs-name,
+.hljs-tag,
+.hljs-params,
+.hljs-link,
+.hljs-regexp,
+.hljs-selector-id,
+.hljs-selector-class,
+.hljs-subst {
+    color: var(--tx-fg);
+}
+
+.hljs-type,
+.hljs-symbol,
+.hljs-bullet,
+.hljs-section,
+.hljs-selector-tag {
+    color: var(--tx-code-builtin);
+}
+
+.hljs-meta {
+    color: var(--tx-code-comment);
+}
+
+.hljs-addition {
+    color: var(--tx-code-string);
+}
+
+.hljs-deletion {
+    color: var(--tx-code-keyword);
+}
+
+.hljs-emphasis {
+    font-style: italic;
+}
+
+.hljs-strong {
+    font-weight: 700;
+}

@@ -67,7 +67,7 @@ mod comparison_operations;
 //  MACROS
 // ----------------------------------------------------------------------------
 
-/// Evaluates a binary operation with element-wise tuple broadcasting (§3.5).
+/// Evaluates a binary operation with element-wise tuple broadcasting.
 ///
 /// If either operand is a [`Value::Tuple`], pairs the items using [`Value::pair`]
 /// and applies `$eval_fn` element-wise. Otherwise, applies `$eval_fn` directly.
@@ -132,7 +132,7 @@ macro_rules! map_values {
 ///
 /// This function is **infallible**: it never panics. All error conditions are
 /// encoded as `Value::Undefined(...)` so that Swan's "errors are values" semantics
-/// are preserved throughout, and sub-expression errors propagate as `Undefined` values. (#14)
+/// are preserved throughout, and sub-expression errors propagate as `Undefined` values.
 ///
 /// # Arguments
 /// - `node`: the AST node to evaluate.
@@ -150,6 +150,20 @@ macro_rules! map_values {
 /// - `Undef::BinaryOperation` named `"application"` (see [`eval_apply`]).
 ///
 /// Errors from the delegated sub-modules are documented there.
+///
+/// # Examples
+///
+/// ```
+/// use swan_core::builtins::root_scope;
+/// use swan_core::evaluator::eval;
+/// use swan_core::lexer::Lexer;
+/// use swan_core::parser::Parser;
+/// use swan_core::value::Value;
+///
+/// let scope = root_scope();
+/// let ast = Parser::new(Lexer::new(r#""a" - 1"#)).parse();
+/// assert!(matches!(eval(&ast, &scope), Value::Undefined(_)));
+/// ```
 pub fn eval(node: &Node, scope: &Scope) -> Value {
     match node {
 
@@ -663,7 +677,7 @@ fn eval_apply_text(text: &Rc<str>, arg: Value, pos: usize) -> Value {
 
 /// Applies a Namespace to a single key `arg`.
 ///
-/// Own-only lookup per Swan spec §3.7: parent scopes are not searched.
+/// Own-only lookup: parent scopes are not searched.
 /// A missing key gives `Nothing`; a non-text key gives
 /// `Undef::BinaryOperation { op: "application", .. }`.
 fn eval_apply_namespace(scope: &Scope, arg: Value, pos: usize) -> Value {

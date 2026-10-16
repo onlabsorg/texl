@@ -31,7 +31,7 @@ use crate::evaluator::eval_apply;
 /// resolve the corresponding child promise.
 pub type PromiseCallback = Rc<dyn Fn(Value) -> Value>;
 
-/// Internal state of a [`Promise`], kept behind `Rc<RefCell<..>>`.
+/// The shared state of a [`Promise`], kept behind `Rc<RefCell<..>>`.
 #[derive(Clone)]
 pub struct PromiseData {
     /// `None` while pending; `Some(v)` once resolved. Set at most once and
@@ -55,11 +55,43 @@ impl fmt::Debug for PromiseData {
     }
 }
 
-/// A cheaply clonable handle to a shared promise.
+/// A single-assignment value that may not be available yet.
 ///
-/// See the [module documentation](self) for semantics. The inner
-/// `Rc<RefCell<PromiseData>>` is public so other `value` code can inspect the
-/// state; prefer [`Promise::then`] and [`Promise::resolve`] for mutation.
+/// A promise is *pending* until [`Promise::resolve`] gives it a value, and
+/// *resolved* afterwards. Callbacks registered with [`Promise::then`] run when
+/// it resolves.
+///
+/// - **Resolve once.** The first call to `resolve` wins; later calls are
+///   ignored.
+/// - **Never rejects.** There is no failure state. Resolving with
+///   [`Value::Undefined`] stores [`Value::Nothing`] instead.
+/// - **Synchronous dispatch.** Callbacks run on the caller's stack, inside
+///   `resolve` (if registered while pending) or inside `then` (if already
+///   resolved). There is no scheduler in this crate.
+/// - **Shared identity.** `Promise` is a cheap handle: clones observe the same
+///   resolution.
+/// - **No flattening.** If a callback returns a `Value::Promise`, the child
+///   promise resolves to that promise; it is not unwrapped.
+///
+/// The inner `Rc<RefCell<PromiseData>>` is public so that hosts can inspect
+/// the state; prefer `then` and `resolve` to change it.
+///
+/// # Examples
+///
+/// ```
+/// use swan_core::value::{Promise, Value};
+///
+/// let p = Promise::new();
+/// let child = p.then(|v| match v {
+///     Value::Numb(n) => Value::Numb(n + 1.0),
+///     other => other,
+/// });
+/// p.resolve(Value::Numb(41.0));
+///
+/// if let Value::Promise(child) = child {
+///     assert_eq!(child.0.borrow().value, Some(Value::Numb(42.0)));
+/// }
+/// ```
 #[derive(Clone, Debug)]
 pub struct Promise(pub Rc<RefCell<PromiseData>>);
 
@@ -81,8 +113,6 @@ impl Promise {
     ///
     /// `f` is invoked at most once. If `f` returns `Value::Undefined`, the child
     /// resolves to `Value::Nothing` (see [`Promise::resolve`]).
-    ///
-    /// # Panics
     pub fn then(&self, f: impl Fn(Value) -> Value + 'static) -> Value {
         let callback: PromiseCallback = Rc::new(f);
         let child = Promise::new();

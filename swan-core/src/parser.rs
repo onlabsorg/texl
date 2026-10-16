@@ -1,6 +1,45 @@
+//! The Swan parser: turns tokens into an [`ast::Node`](crate::ast::Node) tree.
+//!
+//! [`Parser`] is a Pratt (top-down operator precedence) parser. It reads the
+//! whole source as one expression and never fails: syntax errors become
+//! [`Node::Unclosed`] and [`Node::UnexpectedToken`] leaves, which evaluate to
+//! `Undefined` values. Comments are skipped.
+//!
+//! # Precedence
+//!
+//! A higher binding power binds tighter. Prefix operators (`+`, `-`, `!`,
+//! `$`) bind tighter than everything else, including `.` and application.
+//!
+//! | Power | Operators                          | Associativity |
+//! |------:|------------------------------------|---------------|
+//! |    30 | `.`                                | left          |
+//! |    28 | application (`f x`)                | left          |
+//! |    27 | `^`                                | right         |
+//! |    26 | `*` `/` `%`                        | left          |
+//! |    25 | `+` `-`                            | left          |
+//! |    24 | `==` `!=` `<` `<=` `>` `>=`        | left          |
+//! |    23 | `&` `\|`                           | left          |
+//! |    22 | `?`                                | left          |
+//! |    21 | `;`                                | left          |
+//! |    15 | `->`                               | right         |
+//! |    14 | `>>` `<<`                          | left          |
+//! |    13 | `=>` `~>`                          | right         |
+//! |    12 | `=` `:`                            | left          |
+//! |    10 | `,`                                | left          |
+//!
+//! # Example
+//!
+//! ```
+//! use swan_core::ast::Node;
+//! use swan_core::lexer::Lexer;
+//! use swan_core::parser::Parser;
+//!
+//! let ast = Parser::new(Lexer::new("1 + 2 * 3")).parse();
+//! assert!(matches!(ast, Node::SumOp(_)));
+//! ```
 
 // =============================================================================
-// parser.rs — Pratt (Top-Down Operator Precedence) parser for Swan
+// Implementation notes
 // =============================================================================
 //
 // What is a Pratt parser?
@@ -180,6 +219,10 @@ fn is_application_starter(token: &Token) -> bool {
 // to a LOCAL variable that is about to be dropped — a classic Rust lifetime
 // error. Owning the token (no `&`) is the correct fix.
 
+/// A Pratt parser for Swan expressions.
+///
+/// Create one with [`Parser::new`] and call [`Parser::parse`] once to get the
+/// root node of the expression.
 pub struct Parser<'a> {
     /// The lexer feeds us tokens on demand.
     lexer: Lexer<'a>,
@@ -574,7 +617,13 @@ impl<'a> Parser<'a> {
     // Public entry point
     // -------------------------------------------------------------------------
 
-    /// Parse the entire input as a single expression and return the root node.
+    /// Parses the entire input as a single expression and returns its root node.
+    ///
+    /// An empty source (or one containing only comments) gives
+    /// [`Node::Nothing`]. Parsing never fails; see the
+    /// [module documentation](self) for how syntax errors are represented.
+    ///
+    /// # Examples
     ///
     /// ```
     /// use swan_core::lexer::Lexer;
@@ -582,7 +631,7 @@ impl<'a> Parser<'a> {
     ///
     /// let lexer = Lexer::new("1 + 2 * 3");
     /// let mut parser = Parser::new(lexer);
-    /// let ast = parser.parse();   // PlusOp(1, ProductOp(2, 3))
+    /// let ast = parser.parse();   // SumOp(1, ProductOp(2, 3))
     /// ```
     pub fn parse(&mut self) -> Node {
         // Start with the lowest possible binding power so nothing is "held

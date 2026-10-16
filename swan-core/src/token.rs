@@ -1,5 +1,9 @@
 
-
+//! Tokens produced by the [`Lexer`](crate::lexer::Lexer).
+//!
+//! The precedence numbers in the operator docs are the binding powers used by
+//! the [`Parser`](crate::parser::Parser): a higher number binds tighter.
+//! Function application, which has no token, binds at 28.
 
 /// All token kinds produced by the [`Lexer`](crate::lexer::Lexer).
 ///
@@ -26,6 +30,9 @@ pub enum Token<'a> {
     /// between the quotes — the delimiters are not included.
     /// Example: `"hello"` → `Text("hello")`.
     ///
+    /// There are no escape sequences: a backslash is an ordinary character,
+    /// and a text literal cannot contain `"`. A literal may span several lines.
+    ///
     /// > **Note**: if the closing `"` is absent the slice extends to the end
     /// > of the source string (the lexer does not error on unterminated strings).
     Text(&'a str),
@@ -50,7 +57,7 @@ pub enum Token<'a> {
     RightCurlyBracket,
 
     // -------------------------------------------------------------------------
-    //  Binary and unary operators (listed low → high precedence
+    //  Binary and unary operators (listed low → high precedence)
     // -------------------------------------------------------------------------
 
     /// `,`  (precedence 10) — pairing / tuple construction.
@@ -61,10 +68,12 @@ pub enum Token<'a> {
     /// `:`  (precedence 12) — labelling / named argument.
     LabellingOp,
 
-    /// `=>` (precedence 13) — mapping (anonymous function shorthand).
+    /// `=>` (precedence 13, right-associative) — mapping: applies the
+    /// right-hand function(s) to each item of the left-hand tuple.
     MappingOp,
 
-    /// `~>` (precedence 13) — chaining promises
+    /// `~>` (precedence 13, right-associative) — then: chains a function to
+    /// a promise.
     ThenOp,
 
     /// `>>` (precedence 14) — reverse composition / pipe (left-to-right).
@@ -76,7 +85,7 @@ pub enum Token<'a> {
     FunctionDefinitionOp,
 
     /// `;`  (precedence 21) — alternative: evaluates the right-hand side only
-    /// when the left-hand side is `Undefined`.
+    /// when the left-hand side is `Nothing`.
     AlternativeOp,
 
     /// `?`  (precedence 22) — conditional: evaluates the right-hand side only
@@ -121,10 +130,11 @@ pub enum Token<'a> {
     /// Example: `math.sin` retrieves `sin` from the `math` namespace.
     SubcontextingOp,
 
-    /// `!` not operator
+    /// `!`  (prefix) — logical negation.
     NotOp,
 
-    /// `$` lifting operator
+    /// `$`  (prefix) — lifting: looks a name up starting from the outermost
+    /// scope.
     LiftingOp,
 
     // -------------------------------------------------------------------------
@@ -134,16 +144,14 @@ pub enum Token<'a> {
     /// A character sequence the lexer could not classify as any valid token.
     /// The slice covers exactly the unrecognised source characters.
     ///
-    /// Examples: `$`, a malformed number like `12.` or `1e+`.
+    /// Examples: `'`, `@`, a malformed number like `1e+` or `12abc`.
     Undefined(&'a str),
 
     /// A `#`-prefixed line comment.  The slice contains the comment text
     /// *after* the `#` and *before* the terminating `\n` (or end of source).
     ///
-    /// > **Note**: the JS reference lexer silently discards comments.  The
-    /// > Rust lexer yields them as tokens so that the parser (or a tool like
-    /// > a formatter) can choose what to do with them.  The parser should
-    /// > skip `Comment` tokens during expression parsing.
+    /// The lexer yields comments as tokens so that a tool such as a formatter
+    /// can use them. The [`Parser`](crate::parser::Parser) skips them.
     Comment(&'a str),
 
     /// Signals that the source string has been fully consumed.

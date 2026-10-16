@@ -1,3 +1,5 @@
+//! The Swan lexer: turns source text into [`Token`]s.
+
 
 use std::iter::Peekable;
 use std::str::Chars;
@@ -146,13 +148,11 @@ impl<'a> Lexer<'a> {
     /// ```
     ///
     /// Returns [`Token::Number`] on success, or [`Token::Undefined`] when the
-    /// literal is syntactically malformed (e.g. `12.` — trailing dot without
-    /// digits, or `1e+` — exponent sign without digits).
+    /// literal is malformed: an exponent marker without digits (`1e+`), or a
+    /// number immediately followed by identifier characters (`123abc`).
     ///
-    /// > **Known issue**: a number immediately followed by an identifier
-    /// > character (e.g. `123abc`) is *not* treated as an error — the lexer
-    /// > yields `Number(123)` then `Identifier("abc")`.  The JS reference
-    /// > lexer throws a syntax error in that case.
+    /// A dot that is not followed by a digit is not part of the number, so
+    /// `12.` lexes as `Number(12)` followed by `SubcontextingOp`.
     fn next_numeric_literal(&mut self, start_pos: usize) -> Token<'a> {
 
         // Consume the integer part (the first digit was already consumed by the
@@ -269,7 +269,7 @@ impl<'a> Lexer<'a> {
     /// pinned at the end of the source.
     ///
     /// Two-character operators (`==`, `!=`, `<=`, `>=`, `->`, `<<`, `>>`,
-    /// `=>`) are recognised greedily: the first character is consumed by the
+    /// `=>`, `~>`) are recognised greedily: the first character is consumed by the
     /// main dispatch, then if the following character completes the operator it
     /// is consumed too before the token is returned.
     pub fn next_token(&mut self) -> (usize, Token<'a>) {

@@ -59,6 +59,19 @@ pub use promise::Promise;
 /// Cloning is cheap: heap-backed variants (`Text`, `List`, `Tuple`, `Name`)
 /// use `Rc`, and `Scope`, `Promise` and `BuiltinFn` are handles that share
 /// state when cloned.
+///
+/// The Swan type name of each variant (as returned by the `type` built-in) is
+/// the variant name, except that `Builtin` reports `Func`.
+///
+/// # Examples
+///
+/// ```
+/// use swan_core::value::Value;
+///
+/// let t = Value::tuple(vec![Value::Numb(1.0), Value::Nothing, Value::Numb(2.0)]);
+/// assert_eq!(t.items().count(), 2);
+/// assert!(bool::from(t));
+/// ```
 #[derive(Debug, Clone)]
 pub enum Value {
 
@@ -100,10 +113,10 @@ pub enum Value {
     /// A promise. It resolves at most once and never rejects; an `Undefined` result resolves to `Nothing`.
     Promise(Promise),
 
-    /// Undefined value
+    /// The result of an invalid operation, such as `"a" - 1`.
     ///
     /// Swan expressions do not throw exceptions; they return `Undefined`
-    /// values instead.
+    /// values instead. The [`Undef`] payload describes what went wrong.
     Undefined(Undef),
 
     /// The Swan product type — a heterogeneous sequence of items produced by
@@ -112,8 +125,9 @@ pub enum Value {
     /// Construct with [`Value::tuple`] so the result is normalized.
     Tuple(Rc<Vec<Value>>),
 
-    /// Name: identifiers at the left side of an assignment or
-    /// at the left side of a function operation. Produced only while evaluating binding positions; it has no meaning as a runtime result.
+    /// An identifier in a binding position: the left side of `=`, `:` or
+    /// `->`, or the operand of `$`. It is produced only while evaluating those
+    /// positions and has no meaning as a runtime result.
     Name(Rc<str>),
 }
 
@@ -251,6 +265,10 @@ fn compare_iterators<'a>(
 //  not `1, Nothing, 2`.
 // ----------------------------------------------------------------------------
 
+/// An iterator over the items of a value seen as a tuple.
+///
+/// Created by [`Value::items`]. Nested tuples are flattened and `Nothing`
+/// items are skipped.
 #[derive(Debug, Clone)]
 pub struct ValueIter {
     /// Stack of (tuple, next_index) frames; the last entry is the tuple
@@ -308,8 +326,11 @@ impl std::iter::FusedIterator for ValueIter {}
 //  shorter tuple are replaced with `Value::Nothing`.
 // ----------------------------------------------------------------------------
 
+/// An iterator over the corresponding items of two values seen as tuples.
+///
+/// Created by [`Value::pair`] or [`Pairs::new`]. When one value has fewer
+/// items, the missing items are [`Value::Nothing`].
 #[derive(Debug, Clone)]
-/// Created by [`Value::pair`] or [`Pairs::new`].
 pub struct Pairs {
     iter1: ValueIter,
     iter2: ValueIter,

@@ -1,5 +1,10 @@
 //! Web bindings of the texl engine.
 //!
+//! This crate compiles to a WebAssembly module with JavaScript bindings for
+//! browsers and web workers. Its Rust items are the implementation of the
+//! JavaScript API: the doc comments below are written for JavaScript readers,
+//! and wasm-bindgen copies them into the generated `texl_wasm.d.ts`.
+//!
 //! ```js
 //! import init, { TexlEngine } from "./pkg/texl_wasm.js";
 //! await init();
@@ -7,6 +12,8 @@
 //! const doc = await engine.load("docs/main.texl");           // {uri, source, data, rendering} or null
 //! const text = await engine.render("Hello <% reader %>!");
 //! ```
+//!
+//! See the [JavaScript API reference](https://onlabsorg.github.io/texl/book/hosts/javascript.html).
 
 mod convert;
 mod loader;
@@ -20,12 +27,31 @@ use wasm_bindgen::prelude::*;
 
 use convert::{for_each_entry, js_to_swan_value, swan_value_to_js};
 
-/// A texl engine that loads documents over HTTP(S).
+#[wasm_bindgen(typescript_custom_section)]
+const TS_TYPES: &'static str = r#"
+/**
+ * A loaded document, as returned by `TexlEngine.load`.
+ */
+export interface TexlDocument {
+    /** The URL of the document. */
+    uri: string;
+    /** The template source of the document. */
+    source: string;
+    /** The names the template assigned, converted to JavaScript values. */
+    data: Record<string, any>;
+    /** The rendered text. */
+    rendering: string;
+}
+"#;
+
+/// A texl engine that renders templates and loads documents over HTTP(S).
 ///
 /// Documents with an `http://` or `https://` URL are fetched as they are. Imports
 /// resolve against the importing document: relative paths against its folder, absolute
 /// paths (`/dir/doc.texl`) against its root folder. Templates without a document URL
 /// (`render`, contexts) use the engine's base URL instead.
+///
+/// Each document is loaded and rendered at most once per engine.
 #[wasm_bindgen]
 pub struct TexlEngine {
     engine: Engine,
@@ -34,10 +60,19 @@ pub struct TexlEngine {
 
 #[wasm_bindgen]
 impl TexlEngine {
-    /// Creates an engine. `globals` are bound in the scope of every document.
-    /// `baseUrl` defaults to the URL of the current page (or worker script).
+    /// Creates an engine.
+    ///
+    /// Throws if `baseUrl` is not a valid absolute URL.
     #[wasm_bindgen(constructor)]
-    pub fn new(globals: Option<Object>, base_url: Option<String>) -> Result<TexlEngine, JsValue> {
+    pub fn new(
+        #[wasm_bindgen(param_description = "Values bound as globals in every template and document. Defaults to none.")]
+        globals: Option<Object>,
+        #[wasm_bindgen(
+            js_name = baseUrl,
+            param_description = "The URL that relative URIs resolve against. Defaults to the URL of the current page or worker script."
+        )]
+        base_url: Option<String>,
+    ) -> Result<TexlEngine, JsValue> {
         let base_url = match base_url.or_else(location_href) {
             Some(href) => Some(
                 Url::parse(&href).map_err(|e| JsValue::from_str(&format!("invalid base URL {href}: {e}")))?,
@@ -57,22 +92,37 @@ impl TexlEngine {
         Ok(TexlEngine { engine, base_url })
     }
 
-    /// The URL that relative document URIs and absolute paths resolve against.
+    /// The URL that relative document URIs and absolute paths resolve against,
+    /// or `undefined` if there is none.
     #[wasm_bindgen(getter, js_name = baseUrl)]
     pub fn base_url(&self) -> Option<String> {
         self.base_url.as_ref().map(Url::to_string)
     }
 
-    /// Binds a global, visible to every document rendered afterwards.
-    pub fn set(&self, name: &str, value: JsValue) -> Result<(), JsValue> {
+    /// Binds a global, visible to every template and document of this engine.
+    pub fn set(
+        &self,
+        #[wasm_bindgen(param_description = "The name of the global.")]
+        name: &str,
+        #[wasm_bindgen(param_description = "Its value, converted to a Swan value.")]
+        value: JsValue,
+    ) -> Result<(), JsValue> {
         self.engine.add_builtin(name, js_to_swan_value(value)?);
         Ok(())
     }
 
-    /// Loads and renders the document at `uri`, resolved against the base URL.
-    /// Returns a JS Promise of `{uri, source, data, rendering}`, or of `null` if the
-    /// document cannot be loaded. Each document is loaded once per engine.
-    pub fn load(&self, uri: &str) -> js_sys::Promise {
+    /// Loads and renders the document at `uri`.
+    ///
+    /// The promise rejects only if `uri` cannot be resolved to a URL.
+    #[wasm_bindgen(
+        unchecked_return_type = "Promise<TexlDocument | null>",
+        return_description = "The document, or `null` if it cannot be loaded."
+    )]
+    pub fn load(
+        &self,
+        #[wasm_bindgen(param_description = "The URL of the document, resolved against `baseUrl`.")]
+        uri: &str,
+    ) -> js_sys::Promise {
         let engine = self.engine.clone();
         let url = loader::resolve_document_url(uri, self.base_url.as_ref());
         wasm_bindgen_futures::future_to_promise(async move {
@@ -81,8 +131,13 @@ impl TexlEngine {
         })
     }
 
-    /// Renders a template in a fresh scope. Returns a JS Promise of the rendered text.
-    pub fn render(&self, template: String) -> js_sys::Promise {
+    /// Renders a template in a fresh scope. The names it assigns are discarded.
+    #[wasm_bindgen(unchecked_return_type = "Promise<string>", return_description = "The rendered text.")]
+    pub fn render(
+        &self,
+        #[wasm_bindgen(param_description = "The template source.")]
+        template: String,
+    ) -> js_sys::Promise {
         let engine = self.engine.clone();
         wasm_bindgen_futures::future_to_promise(async move {
             Ok(JsValue::from_str(&engine.render(&template).await))
@@ -91,7 +146,11 @@ impl TexlEngine {
 
     /// Creates a context: a scope that keeps its bindings across renders.
     #[wasm_bindgen(js_name = createContext)]
-    pub fn create_context(&self, vars: Option<Object>) -> Result<TexlContext, JsValue> {
+    pub fn create_context(
+        &self,
+        #[wasm_bindgen(param_description = "Values bound in the context. Defaults to none.")]
+        vars: Option<Object>,
+    ) -> Result<TexlContext, JsValue> {
         let scope = self.engine.create_scope();
         if let Some(vars) = vars {
             for_each_entry(&vars, |name, value| scope.set(name, value))?;
@@ -100,8 +159,10 @@ impl TexlEngine {
     }
 }
 
-/// A scope of a [`TexlEngine`] whose bindings persist across renders: names
-/// assigned by a template can be read by later templates and by JS.
+/// A scope of a `TexlEngine` whose bindings persist across renders: names
+/// assigned by a template can be read by later templates and by JavaScript.
+///
+/// Create one with `TexlEngine.createContext`.
 #[wasm_bindgen]
 pub struct TexlContext {
     scope: Scope,
@@ -109,26 +170,46 @@ pub struct TexlContext {
 
 #[wasm_bindgen]
 impl TexlContext {
-    /// Retrieves a variable bound in the context by key
-    pub fn get(&self, key: &str) -> JsValue {
+    /// Returns the value of a name, converted to a JavaScript value.
+    ///
+    /// The name is looked up in the context, then in the engine globals and the
+    /// built-ins. A name that is not bound gives `null`.
+    pub fn get(
+        &self,
+        #[wasm_bindgen(param_description = "The name to look up.")]
+        key: &str,
+    ) -> JsValue {
         swan_value_to_js(&self.scope.get(key))
     }
 
-    /// Sets or updates a variable in the context scope.
-    pub fn set(&self, key: &str, value: JsValue) -> Result<(), JsValue> {
+    /// Binds a name in the context, replacing any previous value.
+    pub fn set(
+        &self,
+        #[wasm_bindgen(param_description = "The name to bind.")]
+        key: &str,
+        #[wasm_bindgen(param_description = "Its value, converted to a Swan value.")]
+        value: JsValue,
+    ) -> Result<(), JsValue> {
         self.scope.set(key, js_to_swan_value(value)?);
         Ok(())
     }
 
-    /// Returns the names bound in the context scope (not the engine globals), sorted.
+    /// Returns the names bound in the context, sorted. Engine globals and
+    /// built-ins are not included; `texl` always is.
+    #[wasm_bindgen(unchecked_return_type = "string[]")]
     pub fn names(&self) -> Array {
         let mut keys: Vec<String> = self.scope.0.borrow().bindings.keys().cloned().collect();
         keys.sort();
         keys.iter().map(|k| JsValue::from_str(k)).collect()
     }
 
-    /// Renders a template in this context. Returns a JS Promise of the rendered text.
-    pub fn render(&self, template: String) -> js_sys::Promise {
+    /// Renders a template in this context. The names it assigns stay in the context.
+    #[wasm_bindgen(unchecked_return_type = "Promise<string>", return_description = "The rendered text.")]
+    pub fn render(
+        &self,
+        #[wasm_bindgen(param_description = "The template source.")]
+        template: String,
+    ) -> js_sys::Promise {
         let scope = self.scope.clone();
         wasm_bindgen_futures::future_to_promise(async move {
             Ok(JsValue::from_str(&template::render(&template, &scope).await))

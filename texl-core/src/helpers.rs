@@ -1,4 +1,36 @@
-//! Helper utilities for `texl-core`.
+//! Glue between Swan promises and the host's async runtime.
+//!
+//! The engine runs imports as background tasks. It does not depend on any
+//! runtime: the host passes a [`SpawnFn`] that starts a [`Task`] on its own
+//! executor. Without one, tasks go onto a thread-local queue that the host
+//! drains with [`run_pending`].
+//!
+//! [`promise_async`] is also useful to hosts: it turns a Rust future into a
+//! Swan promise, so a host function can do asynchronous work.
+//!
+//! # Examples
+//!
+//! A host function that returns a promise:
+//!
+//! ```
+//! use swan_core::value::{BuiltinFn, Value};
+//! use texl_core::{Engine, helpers::promise_async};
+//!
+//! let engine = Engine::new(None);
+//! engine.add_builtin("fetch_answer", Value::Builtin(BuiltinFn::new("fetch_answer", |_| {
+//!     promise_async(None, async { Value::Numb(42.0) })
+//! })));
+//! assert_eq!(block_on(engine.render("<% fetch_answer() %>")), "42");
+//! # use std::{future::Future, pin::pin, task::{Context, Poll, Waker}};
+//! # fn block_on<F: Future>(fut: F) -> F::Output {
+//! #     let mut cx = Context::from_waker(Waker::noop());
+//! #     let mut fut = pin!(fut);
+//! #     loop {
+//! #         texl_core::helpers::run_pending();
+//! #         if let Poll::Ready(v) = fut.as_mut().poll(&mut cx) { return v; }
+//! #     }
+//! # }
+//! ```
 
 use std::cell::RefCell;
 use std::collections::VecDeque;
@@ -60,7 +92,7 @@ pub fn run_pending() {
     }
 }
 
-/// Runs a task using an optional custom spawner, or falls back to `spawn_default`.
+/// Runs `task` with `spawner`, or queues it with [`spawn_default`] if `spawner` is `None`.
 pub fn spawn(spawner: Option<&SpawnFn>, task: Task) {
     match spawner {
         Some(s) => s(task),

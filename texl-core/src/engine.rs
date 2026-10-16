@@ -1,3 +1,70 @@
+//! The texl engine: documents, loaders and imports.
+//!
+//! An [`Engine`] renders templates and loads *documents*: templates identified
+//! by a URI. It owns
+//!
+//! - a **base scope** with the Swan built-ins and any globals added by the host
+//!   with [`Engine::add_builtin`];
+//! - a set of **loaders** that fetch the source of a document from its URI,
+//!   one per URI scheme ([`Engine::add_loader`]) plus a default loader for
+//!   paths without a scheme ([`Engine::add_default_loader`]);
+//! - a **cache** of documents, so that each document is loaded and rendered at
+//!   most once.
+//!
+//! # Documents
+//!
+//! Loading a document produces a namespace with four fields:
+//!
+//! | Field       | Type        | Content                                          |
+//! |-------------|-------------|--------------------------------------------------|
+//! | `uri`       | `Text`      | The normalized URI of the document               |
+//! | `source`    | `Text`      | The template source, as returned by the loader   |
+//! | `data`      | `Namespace` | The scope the template was rendered in           |
+//! | `rendering` | `Text`      | The rendered text                                |
+//!
+//! The `data` field holds every name the template assigned, so a document can
+//! act as a library of values and functions.
+//!
+//! # Imports
+//!
+//! Every scope created by the engine has a `texl` namespace containing
+//! `texl.import`. Templates call `texl.import(uri)` to load another document.
+//! It always returns a promise of the document namespace (or of `Nothing`, if
+//! the document cannot be loaded). Relative URIs resolve against the URI of the
+//! importing document; in a scope without a document, they resolve against the
+//! root path `/`. The imported document is rendered in a child of the
+//! importing scope, so it can read the names of its importer.
+//!
+//! # Example
+//!
+//! ```
+//! use swan_core::value::Value;
+//! use texl_core::{Engine, loader_fn};
+//!
+//! let engine = Engine::new(None);
+//! engine.add_builtin("reader", Value::Text("Ada".into()));
+//! engine.add_default_loader(loader_fn(|uri| async move {
+//!     match uri.as_str() {
+//!         "/greeting.texl" => Ok("Hello <% reader %>!".to_string()),
+//!         _ => Err(format!("{uri}: not found")),
+//!     }
+//! }));
+//!
+//! let text = block_on(engine.render(
+//!     r#"<% texl.import("greeting.texl") ~> (doc -> doc.rendering) %>"#
+//! ));
+//! assert_eq!(text, "Hello Ada!");
+//! # use std::{future::Future, pin::pin, task::{Context, Poll, Waker}};
+//! # fn block_on<F: Future>(fut: F) -> F::Output {
+//! #     let mut cx = Context::from_waker(Waker::noop());
+//! #     let mut fut = pin!(fut);
+//! #     loop {
+//! #         texl_core::helpers::run_pending();
+//! #         if let Poll::Ready(v) = fut.as_mut().poll(&mut cx) { return v; }
+//! #     }
+//! # }
+//! ```
+
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::future::Future;
@@ -11,10 +78,28 @@ use swan_core::value::{BuiltinFn, Scope, Value};
 use crate::helpers::{promise_async, SpawnFn};
 use crate::template;
 
-/// An external, host-provided document loader.
+/// A host-provided function that fetches the source of a document.
+///
+/// The engine calls it with the normalized URI of the document: a full URL
+/// (`https://host/dir/doc.texl`) for scheme loaders, or an absolute,
+/// percent-encoded path (`/dir/doc.texl`) for the default loader. The future
+/// resolves to the template source, or to an error message. The engine
+/// discards the message: a failed load gives `Nothing`.
+///
+/// Build one from an async closure with [`loader_fn`].
 pub type LoaderFn = Rc<dyn Fn(&str) -> Pin<Box<dyn Future<Output = Result<String, String>>>>>;
 
-/// Builds a [`LoaderFn`] from a plain closure returning a future.
+/// Builds a [`LoaderFn`] from a closure that takes the URI and returns a future.
+///
+/// # Examples
+///
+/// ```
+/// use texl_core::loader_fn;
+///
+/// let loader = loader_fn(|uri| async move {
+///     Ok(format!("This is <% \"{uri}\" %>"))
+/// });
+/// ```
 pub fn loader_fn<F, Fut>(f: F) -> LoaderFn
 where
     F: Fn(String) -> Fut + 'static,
@@ -23,6 +108,10 @@ where
     Rc::new(move |uri: &str| Box::pin(f(uri.to_string())))
 }
 
+/// Renders templates and loads documents. See the [module documentation](self).
+///
+/// `Engine` is a cheap handle: clones share the same base scope, loaders and
+/// cache. It is single-threaded (not `Send`).
 #[derive(Clone)]
 pub struct Engine {
     base_scope: Scope,
@@ -33,7 +122,13 @@ pub struct Engine {
 }
 
 impl Engine {
-    /// 1. Initializes the Engine by passing the spawner to the constructor
+    /// Creates an engine with no loaders and an empty cache.
+    ///
+    /// Imports run as background tasks. `spawner` hands those tasks to the
+    /// host's async runtime (for example `tokio::task::spawn_local`, or
+    /// `wasm_bindgen_futures::spawn_local`). With `None`, tasks go onto a
+    /// thread-local queue, and the host must call
+    /// [`helpers::run_pending`](crate::helpers::run_pending) to run them.
     pub fn new(spawner: Option<SpawnFn>) -> Self {
         Self {
             base_scope: root_scope(),
@@ -44,23 +139,68 @@ impl Engine {
         }
     }
 
-    /// 2. Adds builtins to the scope without requiring the host to create one first
+    /// Binds `name` to `value` in the base scope.
+    ///
+    /// The name is visible in every scope and document of this engine,
+    /// including those created earlier, unless a template shadows it. Use it to
+    /// pass data and host functions ([`Value::Builtin`]) to templates.
     pub fn add_builtin(&self, name: &str, value: Value) {
         self.base_scope.set(name, value);
     }
 
-    /// 3a. Adds custom scheme loaders to the engine
+    /// Registers `loader` for the URIs whose scheme is `protocol` (for example
+    /// `"https"` or `"file"`, without the colon). The scheme is
+    /// case-insensitive. A later call for the same scheme replaces the loader.
     pub fn add_loader(&self, protocol: &str, loader: LoaderFn) {
         let scheme = protocol.to_lowercase();
         self.loaders.borrow_mut().insert(scheme, loader);
     }
 
-    /// 3b. Adds the default fallback loader
+    /// Registers the loader for URIs without a scheme, such as `/dir/doc.texl`
+    /// or `doc.texl`. A later call replaces it.
     pub fn add_default_loader(&self, loader: LoaderFn) {
         *self.default_loader.borrow_mut() = Some(loader);
     }
 
-    /// 4. Loads a document (public entrypoint for the host)
+    /// Loads and renders the document at `uri`.
+    ///
+    /// The URI is normalized (a scheme-less path becomes absolute, so `doc.texl`
+    /// is `/doc.texl`), then passed to the loader of its scheme, or to the
+    /// default loader if it has none. The source is rendered in a fresh child of
+    /// the base scope, and imports inside it resolve against the URI.
+    ///
+    /// This method always loads the document, but it stores the result in the
+    /// cache, so later imports of the same URI reuse it.
+    ///
+    /// # Returns
+    ///
+    /// - The document namespace `{uri, source, data, rendering}` (see the
+    ///   [module documentation](self)).
+    /// - `Nothing` if no loader matches the URI or the loader fails.
+    /// - `Undefined` if the URI cannot be normalized.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use swan_core::value::Value;
+    /// use texl_core::{Engine, loader_fn};
+    ///
+    /// let engine = Engine::new(None);
+    /// engine.add_loader("mem", loader_fn(|_uri| async { Ok("<% x = 1 %>x is <% x %>".to_string()) }));
+    ///
+    /// let Value::Namespace(doc) = block_on(engine.load("mem://doc")) else { panic!() };
+    /// assert_eq!(doc.get("rendering"), Value::Text("x is 1".into()));
+    /// assert_eq!(doc.get("uri"), Value::Text("mem://doc".into()));
+    /// # use std::{future::Future, pin::pin, task::{Context, Poll, Waker}};
+    /// # fn block_on<F: Future>(fut: F) -> F::Output {
+    /// #     let mut cx = Context::from_waker(Waker::noop());
+    /// #     let mut fut = pin!(fut);
+    /// #     loop {
+    /// #         texl_core::helpers::run_pending();
+    /// #         if let Poll::Ready(v) = fut.as_mut().poll(&mut cx) { return v; }
+    /// #     }
+    /// # }
+    /// ```
     pub async fn load(&self, uri: &str) -> Value {
         let norm_url = match self.normalize_url(uri) {
             Ok(url) => url,
@@ -72,13 +212,39 @@ impl Engine {
         self.load_internal(doc_scope, norm_url).await
     }
 
-    /// 5. Renders a template directly, creating a fresh scope automatically
+    /// Renders `template` in a fresh scope (see [`Engine::create_scope`]) and
+    /// returns the rendered text.
+    ///
+    /// Names assigned by the template are discarded afterwards. To keep them,
+    /// create a scope and call [`template::render`] directly.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use texl_core::Engine;
+    ///
+    /// let engine = Engine::new(None);
+    /// assert_eq!(block_on(engine.render("1 + 1 = <% 1 + 1 %>")), "1 + 1 = 2");
+    /// # use std::{future::Future, pin::pin, task::{Context, Poll, Waker}};
+    /// # fn block_on<F: Future>(fut: F) -> F::Output {
+    /// #     let mut cx = Context::from_waker(Waker::noop());
+    /// #     let mut fut = pin!(fut);
+    /// #     loop {
+    /// #         texl_core::helpers::run_pending();
+    /// #         if let Poll::Ready(v) = fut.as_mut().poll(&mut cx) { return v; }
+    /// #     }
+    /// # }
+    /// ```
     pub async fn render(&self, template: &str) -> String {
         let scope = self.create_scope();
         template::render(template, &scope).await
     }
 
-    /// 6. Scope building is exposed, but generally handled internally
+    /// Creates a new child of the base scope with its own `texl` namespace.
+    ///
+    /// The scope has no document, so `texl.import` resolves relative URIs
+    /// against the root path `/`. Render several templates in the same scope
+    /// with [`template::render`] to share names between them.
     pub fn create_scope(&self) -> Scope {
         // Create a child so document executions do not pollute the base_scope
         let child = self.base_scope.new_child();

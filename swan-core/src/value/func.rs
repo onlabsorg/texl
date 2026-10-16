@@ -13,8 +13,8 @@ use super::*;
 ///
 /// 1. **Debug**: `dyn Fn` is not `Debug`; storing a `name` gives meaningful
 ///    output in error messages and test output.
-/// 2. **Metadata**: the `name` field will be available when building
-///    `Undefined` error values ("function `math.sin` called on a Bool").
+/// 2. **Metadata**: the `name` can be used when building `Undefined` error
+///    values ("function `math.sin` called on a Bool").
 /// 3. **Ergonomics**: `BuiltinFn::new("name", |arg| ...)` is self-documenting.
 ///
 /// # Argument convention
@@ -25,8 +25,20 @@ use super::*;
 ///
 /// # Return value
 ///
-/// The function must never panic.  Return `Value::Undef(...)` for any input
-/// that is invalid.
+/// The function must never panic.  Return a [`Value::Undefined`] (for example
+/// with [`Value::undef_unary`]) for any input that is invalid.
+///
+/// # Examples
+///
+/// ```
+/// use swan_core::value::{BuiltinFn, Value};
+///
+/// let negate = BuiltinFn::new("negate", |arg| match arg {
+///     Value::Numb(n) => Value::Numb(-n),
+///     other => Value::undef_unary("negate", other, 0),
+/// });
+/// assert_eq!(negate.call(Value::Numb(2.0)), Value::Numb(-2.0));
+/// ```
 #[derive(Clone)]
 pub struct BuiltinFn {
     /// Human-readable name, used in Debug output and error messages.

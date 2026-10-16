@@ -1,0 +1,19 @@
+<nav class="tx-nav" aria-label="Site">
+  <a class="tx-wordmark" data-tx-href="index.html" title="Texl home"><span class="tx-delim">&lt;%</span>texl<span class="tx-delim">%&gt;</span></a>
+  <span class="tx-links">
+    <a data-tx-href="book/templates/index.html">Templates</a>
+    <a data-tx-href="book/swan/index.html">Swan</a>
+    <a data-tx-href="book/hosts/index.html" aria-current="page">API</a>
+    <a href="https://github.com/onlabsorg/texl">GitHub</a>
+  </span>
+</nav>
+<script>
+  // Site links are relative to the site root, one level above rustdoc's root.
+  (function () {
+    var vars = document.querySelector('meta[name="rustdoc-vars"]');
+    var site = (vars ? vars.dataset.rootPath : "./") + "../";
+    document.querySelectorAll(".tx-nav [data-tx-href]").forEach(function (a) {
+      a.href = site + a.dataset.txHref;
+    });
+  })();
+</script>

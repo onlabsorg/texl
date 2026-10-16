@@ -24,6 +24,7 @@ cargo run -p texl-cli -- texl-cli/tests/fixtures/sample.texl   # render a sample
 
 cargo test -p texl-wasm --test browser       # builds texl-wasm with wasm-pack and runs tests/web/index.html in headless Chrome (skipped if either is missing)
 cargo run -p texl-wasm --example serve        # builds texl-wasm/pkg and serves the browser test page, to inspect it
+docs/build.sh                                 # builds the documentation site into target/site (needs mdbook; MDBOOK=path overrides)
 ./helper.sh build        # wasm-pack build of texl-wasm into texl-wasm/pkg
 ./helper.sh repomix <dir>                      # writes <dir>.repomix.md, a single-file snapshot used as LLM context
 ```
@@ -46,7 +47,7 @@ Invariants that apply across the crate:
 
 `evaluator.rs` handles most node kinds itself. Operations with more involved logic are in the `evaluator/*_operation(s).rs` submodules.
 
-The full language spec is `swan-core/docs/swan_language_manual.md`. `swan-core/README.md` is partly out of date: it still describes the parser and evaluator as stubs, and its operator table is missing `~>`.
+The language manual is `docs/src/swan/` (part of the documentation book, see below).
 
 ### texl-core
 
@@ -65,3 +66,11 @@ The full language spec is `swan-core/docs/swan_language_manual.md`. `swan-core/R
 `convert.rs` converts between JS values and Swan `Value`s in both directions. JS functions become builtins. JS Promises and async functions become Swan Promises (a rejection resolves to `Nothing`), and Swan Promises come back to JS as JS Promises. `load` and `render` return JS Promises.
 
 The browser test (`tests/browser.rs`) serves the crate folder with a small std-only HTTP server (`tests/support/mod.rs`, shared with `examples/serve.rs`). The page renders `tests/web/fixtures/sample.texl` (the CLI sample plus a web section) and compares it with `sample.expected.txt`, then runs API checks; it sets `data-status="pass"` on `<body>` when all pass.
+
+### Documentation
+
+`docs/` holds the documentation site, published to GitHub Pages by `.github/workflows/docs.yml`:
+- `docs/src/` — an mdBook: the template manual, the Swan manual (with the built-in reference), and the CLI, JavaScript and Rust host guides. `docs/book.toml` builds it into `target/book`.
+- `docs/site/index.html` — the landing page. `docs/assets/` — shared CSS tokens (`texl.css`, mapped onto mdBook by `book.css` and onto rustdoc by `rustdoc.css`) and the Swan/Texl highlighter.
+- The Rust API reference is rustdoc for `swan-core` and `texl-core`, which both use `#![warn(missing_docs)]`. The JavaScript API is documented by the doc comments in `texl-wasm/src/lib.rs` (copied into the generated `.d.ts`) and in `docs/src/hosts/javascript.md`.
+- `docs/STYLE.md` defines the narrative style, the API entry format and the example conventions. Every `# =>` result and template rendering in the docs must match the real output.

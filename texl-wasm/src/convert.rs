@@ -1,4 +1,19 @@
 //! Conversions between JS values and Swan values.
+//!
+//! | JavaScript                     | Swan                                     |
+//! |--------------------------------|------------------------------------------|
+//! | `null`, `undefined`            | `Nothing`                                |
+//! | boolean                        | `Bool`                                   |
+//! | number                         | `Numb`                                   |
+//! | string                         | `Text`                                   |
+//! | array                          | `List`                                   |
+//! | Promise or other thenable      | `Promise` (a rejection gives `Nothing`)  |
+//! | function                       | `Func` taking one argument               |
+//! | other object                   | `Namespace` of its own enumerable keys   |
+//!
+//! In the other direction, `Nothing` becomes `null`, lists and tuples become
+//! arrays, namespaces become plain objects (own bindings only), promises
+//! become JS Promises, and functions and undefined values become `undefined`.
 
 use js_sys::{Array, Function, Object, Reflect};
 use swan_core::value::{BuiltinFn, Promise, Scope, Value};
@@ -33,6 +48,7 @@ pub fn for_each_entry(
 // JS -> Swan Conversion
 // ----------------------------------------------------------------------------
 
+/// Converts a JS value to a Swan value. See the [module documentation](self).
 pub fn js_to_swan_value(val: JsValue) -> Result<Value, JsValue> {
     if val.is_null() || val.is_undefined() {
         Ok(Value::Nothing)
@@ -92,6 +108,7 @@ pub fn js_to_swan_value(val: JsValue) -> Result<Value, JsValue> {
 // Swan -> JS Conversion
 // ----------------------------------------------------------------------------
 
+/// Converts a Swan value to a JS value. See the [module documentation](self).
 pub fn swan_value_to_js(val: &Value) -> JsValue {
     match val {
         Value::Nothing => JsValue::NULL,

@@ -13,12 +13,37 @@ use super::*;
 //  internal evaluator concept; a Namespace is a first-class Swan value.
 // ----------------------------------------------------------------------------
 
+/// A lexical environment: a table of bindings with an optional parent.
+///
+/// Name lookup ([`Scope::get`]) searches the scope itself and then its
+/// ancestors. New bindings ([`Scope::set`]) always go into the scope itself.
+/// A `Scope` is also the storage of a [`Value::Namespace`].
+///
+/// `Scope` is a cheap handle: clones share the same bindings.
+///
+/// # Examples
+///
+/// ```
+/// use swan_core::value::{Scope, Value};
+///
+/// let parent = Scope::new();
+/// parent.set("x", Value::Numb(1.0));
+///
+/// let child = parent.new_child();
+/// child.set("y", Value::Numb(2.0));
+///
+/// assert_eq!(child.get("x"), Value::Numb(1.0));   // inherited
+/// assert_eq!(parent.get("y"), Value::Nothing);    // not visible upwards
+/// ```
 #[derive(Clone, Debug)]
 pub struct Scope(pub Rc<RefCell<ScopeData>>);
 
+/// The shared state behind a [`Scope`].
 #[derive(Clone)]
 pub struct ScopeData {
+    /// The enclosing scope, searched when a name is not bound here.
     pub parent: Option<Scope>,
+    /// The bindings defined in this scope (not in its ancestors).
     pub bindings: HashMap<String, Value>,
 }
 
@@ -44,7 +69,8 @@ impl Scope {
         Self::with_parent(self.clone())
     }
 
-    /// Recursively looks up an identifier up the scope chain.
+    /// Returns the value bound to `key` in this scope or its nearest ancestor
+    /// that binds it, or [`Value::Nothing`] if no scope binds it.
     ///
     /// The borrow on `self` is released *before* recursing into the parent so
     /// that there is no live `RefCell` borrow held across the recursive call.
@@ -66,8 +92,11 @@ impl Scope {
         })
     }
 
-    /// Traverses from the root ancestor scope down to the current scope,
-    /// returning the first occurrence of `key` found along the child chain.
+    /// Returns the value bound to `key` in the *outermost* scope of the chain
+    /// that binds it, or [`Value::Nothing`] if no scope binds it.
+    ///
+    /// This is the opposite search order of [`Scope::get`]. It implements the
+    /// Swan lifting operator `$name`.
     pub fn lift(&self, key: &str) -> Value {
         // Build a vector of scopes starting from the root down to `self`
         let mut chain = Vec::new();

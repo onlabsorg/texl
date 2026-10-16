@@ -1,4 +1,29 @@
-// src/builtins.rs
+//! The built-in library and the root scope.
+//!
+//! [`root_scope`] creates the scope in which Swan code normally runs. It
+//! contains these bindings:
+//!
+//! | Name                  | Kind      | Description                                   |
+//! |-----------------------|-----------|-----------------------------------------------|
+//! | `TRUE`, `FALSE`       | constant  | The boolean values                            |
+//! | `type`                | function  | The type name of a value                      |
+//! | `parse`               | function  | Compiles Swan source text into a function     |
+//! | `bind`, `label`       | function  | Bind names in the global scope                |
+//! | `bool`                | namespace | Boolean conversion and reduction              |
+//! | `numb`                | namespace | Number conversion                             |
+//! | `text`                | namespace | Text inspection and manipulation              |
+//! | `list`                | namespace | List inspection and manipulation              |
+//! | `nspace`              | namespace | Namespace inspection                          |
+//! | `math`                | namespace | Mathematical constants and functions          |
+//! | `time`                | namespace | Timestamps and calendar dates                 |
+//! | `promise`             | namespace | Creating and resolving promises               |
+//! | `undef`               | namespace | Creating and inspecting undefined values      |
+//!
+//! Every function is documented, with examples, in the
+//! [built-in library reference](https://onlabsorg.github.io/texl/book/swan/builtins/index.html)
+//! of the Swan language manual.
+
+// Implementation notes
 //
 // Purpose: this module builds the root scope and defines the built-ins that
 // live directly in it (`type`, `parse`, `TRUE`, `FALSE`).
@@ -45,10 +70,17 @@ mod time;
 //  Root scope factory
 // ----------------------------------------------------------------------------
 
-/// Build a fresh root `Scope` pre-populated with all built-in bindings.
+/// Builds a fresh scope in which every built-in name is available.
+///
+/// The built-ins live in a parent scope, and the returned scope is an empty
+/// child of it, so user code can shadow a built-in name without changing it.
+/// The global names created by the `bind` and `label` built-ins go into the
+/// returned scope.
 ///
 /// Every evaluation session should start from a scope created here (or from a
-/// child of one) so that built-in names are always available.
+/// child of one).
+///
+/// # Examples
 ///
 /// ```
 /// use swan_core::builtins::root_scope;

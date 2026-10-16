@@ -1,0 +1,233 @@
+/*
+ * Maps the Texl design tokens (texl.css) onto mdBook.
+ *
+ * mdBook selects a theme with a class on <html>: `light` and `rust` use the
+ * light palette, `coal`, `navy` and `ayu` the dark one.
+ */
+
+html.light,
+html.rust,
+html:not(.js) {
+    --tx-bg: var(--tx-l-bg);
+    --tx-bg-raised: var(--tx-l-bg-raised);
+    --tx-fg: var(--tx-l-fg);
+    --tx-muted: var(--tx-l-muted);
+    --tx-border: var(--tx-l-border);
+    --tx-panel: var(--tx-l-panel);
+    --tx-accent: var(--tx-l-accent);
+    --tx-accent-hover: var(--tx-l-accent-hover);
+    --tx-accent-soft: var(--tx-l-accent-soft);
+    --tx-tag: var(--tx-l-tag);
+    --tx-code-comment: var(--tx-l-code-comment);
+    --tx-code-string: var(--tx-l-code-string);
+    --tx-code-number: var(--tx-l-code-number);
+    --tx-code-builtin: var(--tx-l-code-builtin);
+    --tx-code-keyword: var(--tx-l-code-keyword);
+    --color-scheme: light;
+}
+
+html.coal,
+html.navy,
+html.ayu {
+    --tx-bg: var(--tx-d-bg);
+    --tx-bg-raised: var(--tx-d-bg-raised);
+    --tx-fg: var(--tx-d-fg);
+    --tx-muted: var(--tx-d-muted);
+    --tx-border: var(--tx-d-border);
+    --tx-panel: var(--tx-d-panel);
+    --tx-accent: var(--tx-d-accent);
+    --tx-accent-hover: var(--tx-d-accent-hover);
+    --tx-accent-soft: var(--tx-d-accent-soft);
+    --tx-tag: var(--tx-d-tag);
+    --tx-code-comment: var(--tx-d-code-comment);
+    --tx-code-string: var(--tx-d-code-string);
+    --tx-code-number: var(--tx-d-code-number);
+    --tx-code-builtin: var(--tx-d-code-builtin);
+    --tx-code-keyword: var(--tx-d-code-keyword);
+    --color-scheme: dark;
+}
+
+html.light,
+html.rust,
+html.coal,
+html.navy,
+html.ayu,
+html:not(.js) {
+    --bg: var(--tx-bg);
+    --fg: var(--tx-fg);
+
+    --sidebar-bg: var(--tx-bg-raised);
+    --sidebar-fg: var(--tx-fg);
+    --sidebar-non-existant: var(--tx-muted);
+    --sidebar-active: var(--tx-accent);
+    --sidebar-spacer: var(--tx-border);
+
+    --scrollbar: var(--tx-muted);
+
+    --icons: var(--tx-muted);
+    --icons-hover: var(--tx-accent);
+
+    --links: var(--tx-accent);
+    --inline-code-color: var(--tx-fg);
+
+    --theme-popup-bg: var(--tx-bg-raised);
+    --theme-popup-border: var(--tx-border);
+    --theme-hover: var(--tx-panel);
+
+    --quote-bg: var(--tx-accent-soft);
+    --quote-border: var(--tx-accent);
+
+    --warning-border: var(--tx-tag);
+
+    --table-border-color: var(--tx-border);
+    --table-header-bg: var(--tx-panel);
+    --table-alternate-bg: var(--tx-bg-raised);
+
+    --searchbar-border-color: var(--tx-border);
+    --searchbar-bg: var(--tx-bg-raised);
+    --searchbar-fg: var(--tx-fg);
+    --searchbar-shadow-color: var(--tx-border);
+    --searchresults-header-fg: var(--tx-muted);
+    --searchresults-border-color: var(--tx-border);
+    --searchresults-li-bg: var(--tx-accent-soft);
+    --search-mark-bg: var(--tx-accent-soft);
+
+    --footnote-highlight: var(--tx-accent);
+
+    --mono-font: var(--tx-font-mono);
+    --content-max-width: var(--tx-content-width);
+}
+
+/* Typography */
+
+html,
+body {
+    font-family: var(--tx-font-sans);
+}
+
+.content {
+    line-height: 1.65;
+}
+
+.content h1,
+.content h2,
+.content h3,
+.content h4 {
+    line-height: 1.25;
+    letter-spacing: -0.01em;
+}
+
+.content h2 {
+    margin-top: 2.2em;
+    padding-bottom: 0.3em;
+    border-bottom: 1px solid var(--tx-border);
+}
+
+.content h3 {
+    margin-top: 1.8em;
+}
+
+/* Heading links keep the text color. */
+.content a.header:link,
+.content a.header:visited {
+    color: var(--tx-fg);
+}
+
+.content a:hover {
+    color: var(--tx-accent-hover);
+}
+
+/* Code */
+
+.content code {
+    font-size: 0.875em;
+}
+
+.content :not(pre) > code {
+    padding: 0.1em 0.35em;
+    border-radius: 4px;
+    background: var(--tx-panel);
+}
+
+.content pre {
+    border-radius: var(--tx-radius);
+    border: 1px solid var(--tx-border);
+}
+
+.content pre > code.hljs {
+    padding: 0.9em 1.1em;
+    background: var(--tx-panel);
+}
+
+/* Tables */
+
+.content table {
+    border-collapse: collapse;
+    margin: 1.2em 0;
+    font-size: 0.95em;
+}
+
+.content table thead td,
+.content table thead th {
+    font-weight: 600;
+}
+
+.content table td,
+.content table th {
+    padding: 0.4em 0.8em;
+    border: 1px solid var(--tx-border);
+}
+
+/* Block quotes are used for notes. */
+
+.content blockquote {
+    margin: 1.4em 0;
+    padding: 0.2em 1.2em;
+    border-left: 4px solid var(--quote-border);
+    border-top: none;
+    border-bottom: none;
+    border-radius: 0 var(--tx-radius) var(--tx-radius) 0;
+}
+
+/* Menu bar: the wordmark and the site links added by book.js */
+
+#menu-bar {
+    border-bottom: 1px solid var(--tx-border);
+}
+
+.menu-title {
+    font-family: var(--tx-font-sans);
+    font-weight: 600;
+}
+
+.menu-title a.tx-wordmark {
+    text-decoration: none;
+}
+
+#menu-bar .right-buttons {
+    display: flex;
+    align-items: center;
+}
+
+.tx-book-links {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    margin-right: 0.75rem;
+    font-size: 15px;
+}
+
+.tx-book-links a {
+    color: var(--tx-muted);
+    text-decoration: none;
+}
+
+.tx-book-links a:hover {
+    color: var(--tx-accent);
+}
+
+@media (max-width: 720px) {
+    .tx-book-links .tx-optional {
+        display: none;
+    }
+}

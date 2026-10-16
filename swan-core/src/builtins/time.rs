@@ -8,7 +8,7 @@
 //! Namespace members:
 //! - `now()`         : current time
 //! - `to_date(t)`    : timestamp -> namespace `{year, month, day, hour, minute, second}`
-//! - `from_date(d)`  : date namespace -> timestamp (missing fields default to 1970-01-01T00:00:00)
+//! - `from_date(d)`  : date namespace -> timestamp (missing fields default to 0000-01-01T00:00:00)
 //! - `week_day(t)`   : 0 = Sunday ... 6 = Saturday
 //! - `week_number(t)`: ISO-8601 week number
 //! - `to_string(t)`  : ISO-8601 text, e.g. `2026-05-28T20:26:40.000Z`

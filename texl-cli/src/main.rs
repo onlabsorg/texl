@@ -1,3 +1,20 @@
+//! The `texl` command: renders a template file to standard output or to a file.
+//!
+//! ```text
+//! texl [-o OUTPUT] FILE
+//! ```
+//!
+//! The file is loaded through a [`texl_core::Engine`] by its `file://` URL, so
+//! the imports in it resolve against its own folder, whatever the working
+//! directory. Documents are read from the local file system, both for
+//! `file://` URLs and for paths without a scheme. Other schemes are not
+//! supported, and importing them gives `Nothing`.
+//!
+//! The exit status is 0 on success and 1 if the file cannot be read or the
+//! output cannot be written. The error message goes to standard error.
+//!
+//! See the [command-line manual](https://onlabsorg.github.io/texl/book/hosts/cli.html).
+
 mod loader;
 
 use clap::Parser;
