@@ -87,7 +87,10 @@ rules. Chained comparisons do not work: `a < b < c` compares a boolean with
 | `x & y`  | `x` if `x` is false, otherwise `y`.                                     |
 | `x \| y` | `x` if `x` is true, otherwise `y`.                                      |
 | `x ? y`  | `y` if `x` is true, otherwise `Nothing`.                                |
-| `x ; y`  | `x` unless `x` is `Nothing`; then `y`. `y` is evaluated only if needed. |
+| `x ; y`  | `x` unless `x` is `Nothing`; then `y`.                                  |
+
+In all four, `y` is evaluated only if it is needed. `&`, `|` and `?` test `x`
+as a whole, even when it is a tuple: they do not work item by item.
 
 Together, `?` and `;` make an if-else: `cond ? then ; else`. See
 [Conditions and logic](conditions.md).

@@ -103,8 +103,8 @@ fact = n -> n <= 1 ? 1 ; n * fact (n - 1)
 fact 10              # => 3628800
 ```
 
-Put the recursive call on the right of `;`, which is evaluated only when
-needed. See [Evaluation order](conditions.md#evaluation-order).
+The recursion stops because the right side of `?` and `;` is evaluated only
+when it is needed. See [Evaluation order](conditions.md#evaluation-order).
 
 ## Currying
 

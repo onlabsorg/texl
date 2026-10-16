@@ -73,6 +73,9 @@ only:
 (1, 2, 3) * 10                 # => (10, Undefined, Undefined)
 ```
 
+The conditions `?`, `&`, `|` and `;` are the exception: they look at their left
+side as a whole. See [Conditions on tuples](conditions.md#conditions-on-tuples).
+
 To apply the same operation to every item, map a function over the tuple with
 `=>`:
 

@@ -22,11 +22,17 @@
 //! - `map_pairs!` for binary operations: tuples are paired element-wise
 //!   (the shorter side is padded with `Nothing`) and the result is normalized.
 //!
+//! The short-circuit operators `&`, `|`, `?` and `;` are not lifted: they look
+//! at their left operand as a whole.
+//!
 //! # Evaluation order
-//! Operands are evaluated eagerly, left then right. The only exception is the
-//! alternative operator `A ; B`, whose right operand is evaluated only when `A`
-//! is `Nothing`. For `->`, `=` and `:` the left operand is not evaluated; it is
-//! resolved into names by `eval_names`.
+//! Operands are evaluated eagerly, left then right. The exceptions are the
+//! short-circuit operators, whose right operand `B` is evaluated only when needed:
+//! `A & B` and `A ? B` when `A` is truthy, `A | B` when `A` is falsy, and
+//! `A ; B` when `A` is `Nothing`. `&`, `|` and `?` cast `A` to bool as a whole
+//! (a tuple is truthy if any of its items is), so they are not paired over tuples.
+//! For `->`, `=` and `:` the left operand is not evaluated; it is resolved into
+//! names by `eval_names`.
 //!
 //! # Scopes
 //! - `{X}` evaluates `X` in a new child scope and returns it as a `Namespace`.
@@ -413,35 +419,29 @@ pub fn eval(node: &Node, scope: &Scope) -> Value {
 
         // ===== Logic Operations =====
 
-        // And: `A & B` - both operands are evaluated eagerly. Returns `r` if `l` is truthy, else `l`.
+        // And: `A & B` - short-circuits: `B` is evaluated only if `A` is truthy.
+        // `A` is cast to bool as a whole (a tuple is truthy if any item is), there is no pairing.
         Node::AndOp(bin) => {
             let lhv = eval(&bin.lho, scope);
-            let rhv = eval(&bin.rho, scope);
-            map_pairs!(lhv, rhv, |l: Value, r: Value| {
-                if bool::from(l.clone()) { r } else { l }
-            })
+            if bool::from(lhv.clone()) { eval(&bin.rho, scope) } else { lhv }
         }
 
-        // Or: `A | B` - both operands are evaluated eagerly. Returns `l` if `l` is truthy, else `r`.
+        // Or: `A | B` - short-circuits: `B` is evaluated only if `A` is falsy.
+        // `A` is cast to bool as a whole, there is no pairing.
         Node::OrOp(bin) => {
             let lhv = eval(&bin.lho, scope);
-            let rhv = eval(&bin.rho, scope);
-            map_pairs!(lhv, rhv, |l: Value, r: Value| {
-                if bool::from(l.clone()) { l } else { r }
-            })
+            if bool::from(lhv.clone()) { lhv } else { eval(&bin.rho, scope) }
         }
 
 
 
         // ===== Conditional operations =====
 
-        // Conditional: `A ? B` - with tuples, falsy items are filtered out through `Nothing` and normalization.
+        // Conditional: `A ? B` - short-circuits: `B` is evaluated only if `A` is truthy, else the result is `Nothing`.
+        // `A` is cast to bool as a whole, there is no pairing.
         Node::ConditionalOp(bin) => {
             let lhv = eval(&bin.lho, scope);
-            let rhv = eval(&bin.rho, scope);
-            map_pairs!(lhv, rhv, |l,r| {
-                if bool::from(l) { r } else { Value::Nothing }
-            })
+            if bool::from(lhv) { eval(&bin.rho, scope) } else { Value::Nothing }
         }
 
         // Alternative: `A ; B` - RHO is evaluated lazily, and only if LHO is exactly Nothing (a tuple is never Nothing, so it is returned as is).
@@ -1018,14 +1018,20 @@ mod tests {
         assert_eq!(evaluate("() ? 10"), Value::Nothing);
         assert_eq!(evaluate("() ? ()"), Value::Nothing);
 
-        // Tuples get filtered by truthyness
+        // A tuple condition is cast to bool as a whole: it is truthy if any item is
         assert_eq!(
             evaluate("(TRUE, FALSE, TRUE, FALSE) ? (1,2,3,4)"),
             Value::tuple(vec![
                 Value::Numb(1.0),
+                Value::Numb(2.0),
                 Value::Numb(3.0),
+                Value::Numb(4.0),
             ])
         );
+        assert_eq!(evaluate("(FALSE, 0, \"\") ? (1,2,3)"), Value::Nothing);
+
+        // The whole right-hand side is returned, not just its first item
+        assert_eq!(evaluate("TRUE ? (1, 2)"), Value::tuple(vec![Value::Numb(1.0), Value::Numb(2.0)]));
     }
 
     #[test]
@@ -1052,15 +1058,19 @@ mod tests {
         assert_eq!(evaluate("() & ()"), Value::Nothing);
         assert_eq!(evaluate("() & 10"), Value::Nothing);
 
-        // Tuple
+        // Tuple: the left-hand side is cast to bool as a whole, there is no pairing
         assert_eq!(
             evaluate("(FALSE, 1) & (10, \"abc\")"),
             Value::tuple(vec![
-                Value::Bool(false),
+                Value::Numb(10.0),
                 Value::Text("abc".into()),
             ])
         );
-        assert_eq!(evaluate("TRUE & (10, 1)"), Value::Numb(10.0));
+        assert_eq!(
+            evaluate("(FALSE, 0) & 10"),
+            Value::tuple(vec![Value::Bool(false), Value::Numb(0.0)])
+        );
+        assert_eq!(evaluate("TRUE & (10, 1)"), Value::tuple(vec![Value::Numb(10.0), Value::Numb(1.0)]));
     }
 
     #[test]
@@ -1078,15 +1088,46 @@ mod tests {
         // Nothing
         assert_eq!(evaluate("() | 5"), Value::Numb(5.0));
 
-        // Tuple
+        // Tuple: the left-hand side is cast to bool as a whole, there is no pairing
         assert_eq!(
             evaluate("(FALSE, 1) | (10, \"abc\")"),
             Value::tuple(vec![
-                Value::Numb(10.0),
+                Value::Bool(false),
                 Value::Numb(1.0),
             ])
         );
         assert_eq!(evaluate("(FALSE, 0) | 10"), Value::Numb(10.0));
+        assert_eq!(evaluate("FALSE | (10, 1)"), Value::tuple(vec![Value::Numb(10.0), Value::Numb(1.0)]));
+    }
+
+    #[test]
+    fn short_circuit() {
+        // The right-hand side of `&`, `|` and `?` is evaluated only when needed,
+        // so assignments in it don't happen otherwise
+        let scope = crate::builtins::root_scope().new_child();
+        let run = |src: &str| eval(&Parser::new(Lexer::new(src)).parse(), &scope);
+
+        run("x = 0");
+        run("FALSE & (x = 1)");
+        run("TRUE | (x = 2)");
+        run("FALSE ? (x = 3)");
+        run("(FALSE, 0) ? (x = 4)");
+        run("(FALSE, 1) | (x = 5)");
+        assert_eq!(run("x"), Value::Numb(0.0));
+
+        run("TRUE & (x = 1)");
+        assert_eq!(run("x"), Value::Numb(1.0));
+        run("FALSE | (x = 2)");
+        assert_eq!(run("x"), Value::Numb(2.0));
+        run("TRUE ? (x = 3)");
+        assert_eq!(run("x"), Value::Numb(3.0));
+        run("(FALSE, 1) ? (x = 4)");
+        assert_eq!(run("x"), Value::Numb(4.0));
+
+        // A recursive call on the right of `?`, `&` or `|` stops at the base case
+        assert_eq!(run("f = n -> n > 1 ? n * f (n - 1) ; 1, f 5"), Value::Numb(120.0));
+        assert_eq!(run("g = n -> (n <= 1 & 1) | n * g (n - 1), g 5"), Value::Numb(120.0));
+        assert_eq!(run("h = n -> n > 0 & h (n - 1), h 5"), Value::Bool(false));
     }
 
     #[test]
@@ -1128,13 +1169,13 @@ mod tests {
         assert_matches!(run("p & 1"), Value::Promise(_));
         assert_eq!(run("p | 1"), Value::Numb(1.0));
         assert_eq!(run("!p"), Value::Bool(true));
-        assert_eq!(run("(TRUE, p) ? (1, 2)"), Value::Numb(1.0));
+        assert_eq!(run("(FALSE, p) ? 1"), Value::Nothing);
 
         run("promise.resolve p FALSE");
         assert_eq!(run("p ? 1"), Value::Numb(1.0));
         assert_eq!(run("p & 1"), Value::Numb(1.0));
         assert_matches!(run("p | 1"), Value::Promise(_));
         assert_eq!(run("!p"), Value::Bool(false));
-        assert_eq!(run("(TRUE, p) ? (1, 2)"), Value::tuple(vec![Value::Numb(1.0), Value::Numb(2.0)]));
+        assert_eq!(run("(FALSE, p) ? 1"), Value::Numb(1.0));
     }
 }

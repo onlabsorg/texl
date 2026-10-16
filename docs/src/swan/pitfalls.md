@@ -85,10 +85,15 @@ FALSE ; 5            # => FALSE
 FALSE | 5            # => 5
 ```
 
-## Both sides of ? are evaluated
+## Conditions do not work item by item
 
-Only the right side of `;` is evaluated on demand. Put a recursive call after
-`;`, never after `?`. See [Evaluation order](conditions.md#evaluation-order).
+`?`, `&` and `|` test a tuple as a whole, so `?` does not filter a tuple:
+
+```swan
+(TRUE, FALSE) ? (1, 2)         # => (1, 2)
+```
+
+Map the tuple instead. See [Conditions on tuples](conditions.md#conditions-on-tuples).
 
 ## Assignments do not chain
 

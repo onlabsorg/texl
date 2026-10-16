@@ -6,7 +6,8 @@ there is no value.
 
 ## Conditional: ?
 
-`cond ? value` returns `value` if `cond` is true, and `Nothing` otherwise. See
+`cond ? value` returns `value` if `cond` is true, and `Nothing` otherwise.
+`value` is evaluated only if `cond` is true. See
 [Truth values](types.md#truth-values) for what counts as true.
 
 ```swan
@@ -62,23 +63,30 @@ TRUE ? () ; "fallback"         # => "fallback"
 
 ### Evaluation order
 
-Both sides of `?` are always evaluated; only the right side of `;` is
-evaluated on demand. This matters for recursion: put the recursive call in the
-`;` branch, and the case that stops the recursion in the `?` branch.
+The right side of `?`, `;`, `&` and `|` is evaluated only when it is needed.
+The other side is never evaluated, so an assignment there does not happen:
+
+```swan
+x = 1
+FALSE ? (x = 2)      # => ()
+x                    # => 1
+```
+
+This is also what stops a recursion. The recursive call can be on either side
+of `;`:
 
 ```swan
 fact = n -> n <= 1 ? 1 ; n * fact (n - 1)
 fact 5               # => 120
+fact2 = n -> n > 1 ? n * fact2 (n - 1) ; 1
+fact2 5              # => 120
 ```
-
-Written the other way round, `n > 1 ? n * fact (n - 1) ; 1` calls `fact`
-forever, and the program crashes.
 
 ## And, or
 
 `a & b` returns `a` if `a` is false, and `b` otherwise. `a | b` returns `a` if
 `a` is true, and `b` otherwise. They return one of their operands, not
-necessarily a boolean. Both operands are always evaluated.
+necessarily a boolean. `b` is evaluated only when it is the result.
 
 ```swan
 TRUE & "hello"       # => "hello"
@@ -128,11 +136,20 @@ To *replace* `Nothing` with a default, use `;`.
 
 ## Conditions on tuples
 
-`?`, `&` and `|` work item by item on tuples, like other operators. Combined
-with the fact that `Nothing` disappears from tuples, `?` filters a tuple:
+Unlike most operators, `?`, `&` and `|` do not work item by item on tuples.
+They test their left side as a whole, and a tuple is true if at least one of
+its items is true:
 
 ```swan
-(TRUE, FALSE, TRUE) ? (1, 2, 3)          # => (1, 3)
+(FALSE, 0, 1) ? "yes"                    # => "yes"
+(FALSE, 0) ? "yes"                       # => ()
+(TRUE, FALSE, TRUE) ? (1, 2, 3)          # => (1, 2, 3)
+```
+
+To filter a tuple, map it with a function that returns `Nothing` for the items
+to drop:
+
+```swan
 nums = (5, 12, 8, 30)
-(nums => (n -> n > 10)) ? nums           # => (12, 30)
+nums => (n -> n > 10 ? n)                # => (12, 30)
 ```

@@ -57,7 +57,7 @@ row = item -> "| " + item.what + " | " + text.from item.qty + " | "
 ### lib/money.texl
 
 A [library](documents.md#using-a-library): it binds two functions and renders
-nothing. `sum` is recursive, with the recursive call after `;`.
+nothing. `sum` is recursive.
 
 ```texl,nocheck
 <%

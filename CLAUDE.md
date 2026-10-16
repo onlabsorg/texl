@@ -40,6 +40,7 @@ docs/build.sh                                 # builds the documentation site in
 Invariants that apply across the crate:
 - **Evaluation never fails or panics.** Every error, including syntax errors, is returned as `Value::Undefined(Undef)` and passed on like any other value. Builtins follow the same rule, using helpers such as `Value::undef_unary(op, arg, pos)`.
 - **Tuples are flat and normalized.** Every value is conceptually a tuple: `Nothing` is the empty tuple, and `Nothing` items are dropped. Operators are lifted over tuples item by item through the `map_values!` and `map_pairs!` macros in `evaluator.rs`.
+- **Short-circuit operators.** `&`, `|`, `?` and `;` are not lifted over tuples: they test their left operand as a whole (`bool::from`, a tuple is true if any item is; `;` checks for `Nothing`) and evaluate the right operand only when it is the result.
 - **Single-threaded, `Rc`-based.** `Value` clones are cheap, and `Scope`, `Promise` and `BuiltinFn` are shared handles. Nothing is `Send`.
 - `Scope` is both the lexical environment and the storage behind `Namespace`. It uses parent-chain (prototype) lookup, and `new_child()` creates a child scope.
 - `Promise` (`value/promise.rs`) is a single-assignment value that never rejects. Code chains on it with `then`, and Swan code chains with the `~>` operator (precedence 13, `evaluator/then_operation.rs`).

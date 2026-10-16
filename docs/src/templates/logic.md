@@ -148,7 +148,8 @@ totals = [25, 140, 60]
 Total: 225
 ```
 
-Keep the recursive call on the right of `;`, as here. See
+The recursion stops at the empty list, because the right side of `;` is
+evaluated only when it is needed. See
 [Evaluation order](../swan/conditions.md#evaluation-order).
 
 ## Reusable helpers

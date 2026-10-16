@@ -45,7 +45,9 @@
 //! - **Every value is a tuple.** `Nothing` is the empty tuple, a single value
 //!   is a one-item tuple, and [`Value::Tuple`](value::Value::Tuple) holds two
 //!   or more items. Tuples are always flat and never contain `Nothing`.
-//!   Operators apply item by item to tuples.
+//!   Operators apply item by item to tuples, except the short-circuit
+//!   operators `&`, `|`, `?` and `;`, which test their left operand as a
+//!   whole and evaluate the right one only when needed.
 //! - **Single-threaded and shared.** Values use `Rc`, so cloning is cheap and
 //!   nothing is `Send`. [`Scope`](value::Scope), [`Promise`](value::Promise)
 //!   and [`BuiltinFn`](value::BuiltinFn) are handles: clones share the same

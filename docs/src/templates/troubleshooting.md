@@ -78,9 +78,8 @@ A tag alone on its line leaves the line break behind. See
 
 ## Rendering crashes with a stack overflow
 
-A recursive function never reaches the case that stops it. A common cause is a
-recursive call after `?` instead of after `;`: both sides of `?` are always
-evaluated. See
+A recursive function never reaches the case that stops it. Check that the
+condition that ends the recursion is reached for every input. See
 [Evaluation order](../swan/conditions.md#evaluation-order).
 
 ## Part of the template is copied as it is
