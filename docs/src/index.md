@@ -5,7 +5,8 @@ Markdown, HTML or a configuration file, with expressions between `<%` and
 `%>`. Rendering the template replaces each expression with its value.
 
 ```texl
-<% user = {name: "Ada", tasks: ["review", "deploy"]} %>Hi <% user.name %>,
+<% user = {name: "Ada", tasks: ["review", "deploy"]} %>
+Hi <% user.name %>, 
 you have <% list.size user.tasks %> open tasks: <% list.enum user.tasks %>.
 ```
 

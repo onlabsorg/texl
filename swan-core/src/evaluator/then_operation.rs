@@ -156,6 +156,19 @@ mod tests {
     }
 
     #[test]
+    fn test_then_is_left_associative() {
+        // `p ~> f ~> g` chains `g` onto the promise returned by `p ~> f`.
+        let src = r#"
+            p = promise.create(),
+            c = p ~> (x -> x + 1) ~> (x -> x * 10),
+            promise.resolve p 1,
+            c
+        "#;
+        let c = run(src);
+        assert_eq!(resolved(&c), Some(Value::Numb(20.0)));
+    }
+
+    #[test]
     fn test_chain_multiple_children() {
         // (e) Multiple children promises
         let src = r#"

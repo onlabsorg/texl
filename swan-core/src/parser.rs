@@ -23,7 +23,8 @@
 //! |    21 | `;`                                | left          |
 //! |    15 | `->`                               | right         |
 //! |    14 | `>>` `<<`                          | left          |
-//! |    13 | `=>` `~>`                          | right         |
+//! |    13 | `=>`                               | right         |
+//! |    13 | `~>`                               | left          |
 //! |    12 | `=` `:`                            | left          |
 //! |    10 | `,`                                | left          |
 //!
@@ -159,7 +160,6 @@ fn rbp(token: &Token) -> u32 {
         Token::PowerOp              => lbp(token) - 1,   // ^
         Token::FunctionDefinitionOp => lbp(token) - 1,   // ->
         Token::MappingOp            => lbp(token) - 1,   // =>
-        Token::ThenOp               => lbp(token) - 1,   // ~>
 
         // All other infix operators are left-associative.
         _ => lbp(token),
@@ -811,6 +811,23 @@ mod tests {
             })),
         });
         assert_eq!(parse("2 ^ 3 ^ 4"), expected);
+    }
+
+    #[test]
+    fn test_left_associativity_of_then() {
+        // `p ~> f ~> g` must parse as `(p ~> f) ~> g` (left-associative), so
+        // that `g` is chained onto the promise returned by `p ~> f`.
+        let ident = |pos, name: &str| Box::new(Node::Identifier(Leaf { pos, val: name.to_string() }));
+        let expected = Node::ThenOp(BinaryOp {
+            pos: 7,
+            lho: Box::new(Node::ThenOp(BinaryOp {
+                pos: 2,
+                lho: ident(0, "p"),
+                rho: ident(5, "f"),
+            })),
+            rho: ident(10, "g"),
+        });
+        assert_eq!(parse("p ~> f ~> g"), expected);
     }
 
 

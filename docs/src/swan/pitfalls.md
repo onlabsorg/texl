@@ -104,10 +104,10 @@ line breaks directly inside the quotes.
 A misspelled name gives `Nothing`, which renders as empty text. If a value is
 unexpectedly missing, check the spelling first.
 
-## Mapping and chaining associate to the right
+## Mapping associates to the right
 
-`x => f => g` means `x => (f => g)`, and `p ~> f ~> g` means `p ~> (f ~> g)`.
-Add parentheses around each step, or compose: `x => (f >> g)`.
+`x => f => g` means `x => (f => g)`. Add parentheses around each step, or
+compose: `x => (f >> g)`.
 
 ## Joining requires text
 

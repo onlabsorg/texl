@@ -72,7 +72,7 @@ pub enum Token<'a> {
     /// right-hand function(s) to each item of the left-hand tuple.
     MappingOp,
 
-    /// `~>` (precedence 13, right-associative) — then: chains a function to
+    /// `~>` (precedence 13, left-associative) — then: chains a function to
     /// a promise.
     ThenOp,
 

@@ -29,18 +29,16 @@ q                    # => Promise(42)
 If `p` is already resolved, `f` runs immediately. Otherwise it runs when `p`
 resolves. Several functions can wait on the same promise.
 
-To chain several steps, put parentheses around each step. `~>` is
-right-associative, so without them `p ~> f ~> g` means `p ~> (f ~> g)`, which
-does not do what you want:
+To chain several steps, write them one after the other. `~>` is
+left-associative, so `p ~> f ~> g` means `(p ~> f) ~> g`: `g` is applied to the
+result of `f`:
 
 ```swan
 p = promise.create()
-q = (p ~> (x -> x + 1)) ~> (x -> x * 10)
+q = p ~> (x -> x + 1) ~> (x -> x * 10)
 promise.resolve p 1
 q                    # => Promise(20)
 ```
-
-Or compose the steps into one function: `p ~> (f >> g)`.
 
 A value that is not a promise is treated as an already resolved promise:
 

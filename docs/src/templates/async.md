@@ -66,7 +66,7 @@ To wait for several promises, nest the callbacks, so that the tag returns a
 single promise:
 
 ```texl,nocheck
-<% texl.import("a.texl") ~> (a -> texl.import("b.texl") ~> (b -> a.rendering + b.rendering)) %>
+<% texl.import("a.texl") ~> (a -> (texl.import("b.texl") ~> (b -> a.rendering + b.rendering))) %>
 ```
 
 Or import them in separate tags, one after the other.

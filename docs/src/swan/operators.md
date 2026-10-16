@@ -19,7 +19,8 @@ order is not obvious.
 |         21 | `x ; y`                         | alternative                          | left          |
 |         15 | `x -> y`                        | function definition                  | right         |
 |         14 | `f >> g` `g << f`               | composition                          | left          |
-|         13 | `x => f` `p ~> f`               | mapping, then                        | right         |
+|         13 | `x => f`                        | mapping                              | right         |
+|         13 | `p ~> f`                        | then                                 | left          |
 |         12 | `x = y` `x : y`                 | assignment, labelling                | left          |
 |     lowest | `x , y`                         | pairing                              | left          |
 
