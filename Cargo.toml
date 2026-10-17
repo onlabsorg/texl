@@ -6,8 +6,8 @@ members = [
     "swan-core",
     "texl-core", 
     "texl-cli",
-    "texl-wasm",
-    #"texl-py",
+    "texl-wasm", 
+    "pytexl",
     #"texl.nvim",
     #"vscode-texl",
 ]

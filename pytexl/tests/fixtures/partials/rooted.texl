@@ -1,0 +1,2 @@
+rooted.texl was read by its absolute path, and so was its own absolute
+  import: <% texl.import(fixtures + "/lib/format.texl") ~> (doc -> doc.uri == "file://" + fixtures + "/lib/format.texl" ? "same folder" ; doc.uri) %>

@@ -1,0 +1,25 @@
+[build-system]
+requires = ["maturin>=1.9.4,<2"]
+build-backend = "maturin"
+
+[project]
+name = "pytexl"
+version = "0.2.0"
+description = "Text templates with Swan expressions: the Python library of Texl"
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.10"
+authors = [{ name = "Marcello Del Buono" }]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Rust",
+    "Topic :: Text Processing :: Markup",
+]
+
+[project.urls]
+Documentation = "https://onlabsorg.github.io/texl/book/hosts/python.html"
+Source = "https://github.com/onlabsorg/texl"
+
+[tool.maturin]
+python-source = "python"
+module-name = "pytexl._pytexl"
