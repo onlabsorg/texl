@@ -30,3 +30,10 @@ local/
 .aider*
 *.repomix.md
 helper.sh
+
+# Python
+__pycache__/
+.venv/
+pytexl/python/pytexl/*.so
+pytexl/python/pytexl/*.pyd
+pytexl/dist/

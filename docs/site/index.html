@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Texl</title>
-<meta name="description" content="Texl is a template engine for text, with expressions in Swan, a small language that never throws. It runs on the command line, in the browser and in Rust.">
+<meta name="description" content="Texl is a template engine for text, with expressions in Swan, a small language that never throws. It runs on the command line, in the browser, in Python and in Rust.">
 <link rel="icon" href="assets/favicon.svg" type="image/svg+xml">
 <link rel="stylesheet" href="assets/texl.css">
 <link rel="stylesheet" href="assets/landing.css">
@@ -87,7 +87,7 @@ Total: $18.5 (free shipping)</code></pre>
       <div class="tx-card">
         <h3>One engine, many hosts</h3>
         <p>The engine is written in Rust and runs on the command line, in the
-        browser through WebAssembly, and inside Rust programs.</p>
+        browser through WebAssembly, and inside Python and Rust programs.</p>
       </div>
     </div>
   </section>
@@ -126,7 +126,7 @@ math.hypot point.x point.y     # =&gt; 5
     <h2>Use it from</h2>
     <p class="tx-lead">The template language is the same everywhere. Pick the
     host that fits your project.</p>
-    <div class="tx-grid">
+    <div class="tx-grid tx-two">
       <div class="tx-card tx-host">
         <h3><a href="book/hosts/cli.html">The command line</a></h3>
         <p>Render template files from a terminal or a build script.</p>
@@ -142,6 +142,13 @@ const engine = new TexlEngine({ user: "Ada" });
 await engine.render("Hi &lt;% user %&gt;!");</code></pre>
       </div>
       <div class="tx-card tx-host">
+        <h3><a href="book/hosts/python.html">Python</a></h3>
+        <p>Render templates in Python, with your data and async functions.</p>
+<pre><code>import asyncio, pytexl
+engine = pytexl.Engine({"user": "Ada"})
+asyncio.run(engine.render("Hi &lt;% user %&gt;!"))</code></pre>
+      </div>
+      <div class="tx-card tx-host">
         <h3><a href="book/hosts/rust.html">Rust</a></h3>
         <p>Embed the engine, with your own loaders and host functions.</p>
 <pre><code>let engine = Engine::new(spawner);
@@ -149,7 +156,7 @@ engine.add_builtin("user", Value::Text("Ada".into()));
 let text = engine.render("Hi &lt;% user %&gt;!").await;</code></pre>
       </div>
     </div>
-    <p>Python and Node.js libraries are <span class="tx-soon">coming soon</span></p>
+    <p>A Node.js library is <span class="tx-soon">coming soon</span></p>
   </section>
 
   <section>
@@ -157,6 +164,10 @@ let text = engine.render("Hi &lt;% user %&gt;!").await;</code></pre>
     <p class="tx-lead">Everything you need, from your first template to the
     engine's internals.</p>
     <div class="tx-grid">
+      <a class="tx-card" href="book/getting-started.html">
+        <h3>Getting started</h3>
+        <p>Install the <code>texl</code> command and render your first template.</p>
+      </a>
       <a class="tx-card" href="book/templates/index.html">
         <h3>Writing templates</h3>
         <p>Tags, data, conditions, repetition, imports and troubleshooting.</p>
@@ -170,6 +181,10 @@ let text = engine.render("Hi &lt;% user %&gt;!").await;</code></pre>
         <p>Every function of <code>text</code>, <code>list</code>,
         <code>math</code>, <code>time</code> and the rest.</p>
       </a>
+      <a class="tx-card" href="book/hosts/index.html">
+        <h3>Hosts and APIs</h3>
+        <p>Where Texl runs, and how to pick the host that fits your project.</p>
+      </a>
       <a class="tx-card" href="book/hosts/cli.html">
         <h3>Command line</h3>
         <p>The <code>texl</code> command, its options and exit codes.</p>
@@ -177,6 +192,10 @@ let text = engine.render("Hi &lt;% user %&gt;!").await;</code></pre>
       <a class="tx-card" href="book/hosts/javascript.html">
         <h3>JavaScript API</h3>
         <p><code>TexlEngine</code>, contexts, documents and value conversion.</p>
+      </a>
+      <a class="tx-card" href="book/hosts/python.html">
+        <h3>Python API</h3>
+        <p><code>pytexl.Engine</code>, contexts, loaders and value conversion.</p>
       </a>
       <a class="tx-card" href="api/texl_core/index.html">
         <h3>Rust API</h3>

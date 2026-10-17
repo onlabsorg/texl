@@ -12,6 +12,7 @@ code.
 | Template manual, Swan manual, host guides, CLI and JavaScript API | `docs/src` (an mdBook) |
 | Rust API (`swan-core`, `texl-core`)    | doc comments in the code (rustdoc)      |
 | JavaScript API typings                 | doc comments in `texl-wasm/src/lib.rs` (copied into `texl_wasm.d.ts`) |
+| Python API                             | `docs/src/hosts/python.md`, and the docstrings of `pytexl/python/pytexl` |
 | Shared look and feel                   | `docs/assets`                           |
 
 `docs/build.sh` builds everything into `target/site`, the folder that GitHub
@@ -79,12 +80,18 @@ Signature notation:
 |---------------------|----------------------------------------------|------------------------------------------------|
 | Swan built-ins      | `name arg1 arg2 -> Type`                     | `text.find needle haystack -> Numb`            |
 | JavaScript          | TypeScript                                   | `load(uri: string): Promise<TexlDocument \| null>` |
+| Python              | Python, with type hints                      | `async def load(uri: str) -> Document \| None` |
 | Rust                | Rust (rustdoc shows it)                      |                                                |
 
 Rust doc comments follow the rustdoc conventions: a one-line summary, then
 details, then `# Examples`, `# Errors` and `# Panics` sections as needed.
 Public items of `swan-core` and `texl-core` must be documented
 (`#![warn(missing_docs)]`).
+
+Python docstrings follow the Google style: a one-line summary, then details,
+then `Args:`, `Returns:`, `Raises:` and `Example:` sections as needed. Every
+public module, class, method and function of `pytexl` has one. The docstrings
+of the native classes are the doc comments of `pytexl/src`.
 
 ## Look and feel
 

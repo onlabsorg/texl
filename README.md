@@ -27,6 +27,7 @@ Total: $18.5 (free shipping)
 - [The Swan language](https://onlabsorg.github.io/texl/book/swan/index.html)
 - [Command line](https://onlabsorg.github.io/texl/book/hosts/cli.html),
   [JavaScript API](https://onlabsorg.github.io/texl/book/hosts/javascript.html),
+  [Python API](https://onlabsorg.github.io/texl/book/hosts/python.html),
   [Rust API](https://onlabsorg.github.io/texl/api/)
 
 ## Crates
@@ -37,8 +38,9 @@ Total: $18.5 (free shipping)
 | [`texl-core`](texl-core) | The template renderer and the engine.                      |
 | [`texl-cli`](texl-cli)   | The `texl` command.                                        |
 | [`texl-wasm`](texl-wasm) | The JavaScript library for the browser (WebAssembly).      |
+| [`pytexl`](pytexl)       | The Python library (a native module built with PyO3).      |
 
-Python and Node.js libraries are coming soon.
+A Node.js library is coming soon.
 
 ## Development
 

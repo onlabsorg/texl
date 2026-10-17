@@ -40,9 +40,11 @@ string inside a program. A *host* renders it:
 - the [`texl` command](../hosts/cli.md) renders a file from the command line;
 - the [JavaScript library](../hosts/javascript.md) renders templates in a web
   page;
+- the [Python library](../hosts/python.md) renders templates in a Python
+  program;
 - the [Rust library](../hosts/rust.md) renders templates in a Rust program.
 
-Python and Node.js libraries are coming soon.
+A Node.js library is coming soon.
 
 The host can also give your template data to work with, such as the name of
 the reader or a list of products. See [Names and data](names.md).

@@ -1,8 +1,8 @@
 # Getting started
 
 This page renders a first template with the command-line tool. If you want to
-use Texl from a program instead, see [JavaScript](hosts/javascript.md) or
-[Rust](hosts/rust.md).
+use Texl from a program instead, see [JavaScript](hosts/javascript.md),
+[Python](hosts/python.md) or [Rust](hosts/rust.md).
 
 ## Install the command-line tool
 

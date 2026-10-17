@@ -245,6 +245,10 @@ a.tx-card h3 {
 
 /* Hosts */
 
+.tx-grid.tx-two {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
 .tx-host pre {
     margin-top: 12px;
 }
@@ -269,7 +273,8 @@ footer a {
         gap: 32px;
     }
 
-    .tx-grid {
+    .tx-grid,
+    .tx-grid.tx-two {
         grid-template-columns: minmax(0, 1fr);
     }
 }

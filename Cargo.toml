@@ -6,9 +6,14 @@ members = [
     "swan-core",
     "texl-core", 
     "texl-cli",
-    "texl-wasm", 
+    "texl-wasm",
     "pytexl",
     #"texl.nvim",
     #"vscode-texl",
 ]
+
+# The profile that 'dist' will build with
+[profile.dist]
+inherits = "release"
+lto = "thin"
 

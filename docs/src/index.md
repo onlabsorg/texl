@@ -33,7 +33,7 @@ Texl is written in Rust, and the same engine runs in several hosts:
 | [Command line](hosts/cli.md)           | available   |
 | [JavaScript, in the browser](hosts/javascript.md) | available |
 | [Rust](hosts/rust.md)                  | available   |
-| Python                                 | coming soon |
+| [Python](hosts/python.md)              | available   |
 | Node.js                                | coming soon |
 
 ## How this manual is organized
@@ -45,7 +45,7 @@ Texl is written in Rust, and the same engine runs in several hosts:
 - **[The Swan language](swan/index.md)** describes the expression language in
   detail, with a reference of every [built-in function](swan/builtins/index.md).
 - **[Running texl](hosts/index.md)** explains how to render templates from the
-  command line, JavaScript and Rust, with the API reference of each.
+  command line, JavaScript, Python and Rust, with the API reference of each.
 
 ## Project status
 
