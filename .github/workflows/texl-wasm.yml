@@ -50,7 +50,7 @@ jobs:
           wasm-pack build texl-wasm --target web --release
           cp LICENSE texl-wasm/pkg/
           cd texl-wasm/pkg
-          npm pkg set name=@onlabsorg/texl repository.directory=texl-wasm
+          npm pkg set name=@onlabsorg/texl repository.url=git+https://github.com/onlabsorg/texl.git repository.directory=texl-wasm
           npm pack --dry-run
       - name: Upload the package
         uses: actions/upload-artifact@v6
@@ -82,6 +82,8 @@ jobs:
       - name: Check that the tag matches the package version
         working-directory: pkg
         run: test "$(npm pkg get version | tr -d '"')" = "${GITHUB_REF_NAME#texl-wasm-v}"
+      # No --access flag: the package is already public, and a token from trusted
+      # publishing may publish versions but not change access settings
       - name: Publish to npm
         working-directory: pkg
-        run: npm publish --access public
+        run: npm publish
