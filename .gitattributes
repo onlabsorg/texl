@@ -1,0 +1,3 @@
+# Check out text files with LF on every platform, so the test fixtures (and the
+# renderings compared with them) are the same bytes on Windows as on Linux and macOS.
+* text=auto eol=lf

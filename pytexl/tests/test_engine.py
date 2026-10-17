@@ -42,7 +42,8 @@ class BaseUrlTest(unittest.TestCase):
         self.assertEqual(pytexl.Engine(base_url=sample).base_url, sample.as_uri())
 
     def test_root_path_base_url(self):
-        self.assertEqual(pytexl.Engine(base_url=Path("/")).base_url, "file:///")
+        # On Windows the root path is the root of the current drive, such as file:///C:/
+        self.assertEqual(pytexl.Engine(base_url=Path("/")).base_url, Path("/").resolve().as_uri())
 
     def test_invalid_base_url_raises(self):
         with self.assertRaises(ValueError):
