@@ -136,7 +136,7 @@ texl report.texl -o report.md</code></pre>
       <div class="tx-card tx-host">
         <h3><a href="book/hosts/javascript.html">JavaScript</a></h3>
         <p>Render templates in a web page, with your data and functions.</p>
-<pre><code>import init, { TexlEngine } from "./pkg/texl_wasm.js";
+<pre><code>import init, { TexlEngine } from "@onlabsorg/texl";
 await init();
 const engine = new TexlEngine({ user: "Ada" });
 await engine.render("Hi &lt;% user %&gt;!");</code></pre>

@@ -34,7 +34,7 @@ Texl is a Cargo workspace with five crates:
 | `swan-core` | The Swan language: lexer, parser, evaluator and built-in library.     |
 | `texl-core` | The template renderer and the engine: documents, loaders, imports.    |
 | `texl-cli`  | The `texl` command.                                                   |
-| `texl-wasm` | The JavaScript library, compiled to WebAssembly.                      |
+| `texl-wasm` | The JavaScript library, compiled to WebAssembly (`@onlabsorg/texl` on npm). |
 | `pytexl`    | The Python library: a native module and the `pytexl` package.         |
 
 The API documentation of `swan-core` and `texl-core` is generated from the

@@ -1,30 +1,48 @@
 # JavaScript
 
-The `texl-wasm` crate compiles the Texl engine to WebAssembly, with a
+The `@onlabsorg/texl` package compiles the Texl engine to WebAssembly, with a
 JavaScript API for web pages and web workers. It renders templates from
 strings, loads documents over HTTP, and lets templates call your JavaScript
 functions.
 
 A package for Node.js is coming soon.
 
-## Building the package
+## Installing the package
 
-The package is not published on npm yet. Build it from a clone of the
-repository with [wasm-pack](https://rustwasm.github.io/wasm-pack/):
+Install the package from npm, and import it in code that a bundler, such as
+Vite or webpack, builds:
+
+```sh
+npm install @onlabsorg/texl
+```
+
+```js
+import init, { TexlEngine } from "@onlabsorg/texl";
+```
+
+The package contains the module `texl_wasm.js`, the WebAssembly binary
+`texl_wasm_bg.wasm`, and the TypeScript declarations `texl_wasm.d.ts`.
+
+Without a bundler, import the module from a CDN that serves npm packages, with
+the version you want:
+
+```js
+import init, { TexlEngine } from "https://cdn.jsdelivr.net/npm/@onlabsorg/texl@0.1.0/texl_wasm.js";
+```
+
+You can also build the package from a clone of the repository with
+[wasm-pack](https://drager.github.io/wasm-pack/), and copy the
+`texl-wasm/pkg` folder that it creates to your web site:
 
 ```sh
 wasm-pack build texl-wasm --target web
 ```
 
-This creates `texl-wasm/pkg`, with the module `texl_wasm.js`, the WebAssembly
-binary `texl_wasm_bg.wasm`, and the TypeScript declarations `texl_wasm.d.ts`.
-Copy the folder to your web site.
-
 ## Quick start
 
 ```html
 <script type="module">
-import init, { TexlEngine } from "./pkg/texl_wasm.js";
+import init, { TexlEngine } from "https://cdn.jsdelivr.net/npm/@onlabsorg/texl@0.1.0/texl_wasm.js";
 
 await init();                                  // load the WebAssembly module
 
@@ -156,7 +174,7 @@ The module also exports `initSync({ module })`, which instantiates an already
 compiled module synchronously.
 
 ```js
-import init from "./pkg/texl_wasm.js";
+import init from "@onlabsorg/texl";
 await init();
 ```
 
