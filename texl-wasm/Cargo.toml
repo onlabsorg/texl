@@ -1,6 +1,6 @@
 [package]
 name = "texl-wasm"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2024"
 description = "Text templates with Swan expressions: the JavaScript library of Texl, compiled to WebAssembly"
 license = "MIT"

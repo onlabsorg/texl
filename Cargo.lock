@@ -400,7 +400,7 @@ dependencies = [
 
 [[package]]
 name = "pytexl"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "pyo3",
  "pyo3-build-config",
@@ -511,7 +511,7 @@ checksum = "adb6935a6f5c20170eeceb1a3835a49e12e19d792f6dd344ccc76a985ca5a6ca"
 
 [[package]]
 name = "texl-cli"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "clap",
  "swan-core",
@@ -522,7 +522,7 @@ dependencies = [
 
 [[package]]
 name = "texl-core"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "swan-core",
  "url",
@@ -530,7 +530,7 @@ dependencies = [
 
 [[package]]
 name = "texl-wasm"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "js-sys",
  "swan-core",
