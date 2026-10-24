@@ -49,7 +49,7 @@ export interface TexlDocument {
 /// Documents with an `http://` or `https://` URL are fetched as they are. Imports
 /// resolve against the importing document: relative paths against its folder, absolute
 /// paths (`/dir/doc.texl`) against its root folder. Templates without a document URL
-/// (`render`, contexts) use the engine's base URL instead.
+/// (`render`, contexts created without a `uri`) use the root of the engine's base URL instead.
 ///
 /// Each document is loaded and rendered at most once per engine.
 #[wasm_bindgen]
@@ -145,13 +145,25 @@ impl TexlEngine {
     }
 
     /// Creates a context: a scope that keeps its bindings across renders.
+    ///
+    /// With a `uri`, the context stands for the document at that URL: imports in its
+    /// templates resolve against it, as in a document loaded with `load`. Nothing is
+    /// loaded from it. Without one, imports resolve against `baseUrl`, as in `render`.
+    ///
+    /// Throws if `uri` cannot be resolved to a URL.
     #[wasm_bindgen(js_name = createContext)]
     pub fn create_context(
         &self,
         #[wasm_bindgen(param_description = "Values bound in the context. Defaults to none.")]
         vars: Option<Object>,
+        #[wasm_bindgen(param_description = "The URL of the document the context stands for, resolved against `baseUrl`. Defaults to none.")]
+        uri: Option<String>,
     ) -> Result<TexlContext, JsValue> {
-        let scope = self.engine.create_scope();
+        let url = match uri {
+            Some(uri) => Some(loader::resolve_document_url(&uri, self.base_url.as_ref()).map_err(|e| JsValue::from_str(&e))?),
+            None => None,
+        };
+        let scope = self.engine.create_scope(url);
         if let Some(vars) = vars {
             for_each_entry(&vars, |name, value| scope.set(name, value))?;
         }
@@ -226,7 +238,7 @@ fn location_href() -> Option<String> {
 /// Replaces `time.now`, which reads the system clock: wasm32-unknown-unknown has none
 /// and panics. The engine's `time` namespace is shared, so this changes it for every document.
 fn use_js_clock(engine: &Engine) {
-    if let Value::Namespace(time) = engine.create_scope().get("time") {
+    if let Value::Namespace(time) = engine.create_scope(None).get("time") {
         time.set(
             "now",
             Value::Builtin(BuiltinFn::new("time.now", |_| Value::Numb(js_sys::Date::now() / 1000.0))),

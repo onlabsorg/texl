@@ -140,6 +140,24 @@ async function testContext() {
     const r = context.get("r");
     check("Swan promises come back as JS promises", r instanceof Promise, true);
     check("Swan promises resolve in JS", await r, 20);
+
+    const docContext = engine.createContext(null, "fixtures/partials/new.texl");
+    check(
+        "a context with a URI resolves imports against it",
+        await docContext.render('<% texl.import("signature.texl") ~> (doc -> doc.uri) %>'),
+        new URL("fixtures/partials/signature.texl", location.href).href);
+    check(
+        "a context with a URI resolves absolute paths against its root",
+        await docContext.render('<% texl.import("/tests/web/fixtures/partials/counted.texl") ~> (doc -> doc.uri) %>'),
+        new URL("/tests/web/fixtures/partials/counted.texl", location.href).href);
+    check(
+        "a context without a URI resolves imports against the root of the base URL",
+        await engine.createContext().render('<% texl.import("tests/web/fixtures/partials/signature.texl") ~> (doc -> doc.uri) %>'),
+        "/tests/web/fixtures/partials/signature.texl");
+
+    let threw = false;
+    try { new TexlEngine().createContext(null, "http://[bad"); } catch { threw = true; }
+    check("an invalid context URI throws", threw, true);
 }
 
 const status = document.getElementById("status");

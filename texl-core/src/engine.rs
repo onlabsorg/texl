@@ -31,8 +31,8 @@
 //! `texl.import`. Templates call `texl.import(uri)` to load another document.
 //! It always returns a promise of the document namespace (or of `Nothing`, if
 //! the document cannot be loaded). Relative URIs resolve against the URI of the
-//! importing document; in a scope without a document, they resolve against the
-//! root path `/`. The imported document is rendered in a child of the
+//! importing document, or against the base URL given to [`Engine::create_scope`];
+//! in a scope without a document, they resolve against the root path `/`. The imported document is rendered in a child of the
 //! importing scope, so it can read the names of its importer.
 //!
 //! # Example
@@ -207,8 +207,7 @@ impl Engine {
             Err(err) => return Value::undef_unary("import.invalid_uri", Value::Text(err.into()), 0),
         };
         // Relative imports inside the loaded document resolve against its own URL
-        let doc_scope = self.base_scope.new_child();
-        self.bind_texl_namespace(&doc_scope, Some(norm_url.clone()));
+        let doc_scope = self.create_scope(Some(norm_url.clone()));
         self.load_internal(doc_scope, norm_url).await
     }
 
@@ -236,21 +235,56 @@ impl Engine {
     /// # }
     /// ```
     pub async fn render(&self, template: &str) -> String {
-        let scope = self.create_scope();
+        let scope = self.create_scope(None);
         template::render(template, &scope).await
     }
 
     /// Creates a new child of the base scope with its own `texl` namespace.
     ///
-    /// The scope has no document, so `texl.import` resolves relative URIs
-    /// against the root path `/`. Render several templates in the same scope
-    /// with [`template::render`] to share names between them.
-    pub fn create_scope(&self) -> Scope {
+    /// `base_url` is the URI of the document the scope stands for: `texl.import`
+    /// resolves relative URIs against it, as in a document loaded with
+    /// [`Engine::load`]. It is normalized first, so `docs/main.texl` is
+    /// `/docs/main.texl`. With `None`, the scope has no document and relative
+    /// URIs resolve against the root path `/`.
+    ///
+    /// Use it to render a document whose source the host already has, or to
+    /// render several templates in the same scope with [`template::render`] and
+    /// share names between them. The scope is not a loaded document: nothing is
+    /// loaded or cached for `base_url`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use texl_core::{Engine, loader_fn, template};
+    ///
+    /// let engine = Engine::new(None);
+    /// engine.add_default_loader(loader_fn(|uri| async move {
+    ///     match uri.as_str() {
+    ///         "/docs/name.texl" => Ok("Ada".to_string()),
+    ///         _ => Err(format!("{uri}: not found")),
+    ///     }
+    /// }));
+    ///
+    /// let scope = engine.create_scope(Some("docs/main.texl".to_string()));
+    /// let source = r#"Hello <% texl.import("name.texl") ~> (doc -> doc.rendering) %>!"#;
+    /// assert_eq!(block_on(template::render(source, &scope)), "Hello Ada!");
+    /// # use std::{future::Future, pin::pin, task::{Context, Poll, Waker}};
+    /// # fn block_on<F: Future>(fut: F) -> F::Output {
+    /// #     let mut cx = Context::from_waker(Waker::noop());
+    /// #     let mut fut = pin!(fut);
+    /// #     loop {
+    /// #         texl_core::helpers::run_pending();
+    /// #         if let Poll::Ready(v) = fut.as_mut().poll(&mut cx) { return v; }
+    /// #     }
+    /// # }
+    /// ```
+    pub fn create_scope(&self, base_url: Option<String>) -> Scope {
         // Create a child so document executions do not pollute the base_scope
         let child = self.base_scope.new_child();
 
-        // No backing document: relative imports resolve against the root `/`
-        self.bind_texl_namespace(&child, None);
+        // Without a document, relative imports resolve against the root `/`
+        let base_url = base_url.map(|url| self.normalize_url(&url).unwrap_or(url));
+        self.bind_texl_namespace(&child, base_url);
 
         child
     }
@@ -656,6 +690,55 @@ mod tests {
         let (engine, requested) = engine_with_docs(&[("/dir/doc.texl", "doc")]);
 
         let out = block_on(engine.render(&format!(r#"<% texl.import("dir/doc.texl") {RENDERING} %>"#)));
+
+        assert_eq!(out, "doc");
+        assert_eq!(*requested.borrow(), vec!["/dir/doc.texl"]);
+    }
+
+    #[test]
+    fn test_engine_scope_with_base_url_resolves_relative_imports_against_it() {
+        let (engine, requested) = engine_with_docs(&[
+            ("/docs/lib.texl", "lib"),
+            ("/top.texl", "top"),
+            ("http://example.com/site/lib.texl", "remote lib"),
+            ("http://example.com/top.texl", "remote top"),
+        ]);
+        let source = format!(r#"<% texl.import("lib.texl") {RENDERING} %>,<% texl.import("/top.texl") {RENDERING} %>"#);
+
+        // A scheme-less base URL is normalized like the URI of a loaded document
+        let scope = engine.create_scope(Some("docs/main.texl".to_string()));
+        assert_eq!(block_on(template::render(&source, &scope)), "lib,top");
+
+        let scope = engine.create_scope(Some("http://example.com/site/main.texl".to_string()));
+        assert_eq!(block_on(template::render(&source, &scope)), "remote lib,remote top");
+
+        assert_eq!(
+            *requested.borrow(),
+            vec!["/docs/lib.texl", "/top.texl", "http://example.com/site/lib.texl", "http://example.com/top.texl"]
+        );
+    }
+
+    #[test]
+    fn test_engine_scope_with_base_url_renders_like_the_loaded_document() {
+        let main = format!(r#"<% x = 1 %><% texl.import("lib.texl") {RENDERING} %>"#);
+        let (engine, requested) = engine_with_docs(&[("/a/main.texl", &main), ("/a/lib.texl", "lib <% x %>")]);
+
+        let scope = engine.create_scope(Some("/a/main.texl".to_string()));
+        let rendering = block_on(template::render(&main, &scope));
+        let ns = unwrap_namespace(block_on(engine.load("/a/main.texl")));
+
+        assert_eq!(rendering, "lib 1");
+        assert_eq!(ns.get("rendering"), Value::Text(rendering.into()));
+        // The scope does not load or cache the document it stands for; the import is cached
+        assert_eq!(*requested.borrow(), vec!["/a/lib.texl", "/a/main.texl"]);
+    }
+
+    #[test]
+    fn test_engine_scope_without_base_url_resolves_relative_imports_against_root() {
+        let (engine, requested) = engine_with_docs(&[("/dir/doc.texl", "doc")]);
+
+        let scope = engine.create_scope(None);
+        let out = block_on(template::render(&format!(r#"<% texl.import("dir/doc.texl") {RENDERING} %>"#), &scope));
 
         assert_eq!(out, "doc");
         assert_eq!(*requested.borrow(), vec!["/dir/doc.texl"]);

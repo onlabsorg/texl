@@ -133,7 +133,8 @@ document, the way links work in a web page:
 | `file:///home/me/a.texl`      | a full file URL (on the command line)                     |
 
 A template that is not a document, such as a string rendered by a program,
-resolves relative locations against the root.
+resolves relative locations against the root, unless the program gives it
+the location of a document to stand for.
 
 Imports inside an imported document are resolved against *its* location, not
 the location of the first template. So a partial can import its own

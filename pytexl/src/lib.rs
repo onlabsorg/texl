@@ -95,10 +95,16 @@ impl NativeEngine {
         Promise { inner: runtime::promise_of(async move { Value::Text(engine.render(&template).await.into()) }) }
     }
 
-    /// Creates a native context, with the bindings of the mapping `vars`.
-    #[pyo3(signature = (vars=None))]
-    fn create_context(&self, vars: Option<&Bound<'_, PyAny>>) -> PyResult<NativeContext> {
-        let scope = self.engine.create_scope();
+    /// Creates a native context, with the bindings of the mapping `vars`. Imports in it
+    /// resolve against `uri` (resolved against the base URL), or against the root path
+    /// `/` if it is None.
+    ///
+    /// Raises:
+    ///     ValueError: If `uri` cannot be resolved to a URL.
+    #[pyo3(signature = (vars=None, uri=None))]
+    fn create_context(&self, vars: Option<&Bound<'_, PyAny>>, uri: Option<&str>) -> PyResult<NativeContext> {
+        let url = uri.map(|uri| self.resolve(uri)).transpose()?;
+        let scope = self.engine.create_scope(url);
         if let Some(vars) = vars {
             for_each_entry(vars, |name, value| scope.set(name, value))?;
         }

@@ -78,10 +78,11 @@ are resolved against the URL of the document:
 | `"/lib/format.texl"`                                             | `https://example.com/lib/format.texl`    |
 | `"https://cdn.example.org/a.texl"`                               | `https://cdn.example.org/a.texl`         |
 
-Templates rendered with `engine.render` or with a context have no URL of
-their own: their imports are resolved against the root of the base URL, so
-`"lib/format.texl"` and `"/lib/format.texl"` both fetch
-`https://example.com/lib/format.texl`.
+Templates rendered with `engine.render`, or with a context created without a
+URL, have no URL of their own: their imports are resolved against the root of
+the base URL, so `"lib/format.texl"` and `"/lib/format.texl"` both fetch
+`https://example.com/lib/format.texl`. A context created with a URL resolves
+them against that URL, like a document (see [Contexts](#contexts)).
 
 Documents are fetched with `fetch`, so the usual browser rules apply: a
 document on another origin must allow it with CORS headers. A response with an
@@ -153,6 +154,16 @@ const context = engine.createContext({ price: 12.5 });
 await context.render("<% total = price * 4 %>");
 context.get("total");                          // 50
 await context.render("Total: <% total %>");    // "Total: 50"
+```
+
+A context can also stand for a document: pass its URL as the second argument,
+and the imports of the templates rendered in the context resolve against it.
+Use it to render a document whose source you already have, such as the text
+of an editor, without fetching it:
+
+```js
+const context = engine.createContext(null, "docs/report.texl");
+const rendering = await context.render(source);  // imports resolve in docs/
 ```
 
 ## API reference
@@ -276,10 +287,10 @@ text. The names the template binds with `=` or `:` are discarded afterwards.
 await engine.render("2 + 2 = <% 2 + 2 %>");    // "2 + 2 = 4"
 ```
 
-#### `engine.createContext(vars)`
+#### `engine.createContext(vars, uri)`
 
 ```ts
-createContext(vars?: object | null): TexlContext
+createContext(vars?: object | null, uri?: string | null): TexlContext
 ```
 
 Creates a [context](#texlcontext): a scope that keeps its names across
@@ -288,9 +299,16 @@ renders.
 | Argument | Description                                                         |
 |----------|---------------------------------------------------------------------|
 | `vars`   | An object whose properties are bound in the context. Optional.      |
+| `uri`    | The URL of the document that the context stands for, resolved against `baseUrl`. Optional. |
+
+With a `uri`, imports in the context resolve against it, as in a document
+loaded with `load`; nothing is fetched from it. Without one, they resolve
+against the root of `baseUrl`, as in `render`. Throws, with a string message,
+if `uri` cannot be resolved to a URL.
 
 ```js
 const context = engine.createContext({ user: "Ada" });
+const report = engine.createContext(null, "templates/report.texl");
 ```
 
 #### `engine.free()`

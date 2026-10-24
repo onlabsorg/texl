@@ -104,8 +104,9 @@ class Engine(_ThreadBound):
 
     Imports resolve against the importing document: relative paths against
     its folder, absolute paths (``/dir/doc.texl``) against its root. Templates
-    without a document (:meth:`render`, contexts) resolve imports against the
-    root path ``/``, which the default loader reads from the local file system.
+    without a document (:meth:`render`, contexts created without a ``uri``)
+    resolve imports against the root path ``/``, which the default loader
+    reads from the local file system.
 
     Each document is loaded and rendered at most once per engine: later loads
     and imports of the same URL share the first result.
@@ -249,19 +250,38 @@ class Engine(_ThreadBound):
         """
         return await self._native.render(template)
 
-    def create_context(self, vars: Mapping[str, Any] | None = None) -> Context:
+    def create_context(
+        self,
+        vars: Mapping[str, Any] | None = None,
+        uri: str | os.PathLike[str] | None = None,
+    ) -> Context:
         """Creates a context: a scope that keeps its names across renders.
+
+        With a ``uri``, the context stands for the document at that URL: the
+        imports in its templates resolve against it, as in a document loaded
+        with :meth:`load`. Nothing is loaded from it, so a context can render
+        a document whose source you already have. Without one, imports resolve
+        against the root path ``/``, as in :meth:`render`.
 
         Args:
             vars: Values bound in the context. Optional.
+            uri: The URL of the document that the context stands for, resolved
+                like the URI of :meth:`load`. Optional.
 
         Returns:
             A new context, which also sees the globals of the engine.
 
+        Raises:
+            ValueError: If ``uri`` cannot be resolved to a URL.
+
         Example:
             >>> context = engine.create_context({"user": "Ada"})
+            >>> report = engine.create_context(uri=Path("templates/report.texl"))
+            >>> text = await report.render(source)
         """
-        return Context(self._native.create_context(vars))
+        if isinstance(uri, os.PathLike):
+            uri = Path(uri).resolve().as_uri()
+        return Context(self._native.create_context(vars, uri))
 
 
 class Context(_ThreadBound):

@@ -108,6 +108,11 @@ templates, and the engine caches every document it loads.
 `Value` has no `Display` implementation: match on the variant to get the
 text, as above.
 
+When the host already has the source of a document, it can render it without
+a loader: create a scope with the document's URI, with
+`engine.create_scope(Some(uri))`, and pass it to `template::render`. The
+imports inside it resolve against the URI, as if the document had been loaded.
+
 ## Globals and host functions
 
 `add_builtin` binds a global, visible to every template and document of the
@@ -190,7 +195,9 @@ async fn main() {
 
 `Engine::render` uses a fresh scope each time. To render several templates in
 the same scope, create one with `Engine::create_scope` and call
-`template::render`:
+`template::render`. Its argument is the URI of the document the scope stands
+for, which `texl.import` resolves relative URIs against; `None` resolves them
+against the root path `/`, as in `Engine::render`:
 
 ```rust,ignore
 use swan_core::value::Value;
@@ -202,7 +209,7 @@ async fn main() {
         let engine = Engine::new(Some(spawner_fn(|task| {
             tokio::task::spawn_local(task);
         })));
-        let scope = engine.create_scope();
+        let scope = engine.create_scope(None);
 
         template::render("<% total = 6 * 7 %>", &scope).await;
         assert_eq!(scope.get("total"), Value::Numb(42.0));

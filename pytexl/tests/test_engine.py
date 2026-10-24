@@ -317,6 +317,30 @@ class ImportTest(unittest.IsolatedAsyncioTestCase):
         out = await pytexl.Engine().render(f'<% texl.import("{path}") {RENDERING} %>')
         self.assertEqual(out, "counted.texl has been evaluated 1 time(s)\n")
 
+    async def test_imports_in_a_context_with_a_uri_resolve_against_it(self):
+        engine, requested = memory_engine({"mem://host/docs/lib.texl": "lib", "mem://host/top.texl": "top"})
+        context = engine.create_context({"x": 1}, uri="mem://host/docs/main.texl")
+        out = await context.render(f'<% texl.import("lib.texl") {RENDERING} %>|<% texl.import("/top.texl") {RENDERING} %>|<% x %>')
+        self.assertEqual(out, "lib|top|1")
+        self.assertEqual(requested, ["mem://host/docs/lib.texl", "mem://host/top.texl"])
+
+    async def test_a_context_uri_resolves_against_the_base_url(self):
+        context = pytexl.Engine(base_url=FIXTURES).create_context(uri="partials/new.texl")
+        out = await context.render('<% texl.import("signature.texl") ~> (doc -> doc.uri) %>')
+        self.assertEqual(out, (FIXTURES / "partials" / "signature.texl").as_uri())
+
+    async def test_a_context_accepts_a_path_as_uri(self):
+        cwd = os.getcwd()
+        os.chdir(FIXTURES)
+        self.addCleanup(os.chdir, cwd)
+        context = pytexl.Engine(base_url="http://127.0.0.1:1/").create_context(uri=Path("partials/new.texl"))
+        out = await context.render('<% texl.import("../lib/format.texl") ~> (doc -> doc.uri) %>')
+        self.assertEqual(out, (FIXTURES / "lib" / "format.texl").as_uri())
+
+    async def test_a_context_with_an_invalid_uri_raises(self):
+        with self.assertRaises(ValueError):
+            pytexl.Engine(base_url="mem:opaque").create_context(uri="relative.texl")
+
     async def test_imported_documents_see_the_importer_names(self):
         engine, _ = memory_engine({"/greet.texl": "Hello <% reader %>!"})
         out = await engine.render(f'<% reader = "Ada" %><% texl.import("greet.texl") {RENDERING} %>')

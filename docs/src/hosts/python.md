@@ -87,11 +87,12 @@ against its URL in the same way, so `"/lib/format.texl"` in
 `https://example.com/docs/report.texl` fetches
 `https://example.com/lib/format.texl`.
 
-Templates rendered with `engine.render` or with a context have no URL of
-their own: their imports resolve against the root path `/`, so
-`"lib/format.texl"` and `"/lib/format.texl"` both read the local file
-`/lib/format.texl`. Use absolute paths there, or load the template as a
-document.
+Templates rendered with `engine.render`, or with a context created without a
+URL, have no URL of their own: their imports resolve against the root path
+`/`, so `"lib/format.texl"` and `"/lib/format.texl"` both read the local file
+`/lib/format.texl`. Use absolute paths there, load the template as a
+document, or give the context the URL of a document (see
+[Contexts](#contexts)).
 
 A document that cannot be read counts as a failed load: `load` gives `None`,
 and `texl.import` gives `Nothing`. A response with an HTTP error status is a
@@ -254,6 +255,16 @@ context.get("total")                           # 50
 await context.render("Total: <% total %>")     # 'Total: 50'
 ```
 
+A context can also stand for a document: pass its URL or path as `uri`, and
+the imports of the templates rendered in the context resolve against it. Use
+it to render a document whose source you already have, without reading it
+again:
+
+```python
+context = engine.create_context(uri=Path("templates/report.texl"))
+rendering = await context.render(source)   # imports resolve in templates/
+```
+
 ## Event loops and threads
 
 An engine runs its work on the asyncio event loop of the code that awaits it.
@@ -401,10 +412,13 @@ the template binds with `=` or `:` are discarded afterwards.
 await engine.render("2 + 2 = <% 2 + 2 %>")    # '2 + 2 = 4'
 ```
 
-#### `engine.create_context(vars)`
+#### `engine.create_context(vars, uri)`
 
 ```python
-def create_context(vars: Mapping[str, Any] | None = None) -> Context
+def create_context(
+    vars: Mapping[str, Any] | None = None,
+    uri: str | os.PathLike[str] | None = None,
+) -> Context
 ```
 
 Creates a [context](#context): a scope that keeps its names across renders.
@@ -412,9 +426,16 @@ Creates a [context](#context): a scope that keeps its names across renders.
 | Argument | Description                                                         |
 |----------|---------------------------------------------------------------------|
 | `vars`   | A mapping whose items are bound in the context. Optional.           |
+| `uri`    | The URL of the document that the context stands for, resolved like the `uri` of [`load`](#engineloaduri). Optional. |
+
+With a `uri`, imports in the context resolve against it, as in a document
+loaded with `load`; nothing is read from it. Without one, they resolve against
+the root path `/`, as in `render`. Raises `ValueError` if `uri` cannot be
+resolved to a URL.
 
 ```python
 context = engine.create_context({"user": "Ada"})
+report = engine.create_context(uri=Path("templates/report.texl"))
 ```
 
 ### `Context`
