@@ -53,7 +53,7 @@ class SampleTest(unittest.IsolatedAsyncioTestCase):
         doc = await self.create_engine().load(self.server.origin + "/sample.texl")
         self.assertIsNotNone(doc)
         self.assertEqual(doc.uri, self.server.origin + "/sample.texl")
-        self.assertIn("Dear Ada, this paragraph comes from partials/greeting.texl.", doc.rendering)
+        self.assertIn("(not visible). It imports \"signature.texl\" from its own", doc.rendering)
         self.assertIn("fmt.plural(3, \"apple\")         -> 3 apples", doc.rendering)
 
 

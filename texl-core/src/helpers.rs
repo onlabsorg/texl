@@ -20,7 +20,8 @@
 //! engine.add_builtin("fetch_answer", Value::Builtin(BuiltinFn::new("fetch_answer", |_| {
 //!     promise_async(None, async { Value::Numb(42.0) })
 //! })));
-//! assert_eq!(block_on(engine.render("<% fetch_answer() %>")), "42");
+//! let Value::Namespace(doc) = block_on(engine.render("/main.texl", "<% fetch_answer() %>")) else { panic!() };
+//! assert_eq!(doc.get("rendering"), Value::Text("42".into()));
 //! # use std::{future::Future, pin::pin, task::{Context, Poll, Waker}};
 //! # fn block_on<F: Future>(fut: F) -> F::Output {
 //! #     let mut cx = Context::from_waker(Waker::noop());

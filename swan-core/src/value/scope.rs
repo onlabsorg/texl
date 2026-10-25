@@ -38,6 +38,33 @@ use super::*;
 #[derive(Clone, Debug)]
 pub struct Scope(pub Rc<RefCell<ScopeData>>);
 
+/// A weak handle to a [`Scope`], made with [`Scope::downgrade`].
+///
+/// It does not keep the scope alive, so it can point back to a scope from a
+/// value stored in that scope (or in one of its ancestors) without creating an
+/// `Rc` cycle.
+///
+/// # Examples
+///
+/// ```
+/// use swan_core::value::Scope;
+///
+/// let scope = Scope::new();
+/// let weak = scope.downgrade();
+/// assert!(weak.upgrade().is_some());
+/// drop(scope);
+/// assert!(weak.upgrade().is_none());
+/// ```
+#[derive(Clone, Debug)]
+pub struct WeakScope(std::rc::Weak<RefCell<ScopeData>>);
+
+impl WeakScope {
+    /// Returns the scope, or `None` if it has been dropped.
+    pub fn upgrade(&self) -> Option<Scope> {
+        self.0.upgrade().map(Scope)
+    }
+}
+
 /// The shared state behind a [`Scope`].
 #[derive(Clone)]
 pub struct ScopeData {
@@ -45,6 +72,8 @@ pub struct ScopeData {
     pub parent: Option<Scope>,
     /// The bindings defined in this scope (not in its ancestors).
     pub bindings: HashMap<String, Value>,
+    /// Whether Swan code is forbidden to bind names here (see [`Scope::freeze`]).
+    pub frozen: bool,
 }
 
 impl Scope {
@@ -53,6 +82,7 @@ impl Scope {
         Self(Rc::new(RefCell::new(ScopeData {
             parent: None,
             bindings: HashMap::new(),
+            frozen: false,
         })))
     }
 
@@ -61,12 +91,48 @@ impl Scope {
         Self(Rc::new(RefCell::new(ScopeData {
             parent: Some(parent),
             bindings: HashMap::new(),
+            frozen: false,
         })))
     }
 
     /// Creates a new child scope using `self` as the parent environment.
     pub fn new_child(&self) -> Self {
         Self::with_parent(self.clone())
+    }
+
+    /// Freezes the scope: Swan code can no longer bind names in it.
+    ///
+    /// An assignment (`=`) or a labelling (`:`) evaluated in a frozen scope binds
+    /// nothing and gives `Undefined`, for example `text.(size = 0)` on a built-in
+    /// namespace. The host can still change the scope with [`Scope::set`], and
+    /// the children of a frozen scope are not frozen.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use swan_core::evaluator::eval;
+    /// use swan_core::lexer::Lexer;
+    /// use swan_core::parser::Parser;
+    /// use swan_core::value::{Scope, Value};
+    ///
+    /// let scope = Scope::new();
+    /// scope.freeze();
+    /// let ast = Parser::new(Lexer::new("x = 1")).parse();
+    /// assert!(matches!(eval(&ast, &scope), Value::Undefined(_)));
+    /// assert_eq!(scope.get("x"), Value::Nothing);
+    /// ```
+    pub fn freeze(&self) {
+        self.0.borrow_mut().frozen = true;
+    }
+
+    /// Whether the scope is frozen (see [`Scope::freeze`]).
+    pub fn is_frozen(&self) -> bool {
+        self.0.borrow().frozen
+    }
+
+    /// Returns a [`WeakScope`] that points to this scope without keeping it alive.
+    pub fn downgrade(&self) -> WeakScope {
+        WeakScope(Rc::downgrade(&self.0))
     }
 
     /// Returns the value bound to `key` in this scope or its nearest ancestor
@@ -152,6 +218,7 @@ impl fmt::Debug for ScopeData {
         f.debug_struct("ScopeData")
             .field("bindings", &keys)
             .field("has_parent", &self.parent.is_some())
+            .field("frozen", &self.frozen)
             .finish()
     }
 }

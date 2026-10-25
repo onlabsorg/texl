@@ -88,16 +88,53 @@ async function testSample() {
 async function testEngine() {
     const engine = new TexlEngine({ a: 10 }, "http://127.0.0.1:1/some/doc.texl");
     check("an explicit base URL is used", engine.baseUrl, "http://127.0.0.1:1/some/doc.texl");
-    check("render uses the engine globals", await engine.render("a = <% a %>"), "a = 10");
+    const draft = await engine.render("draft.texl", "a = <% a %>");
+    check("render uses the engine globals", draft.rendering, "a = 10");
+    check("render resolves its URI against the base URL", draft.uri, "http://127.0.0.1:1/some/draft.texl");
+    check("render gives the source", draft.source, "a = <% a %>");
 
     engine.set("b", 32);
-    check("set adds a global", await engine.render("<% a + b %>"), "42");
-    check("render starts from a fresh scope", await engine.render("<% x = 1 %><% x %>|") + await engine.render("[<% x %>]"), "1|[]");
+    check("set adds a global", (await engine.render("doc.texl", "<% a + b %>")).rendering, "42");
+    const first = await engine.render("doc.texl", "<% x = 1 %><% x %>|");
+    const second = await engine.render("doc.texl", "[<% x %>]");
+    check("render starts from a fresh scope", first.rendering + second.rendering, "1|[]");
+    check("render gives the data", first.data.x, 1);
+
+    const page = new TexlEngine();
+    const counted = "fixtures/partials/counted.texl";
     check(
-        "render fetches absolute paths from the root of the base URL",
-        await new TexlEngine().render('<% texl.import("/tests/web/fixtures/partials/counted.texl") ~> (doc -> doc.uri + ": " + doc.rendering) %>'),
-        "/tests/web/fixtures/partials/counted.texl: counted.texl has been evaluated 1 time(s)\n");
-    check("unreachable documents give Nothing", await engine.render("[<% texl.import(\"/nowhere.texl\") %>]"), "[]");
+        "render resolves imports against its URI",
+        (await page.render("fixtures/partials/new.texl", '<% texl.import("signature.texl") ~> (doc -> doc.uri) %>')).rendering,
+        new URL("fixtures/partials/signature.texl", location.href).href);
+    check(
+        "render fetches absolute paths from the root of its URI",
+        (await page.render("fixtures/new.texl", '<% texl.import("/tests/web/fixtures/partials/counted.texl") ~> (doc -> doc.rendering) %>')).rendering,
+        "counted.texl has been evaluated 1 time(s)\n");
+    check(
+        "a self-import gives Undefined",
+        (await page.render("fixtures/self.texl", '[<% texl.import("self.texl#top") %>]')).rendering,
+        "[[[Undefined]]]");
+    check(
+        "unreachable documents give Nothing",
+        (await page.render("fixtures/new.texl", '[<% texl.import("/nowhere.texl") %>]')).rendering,
+        "[]");
+
+    const source = await page.fetch(counted);
+    check("fetch gives the source", source, await fetch(counted).then((r) => r.text()));
+    check("fetch of a missing document gives null", await page.fetch("fixtures/missing.texl"), null);
+    check(
+        "load is fetch followed by render",
+        (await page.load(counted)).rendering,
+        (await page.render(counted, source)).rendering);
+
+    for (const method of ["fetch", "load"]) {
+        let rejected = false;
+        try { await page[method]("http://[bad"); } catch { rejected = true; }
+        check(`${method} rejects an invalid URI`, rejected, true);
+    }
+    let rejected = false;
+    try { await page.render("http://[bad", ""); } catch { rejected = true; }
+    check("render rejects an invalid URI", rejected, true);
 
     let threw = false;
     try { new TexlEngine({}, "not a url"); } catch { threw = true; }
@@ -141,23 +178,7 @@ async function testContext() {
     check("Swan promises come back as JS promises", r instanceof Promise, true);
     check("Swan promises resolve in JS", await r, 20);
 
-    const docContext = engine.createContext(null, "fixtures/partials/new.texl");
-    check(
-        "a context with a URI resolves imports against it",
-        await docContext.render('<% texl.import("signature.texl") ~> (doc -> doc.uri) %>'),
-        new URL("fixtures/partials/signature.texl", location.href).href);
-    check(
-        "a context with a URI resolves absolute paths against its root",
-        await docContext.render('<% texl.import("/tests/web/fixtures/partials/counted.texl") ~> (doc -> doc.uri) %>'),
-        new URL("/tests/web/fixtures/partials/counted.texl", location.href).href);
-    check(
-        "a context without a URI resolves imports against the root of the base URL",
-        await engine.createContext().render('<% texl.import("tests/web/fixtures/partials/signature.texl") ~> (doc -> doc.uri) %>'),
-        "/tests/web/fixtures/partials/signature.texl");
-
-    let threw = false;
-    try { new TexlEngine().createContext(null, "http://[bad"); } catch { threw = true; }
-    check("an invalid context URI throws", threw, true);
+    check("contexts cannot import", Object.keys(context.get("texl")).length, 0);
 }
 
 const status = document.getElementById("status");

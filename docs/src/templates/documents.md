@@ -1,7 +1,9 @@
 # Documents and imports
 
-A *document* is a template that the engine loads by its location: a file path
-for the command-line tool, a URL in a web page. A document can import other
+A *document* is a template with a location: a file path for the command-line
+tool, a URL in a web page. Every template the engine renders is a document,
+even one that a program renders from a string: the program gives it a
+location. A document can import other
 documents, to reuse pieces of text (*partials*) or collections of functions
 (*libraries*).
 
@@ -55,30 +57,33 @@ Thank you for your order.
 Questions? Write to help@example.com.
 ```
 
-## Passing data to a partial
+## Each document has its own names
 
-An imported document can read the names of the template that imports it. With
-`partials/header.texl` containing:
+An imported document renders in its own scope. It sees the built-in names and
+the host's globals, but not the names of the template that imports it, so it
+renders the same whoever imports it. With `partials/header.texl` containing:
 
 ```texl,nocheck
-== <% title %> ==
+== <% title ; "Untitled" %> ==
 ```
 
-the importer decides the title:
+the title of the importer does not reach it:
 
 ```texl
 <% title = "Monthly report" %><% texl.import("partials/header.texl") ~> (doc -> text.trim_tail doc.rendering) %>
 ```
 
 ```text
-== Monthly report ==
+== Untitled ==
 ```
 
-Each document is loaded and rendered **only once** per engine, and later
-imports reuse the first result. If two templates import the same partial with
-different data, both get the rendering made with the data of the first one. To
-produce a piece of text several times with different data, write a function
-instead, in a library.
+To produce a piece of text with data from the importer, write a function in a
+library, and call it with the data (see the next section).
+
+Within one rendering, each document is loaded and rendered **only once**:
+later imports of it, even through a different relative path, return the same
+promise. The next rendering loads it again, so it sees the changes made to the
+document in between.
 
 ## Using a library
 
@@ -132,9 +137,8 @@ document, the way links work in a web page:
 | `https://example.com/a.texl`  | a full URL (on the web)                                   |
 | `file:///home/me/a.texl`      | a full file URL (on the command line)                     |
 
-A template that is not a document, such as a string rendered by a program,
-resolves relative locations against the root, unless the program gives it
-the location of a document to stand for.
+A template that a program renders from a string resolves relative locations
+against the location the program gives it.
 
 Imports inside an imported document are resolved against *its* location, not
 the location of the first template. So a partial can import its own
@@ -153,13 +157,33 @@ fallback with `;`:
 (not found)
 ```
 
+## Import cycles
+
+A document that imports itself, directly or through other documents, would
+wait for itself forever. Instead, the import that closes the cycle returns
+[`Undefined`](../swan/undefined.md), not a promise:
+
+```texl
+<% me = texl.import("cycle.texl") %>[<% me %>]
+```
+
+```text
+[[[Undefined]]]
+```
+
+(The example is rendered as the document `cycle.texl`.) In a chain where `a`
+imports `b` and `b` imports `a`, the import of `a` in `b` returns `Undefined`,
+and `b` renders without it.
+
 ## What a document can see
 
-An imported document is rendered:
+A document is rendered:
 
 - with the built-in names and the host's globals;
-- with the names of the template that imported it, as they are at the time of
-  the import;
 - with its own `texl` namespace, which imports relative to its own location.
 
-Its `data` contains the names its own tags bound, plus `texl`.
+It does not see the names of the template that imported it. `bind` and
+`label` bind names in the global scope of the document, where every tag of the
+document sees them but no other document does. Its `data` contains the names
+its own tags bound with `=` and `:`, plus `texl`, but not the names bound with
+`bind` or `label`.

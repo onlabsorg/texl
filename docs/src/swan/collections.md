@@ -156,6 +156,15 @@ point.(y = 4)
 point                # => {x: 3, y: 4}
 ```
 
+The built-in namespaces, such as `text` and `math`, are *frozen*: they cannot
+gain or change members, so the built-ins work the same everywhere. Binding a
+name in one gives an undefined value and binds nothing:
+
+```swan
+type (text.(size = 0))   # => "Undefined"
+text.size "abc"          # => 3
+```
+
 ### Inspecting namespaces
 
 The [`nspace`](builtins/nspace.md) namespace lists and counts the members:

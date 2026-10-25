@@ -193,11 +193,13 @@ A tag that returns a promise makes the rendering wait until it resolves.
 
 `texl.import(uri)` returns a promise of the document namespace
 {uri, source, data, rendering}. Relative URIs resolve against the folder of
-the importing document.
+the importing document. The imported document sees the built-ins and the
+globals of the host, but not the names of its importer.
 
-Dear Ada, this paragraph comes from partials/greeting.texl.
-It reads `reader` from the document that imported it, and it imports
-"signature.texl" from its own folder: -- the Texl team (2 imports deep)
+This paragraph comes from partials/greeting.texl. It renders in its own
+scope, so it does not see `reader` of the document that imported it
+(not visible). It imports "signature.texl" from its own
+folder: -- the Texl team (2 imports deep)
 
 The definitions of an imported document are in its `data`. Here they are
 bound to the global name `fmt`:
@@ -213,12 +215,13 @@ Fields of an imported document:
   fmt.basename doc.uri           -> format.texl
   text.size doc.source > 0       -> TRUE
 
-Each document is loaded once: later imports, even through a different relative
-path, share the first result.
+Each document is loaded once per rendering: later imports, even through a
+different relative path, return the same promise.
 
+  first = texl.import("partials/counted.texl"),
+  again = texl.import("./partials/../partials/counted.texl"),
+  first == again                 -> TRUE
   counted.texl has been evaluated 1 time(s)
-  counted.texl has been evaluated 1 time(s)
-  load_count                     -> 1
 
 A document that cannot be loaded gives Nothing:
 

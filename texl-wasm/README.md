@@ -12,7 +12,8 @@ npm install @onlabsorg/texl
 import init, { TexlEngine } from "@onlabsorg/texl";
 await init();
 const engine = new TexlEngine({ user: "Ada" });
-await engine.render("Hi <% user %>!");     // "Hi Ada!"
+const doc = await engine.render("hi.texl", "Hi <% user %>!");
+doc.rendering;                            // "Hi Ada!"
 ```
 
 See the [JavaScript API reference](https://onlabsorg.github.io/texl/book/hosts/javascript.html).

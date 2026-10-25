@@ -34,7 +34,7 @@ use crate::ast::Node;
 
 // Lexical scopes and namespaces
 mod scope;
-pub use scope::Scope;
+pub use scope::{Scope, WeakScope};
 
 // Explanations of why an operation is undefined
 mod undef;

@@ -1,8 +1,8 @@
 # Python
 
 The `pytexl` package runs the Texl engine in Python programs. It renders
-templates from strings, loads documents from local files and over HTTP, and
-lets templates call your Python functions, `async` ones included.
+documents, from strings or loaded from local files and over HTTP, and lets
+templates call your Python functions, `async` ones included.
 
 ## Installing the package
 
@@ -25,11 +25,13 @@ import asyncio
 import pytexl
 
 engine = pytexl.Engine({"user": {"name": "Ada"}})
-text = asyncio.run(engine.render("Hello <% user.name %>!"))
-print(text)                                    # Hello Ada!
+doc = asyncio.run(engine.render("hello.texl", "Hello <% user.name %>!"))
+print(doc.rendering)                           # Hello Ada!
 ```
 
-The engine is asynchronous: `render` and `load` are coroutines, because a tag
+`render` renders a source as the document at a URL, here `hello.texl` in the
+current working directory. The engine is asynchronous: `render` and `load` are
+coroutines, because a tag
 may wait for a document being loaded or for an `async` function. In a
 program that is not asynchronous, run them with `asyncio.run`. In asyncio
 code, `await` them:
@@ -37,7 +39,8 @@ code, `await` them:
 ```python
 async def main():
     engine = pytexl.Engine()
-    print(await engine.render("2 + 2 = <% 2 + 2 %>"))   # 2 + 2 = 4
+    doc = await engine.render("sum.texl", "2 + 2 = <% 2 + 2 %>")
+    print(doc.rendering)                       # 2 + 2 = 4
 
 asyncio.run(main())
 ```
@@ -87,19 +90,36 @@ against its URL in the same way, so `"/lib/format.texl"` in
 `https://example.com/docs/report.texl` fetches
 `https://example.com/lib/format.texl`.
 
-Templates rendered with `engine.render`, or with a context created without a
-URL, have no URL of their own: their imports resolve against the root path
-`/`, so `"lib/format.texl"` and `"/lib/format.texl"` both read the local file
-`/lib/format.texl`. Use absolute paths there, load the template as a
-document, or give the context the URL of a document (see
-[Contexts](#contexts)).
-
 A document that cannot be read counts as a failed load: `load` gives `None`,
 and `texl.import` gives `Nothing`. A response with an HTTP error status is a
 failed load too.
 
-Each engine loads and renders each document once, and reuses the result for
-later imports. Create a new engine to see changes to the documents.
+## Rendering a source
+
+`engine.render` renders a source that you already have, such as the text of an
+editor or standard input, as the document at a URL or path, without reading
+it. Its imports resolve against that location, as if the document had been
+loaded from there:
+
+```python
+doc = await engine.render(Path("templates/report.texl"), source)   # imports resolve in templates/
+```
+
+A source with no real location can use any URL, for example a file in the
+folder of the documents it imports. `engine.fetch` returns the source of a
+document without rendering it, so `await engine.load(uri)` is
+`await engine.render(uri, await engine.fetch(uri))`.
+
+## Caching
+
+The engine holds configuration only: its globals and loaders. Every `render`
+and `load` starts from a new scope and a new import cache. Within one
+rendering, each imported document is read and rendered once, however many
+times it is imported; the next rendering reads it again, so it sees the
+changes to the documents.
+
+An imported document renders in its own scope: it sees the engine globals, but
+not the names of the document that imports it.
 
 ### Your own loaders
 
@@ -127,15 +147,13 @@ async def load_from_db(uri):
 engine.add_loader("db", load_from_db)
 ```
 
-`set_default_loader` replaces the loader of the URLs without a scheme. The
-engine normalizes those paths before calling it: they are absolute and
-percent-encoded, such as `/dir/my%20doc.texl`. This loader serves the files
-of one folder only:
+A loader runs every time a document is fetched: the engine does not cache
+sources across renders (see [Caching](#caching)). To cache them, wrap the
+loader.
 
-```python
-root = Path("site").resolve()
-engine.set_default_loader(lambda path: (root / path.lstrip("/")).read_text())
-```
+`set_default_loader` replaces the loader of the URLs without a scheme. Since
+every URI resolves against the base URL to a full URL, and so do the imports
+in documents, the engine does not currently call it.
 
 ## Globals and context values
 
@@ -185,7 +203,7 @@ engine = pytexl.Engine({
     "add": lambda a, b: a + b,
     "answer": lambda: 42,
 })
-await engine.render('<% shout "hi" %> <% add(2, 3) %> <% answer() %>')   # 'HI! 5 42'
+(await engine.render("doc.texl", '<% shout "hi" %> <% add(2, 3) %> <% answer() %>')).rendering   # 'HI! 5 42'
 ```
 
 The return value is converted to a Swan value. If the function raises an
@@ -198,7 +216,7 @@ async def weather(city):
     return "sunny"
 
 engine = pytexl.Engine({"weather": weather})
-await engine.render('Today in Rome: <% weather "rome" %>')   # 'Today in Rome: sunny'
+(await engine.render("doc.texl", 'Today in Rome: <% weather "rome" %>')).rendering   # 'Today in Rome: sunny'
 ```
 
 A coroutine object passed as a value is awaited once, and every template sees
@@ -244,9 +262,10 @@ To tell the two apart, test `isinstance(value, pytexl.Undefined)`.
 
 ## Contexts
 
-`engine.render` uses a fresh scope each time, so the names a template binds
-are lost when it ends. A *context* keeps them: it is a scope that you render
-several templates in, and that you can read and write from Python.
+`engine.render` uses a new scope each time, so the names a template binds
+are only in the `data` of the document it returns. A *context* keeps them: it
+is a scope that you render several templates in, and that you can read and
+write from Python.
 
 ```python
 context = engine.create_context({"price": 12.5})
@@ -255,15 +274,9 @@ context.get("total")                           # 50
 await context.render("Total: <% total %>")     # 'Total: 50'
 ```
 
-A context can also stand for a document: pass its URL or path as `uri`, and
-the imports of the templates rendered in the context resolve against it. Use
-it to render a document whose source you already have, without reading it
-again:
-
-```python
-context = engine.create_context(uri=Path("templates/report.texl"))
-rendering = await context.render(source)   # imports resolve in templates/
-```
+A context is not a document: its templates cannot import documents, and
+`texl.import` is not defined in it. To render a source with imports, use
+[`engine.render`](#rendering-a-source).
 
 ## Event loops and threads
 
@@ -284,9 +297,9 @@ The docstrings of the package document the same API, in Google style. Run
 
 ### `Engine`
 
-An engine renders templates and loads documents. Its globals, documents and
-engine-wide names (bound with [`bind`](../swan/builtins/root.md#bind)) are
-shared by everything it renders.
+An engine renders and loads documents. It holds configuration only: its
+globals and loaders are shared by everything it renders, and nothing else is
+(see [Caching](#caching)).
 
 #### `Engine(globals, base_url)`
 
@@ -300,7 +313,7 @@ Creates an engine with the [file and HTTP loaders](#loaders).
 | Argument   | Description                                                                 |
 |------------|-----------------------------------------------------------------------------|
 | `globals`  | A mapping whose items become globals of every template and document. Optional. |
-| `base_url` | The URL that `load` resolves relative URLs against. A path becomes a `file://` URL, with a final slash if it is a folder. Optional; defaults to the current working directory. |
+| `base_url` | The URL that `fetch`, `render` and `load` resolve relative URLs against. A path becomes a `file://` URL, with a final slash if it is a folder. Optional; defaults to the current working directory. |
 
 Raises `ValueError` if `base_url` is not an absolute URL.
 
@@ -327,7 +340,8 @@ def set(name: str, value: Any) -> None
 ```
 
 Binds a global, visible to every template and document of the engine,
-including contexts created earlier. A global with the same name is replaced.
+from now on. Contexts created earlier do not see it. A global with the same
+name is replaced.
 
 | Argument | Description                                             |
 |----------|---------------------------------------------------------|
@@ -364,7 +378,8 @@ def set_default_loader(loader: Loader) -> None
 
 Registers the [loader](#loader) of the URLs without a scheme, replacing
 `loaders.load_file`. The loader receives absolute, percent-encoded paths, such
-as `/dir/my%20doc.texl`.
+as `/dir/my%20doc.texl`. Every URI that the engine renders is a full URL, so it
+does not currently call this loader.
 
 | Argument | Description                                                      |
 |----------|------------------------------------------------------------------|
@@ -374,75 +389,93 @@ as `/dir/my%20doc.texl`.
 engine.set_default_loader(lambda path: (root / path.lstrip("/")).read_text())
 ```
 
+#### `engine.fetch(uri)`
+
+```python
+async def fetch(uri: str | os.PathLike[str]) -> str | None
+```
+
+Reads the source of the document at `uri`, without rendering it. Nothing is
+cached: every call runs the loader again.
+
+| Argument | Description                                                          |
+|----------|----------------------------------------------------------------------|
+| `uri`    | The URL of the document, resolved against `base_url`. A path is resolved against the current working directory instead. |
+
+Returns the source, or `None` if it cannot be read. Raises `ValueError` if
+`uri` cannot be resolved to a URL.
+
+```python
+source = await engine.fetch(Path("templates/report.texl"))
+```
+
+#### `engine.render(uri, source)`
+
+```python
+async def render(uri: str | os.PathLike[str], source: str) -> Document
+```
+
+Renders `source` as the document at `uri`, in a new scope, without reading
+it. Imports in `source` resolve against the URL of `uri`; an import of that
+URL itself gives an [`Undefined`](#undefined) (an
+[import cycle](../templates/documents.md#import-cycles)).
+
+| Argument | Description                                                          |
+|----------|----------------------------------------------------------------------|
+| `uri`    | The URL of the document, resolved like the `uri` of [`fetch`](#enginefetchuri). |
+| `source` | The template source.                                                 |
+
+Returns the [document](#document). Raises `ValueError` if `uri` cannot be
+resolved to a URL.
+
+```python
+doc = await engine.render("draft.texl", "2 + 2 = <% 2 + 2 %>")
+doc.rendering                                  # '2 + 2 = 4'
+```
+
 #### `engine.load(uri)`
 
 ```python
 async def load(uri: str | os.PathLike[str]) -> Document | None
 ```
 
-Loads and renders the document at `uri`.
+Reads and renders the document at `uri`: [`fetch`](#enginefetchuri) followed
+by [`render`](#enginerenderuri-source).
 
 | Argument | Description                                                          |
 |----------|----------------------------------------------------------------------|
-| `uri`    | The URL of the document, resolved against `base_url`. A path is resolved against the current working directory instead. |
+| `uri`    | The URL of the document, resolved like the `uri` of [`fetch`](#enginefetchuri). |
 
 Returns the [document](#document), or `None` if it cannot be loaded. Raises
-`ValueError` if `uri` cannot be resolved to a URL. The result is cached:
-later imports of the same URL reuse it.
+`ValueError` if `uri` cannot be resolved to a URL.
 
 ```python
 doc = await engine.load("templates/report.texl")
 print(doc.rendering if doc else "not found")
 ```
 
-#### `engine.render(template)`
+#### `engine.create_context(vars)`
 
 ```python
-async def render(template: str) -> str
-```
-
-Renders a template in a fresh scope, and returns the rendered text. The names
-the template binds with `=` or `:` are discarded afterwards.
-
-| Argument   | Description            |
-|------------|------------------------|
-| `template` | The template source.   |
-
-```python
-await engine.render("2 + 2 = <% 2 + 2 %>")    # '2 + 2 = 4'
-```
-
-#### `engine.create_context(vars, uri)`
-
-```python
-def create_context(
-    vars: Mapping[str, Any] | None = None,
-    uri: str | os.PathLike[str] | None = None,
-) -> Context
+def create_context(vars: Mapping[str, Any] | None = None) -> Context
 ```
 
 Creates a [context](#context): a scope that keeps its names across renders.
+Templates in a context cannot import documents.
 
 | Argument | Description                                                         |
 |----------|---------------------------------------------------------------------|
 | `vars`   | A mapping whose items are bound in the context. Optional.           |
-| `uri`    | The URL of the document that the context stands for, resolved like the `uri` of [`load`](#engineloaduri). Optional. |
-
-With a `uri`, imports in the context resolve against it, as in a document
-loaded with `load`; nothing is read from it. Without one, they resolve against
-the root path `/`, as in `render`. Raises `ValueError` if `uri` cannot be
-resolved to a URL.
 
 ```python
 context = engine.create_context({"user": "Ada"})
-report = engine.create_context(uri=Path("templates/report.texl"))
 ```
 
 ### `Context`
 
 A scope of an engine, created with `engine.create_context`. Templates rendered
 in a context share its names, and so do `get` and `set`. The context also sees
-the globals of its engine.
+the globals of its engine. It cannot import documents.
 
 #### `context.get(name)`
 
@@ -487,8 +520,8 @@ def names() -> list[str]
 ```
 
 Returns the names bound in the context, sorted. Engine globals and built-ins
-are not included. The list always includes `texl`, the namespace that holds
-`texl.import`.
+are not included. The list always includes `texl`, the engine's namespace,
+which has no `import` in a context.
 
 ```python
 engine.create_context({"b": 1, "a": 2}).names()   # ['a', 'b', 'texl']
@@ -523,7 +556,7 @@ class Document:
     rendering: str
 ```
 
-A loaded document, as returned by `engine.load`.
+A rendered document, as returned by `engine.load` and `engine.render`.
 
 | Attribute   | Description                                                        |
 |-------------|--------------------------------------------------------------------|

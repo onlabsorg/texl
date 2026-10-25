@@ -10,7 +10,7 @@
 //! await init();
 //! const engine = new TexlEngine({ reader: "Ada" });          // globals, optional base URL
 //! const doc = await engine.load("docs/main.texl");           // {uri, source, data, rendering} or null
-//! const text = await engine.render("Hello <% reader %>!");
+//! const draft = await engine.render("docs/draft.texl", "Hello <% reader %>!");
 //! ```
 //!
 //! See the [JavaScript API reference](https://onlabsorg.github.io/texl/book/hosts/javascript.html).
@@ -30,7 +30,7 @@ use convert::{for_each_entry, js_to_swan_value, swan_value_to_js};
 #[wasm_bindgen(typescript_custom_section)]
 const TS_TYPES: &'static str = r#"
 /**
- * A loaded document, as returned by `TexlEngine.load`.
+ * A rendered document, as returned by `TexlEngine.load` and `TexlEngine.render`.
  */
 export interface TexlDocument {
     /** The URL of the document. */
@@ -44,14 +44,17 @@ export interface TexlDocument {
 }
 "#;
 
-/// A texl engine that renders templates and loads documents over HTTP(S).
+/// A texl engine that renders documents and loads them over HTTP(S).
 ///
-/// Documents with an `http://` or `https://` URL are fetched as they are. Imports
-/// resolve against the importing document: relative paths against its folder, absolute
-/// paths (`/dir/doc.texl`) against its root folder. Templates without a document URL
-/// (`render`, contexts created without a `uri`) use the root of the engine's base URL instead.
+/// Every document has a URL: the URIs given to `fetch`, `render` and `load` resolve
+/// against `baseUrl`. Documents with an `http://` or `https://` URL are fetched as they
+/// are. Imports resolve against the importing document: relative paths against its
+/// folder, absolute paths (`/dir/doc.texl`) against its root folder.
 ///
-/// Each document is loaded and rendered at most once per engine.
+/// The engine holds configuration only: globals and loaders. Every `render` and `load`
+/// starts from a new scope and a new import cache: within one rendering, each imported
+/// document is fetched and rendered once; the next rendering fetches it again. An imported
+/// document renders in its own scope, and does not see the names of its importer.
 #[wasm_bindgen]
 pub struct TexlEngine {
     engine: Engine,
@@ -83,7 +86,6 @@ impl TexlEngine {
         let engine = Engine::new(Some(spawner_fn(wasm_bindgen_futures::spawn_local)));
         engine.add_loader("http", loader_fn(loader::load_http));
         engine.add_loader("https", loader_fn(loader::load_http));
-        engine.add_default_loader(loader::root_loader(base_url.clone()));
         use_js_clock(&engine);
 
         if let Some(globals) = globals {
@@ -99,7 +101,8 @@ impl TexlEngine {
         self.base_url.as_ref().map(Url::to_string)
     }
 
-    /// Binds a global, visible to every template and document of this engine.
+    /// Binds a global, visible to every template and document of this engine rendered
+    /// from now on. Contexts created earlier do not see it.
     pub fn set(
         &self,
         #[wasm_bindgen(param_description = "The name of the global.")]
@@ -111,7 +114,7 @@ impl TexlEngine {
         Ok(())
     }
 
-    /// Loads and renders the document at `uri`.
+    /// Fetches and renders the document at `uri`: `fetch` followed by `render`.
     ///
     /// The promise rejects only if `uri` cannot be resolved to a URL.
     #[wasm_bindgen(
@@ -131,39 +134,61 @@ impl TexlEngine {
         })
     }
 
-    /// Renders a template in a fresh scope. The names it assigns are discarded.
-    #[wasm_bindgen(unchecked_return_type = "Promise<string>", return_description = "The rendered text.")]
+    /// Renders `source` as the document at `uri`, without fetching it.
+    ///
+    /// Imports in `source` resolve against the URL of `uri`, and an import of that URL
+    /// itself gives `undefined` (a cycle). A source with no real location, such as an
+    /// unsaved buffer, can use any URL, for example one next to the documents it imports.
+    ///
+    /// The promise rejects only if `uri` cannot be resolved to a URL.
+    #[wasm_bindgen(unchecked_return_type = "Promise<TexlDocument>", return_description = "The document.")]
     pub fn render(
         &self,
+        #[wasm_bindgen(param_description = "The URL of the document, resolved against `baseUrl`.")]
+        uri: &str,
         #[wasm_bindgen(param_description = "The template source.")]
-        template: String,
+        source: String,
     ) -> js_sys::Promise {
         let engine = self.engine.clone();
+        let url = loader::resolve_document_url(uri, self.base_url.as_ref());
         wasm_bindgen_futures::future_to_promise(async move {
-            Ok(JsValue::from_str(&engine.render(&template).await))
+            let url = url.map_err(|e| JsValue::from_str(&e))?;
+            Ok(swan_value_to_js(&engine.render(&url, &source).await))
+        })
+    }
+
+    /// Fetches the source of the document at `uri`, without rendering it. Nothing is
+    /// cached: every call fetches again.
+    ///
+    /// The promise rejects only if `uri` cannot be resolved to a URL.
+    #[wasm_bindgen(
+        unchecked_return_type = "Promise<string | null>",
+        return_description = "The source, or `null` if it cannot be fetched."
+    )]
+    pub fn fetch(
+        &self,
+        #[wasm_bindgen(param_description = "The URL of the document, resolved against `baseUrl`.")]
+        uri: &str,
+    ) -> js_sys::Promise {
+        let engine = self.engine.clone();
+        let url = loader::resolve_document_url(uri, self.base_url.as_ref());
+        wasm_bindgen_futures::future_to_promise(async move {
+            let url = url.map_err(|e| JsValue::from_str(&e))?;
+            Ok(engine.fetch(&url).await.map_or(JsValue::NULL, |source| JsValue::from_str(&source)))
         })
     }
 
     /// Creates a context: a scope that keeps its bindings across renders.
     ///
-    /// With a `uri`, the context stands for the document at that URL: imports in its
-    /// templates resolve against it, as in a document loaded with `load`. Nothing is
-    /// loaded from it. Without one, imports resolve against `baseUrl`, as in `render`.
-    ///
-    /// Throws if `uri` cannot be resolved to a URL.
+    /// A context is not a document: its templates cannot import documents (`texl.import`
+    /// is not defined in it). Use `render` or `load` to render documents with imports.
     #[wasm_bindgen(js_name = createContext)]
     pub fn create_context(
         &self,
         #[wasm_bindgen(param_description = "Values bound in the context. Defaults to none.")]
         vars: Option<Object>,
-        #[wasm_bindgen(param_description = "The URL of the document the context stands for, resolved against `baseUrl`. Defaults to none.")]
-        uri: Option<String>,
     ) -> Result<TexlContext, JsValue> {
-        let url = match uri {
-            Some(uri) => Some(loader::resolve_document_url(&uri, self.base_url.as_ref()).map_err(|e| JsValue::from_str(&e))?),
-            None => None,
-        };
-        let scope = self.engine.create_scope(url);
+        let scope = self.engine.create_scope();
         if let Some(vars) = vars {
             for_each_entry(&vars, |name, value| scope.set(name, value))?;
         }
@@ -236,9 +261,10 @@ fn location_href() -> Option<String> {
 }
 
 /// Replaces `time.now`, which reads the system clock: wasm32-unknown-unknown has none
-/// and panics. The engine's `time` namespace is shared, so this changes it for every document.
+/// and panics. The built-in namespaces are shared by every scope of the thread, so this
+/// changes it for every document.
 fn use_js_clock(engine: &Engine) {
-    if let Value::Namespace(time) = engine.create_scope(None).get("time") {
+    if let Value::Namespace(time) = engine.create_scope().get("time") {
         time.set(
             "now",
             Value::Builtin(BuiltinFn::new("time.now", |_| Value::Numb(js_sys::Date::now() / 1000.0))),

@@ -9,8 +9,8 @@ Texl is a text-template engine whose `<% ... %>` tags contain expressions in **S
 - `swan-core` – the Swan language: lexer → parser → evaluator, runtime values, builtins. It has no dependencies.
 - `texl-core` – the template renderer plus the `Engine` (scope setup, document loading, `texl.import`). It depends on `swan-core` and `url`.
 - `texl-cli` – the `texl` binary (clap + tokio). It renders a file (a required path, so relative imports can be resolved) to stdout or `-o FILE`, using an `Engine` with a local file loader registered for `file://` and as the default loader.
-- `texl-wasm` – published on npm as `@onlabsorg/texl`. wasm-bindgen bindings for the web only (a Node.js crate is planned separately): a `TexlEngine` class (`load`, `render`, `set`, `createContext`, `baseUrl`) and a `TexlContext` (`get`/`set`/`names`/`render`).
-- `pytexl` – Python bindings (PyO3 0.30, abi3-py310, built with maturin). The native module `pytexl._pytexl` (`src/`) is wrapped by the pure-Python package `python/pytexl`: `Engine` (`set`, `add_loader`, `set_default_loader`, async `load`/`render`, `create_context`, `base_url`), `Context`, `Document`, plus the native `Promise` and `Function`, and `pytexl.loaders` (file loader, also the default; HTTP(S) loader).
+- `texl-wasm` – published on npm as `@onlabsorg/texl`. wasm-bindgen bindings for the web only (a Node.js crate is planned separately): a `TexlEngine` class (`fetch`, `load`, `render(uri, source)`, `set`, `createContext`, `baseUrl`) and a `TexlContext` (`get`/`set`/`names`/`render`).
+- `pytexl` – Python bindings (PyO3 0.30, abi3-py310, built with maturin). The native module `pytexl._pytexl` (`src/`) is wrapped by the pure-Python package `python/pytexl`: `Engine` (`set`, `add_loader`, `set_default_loader`, async `fetch`/`load`/`render(uri, source)`, `create_context`, `base_url`), `Context`, `Document`, plus the native `Promise` and `Function`, and `pytexl.loaders` (file loader, also the default; HTTP(S) loader).
 
 Planned crates (`texl.nvim`, `vscode-texl`) are commented out in the root `Cargo.toml`.
 
@@ -51,7 +51,7 @@ Rules:
 cargo build                                   # whole workspace
 cargo test                                    # all Rust unit tests (they live in #[cfg(test)] modules inside src files)
 cargo test -p swan-core                       # one crate
-cargo test -p texl-core test_engine_caches    # tests whose name contains this string
+cargo test -p texl-core test_engine_diamond   # tests whose name contains this string
 cargo run -p texl-cli -- texl-cli/tests/fixtures/sample.texl   # render a sample template
 
 cargo test -p texl-wasm --test browser       # builds texl-wasm with wasm-pack and runs tests/web/index.html in headless Chrome (skipped if either is missing)
@@ -77,7 +77,7 @@ Invariants that apply across the crate:
 - **Single-threaded, `Rc`-based.** `Value` clones are cheap, and `Scope`, `Promise` and `BuiltinFn` are shared handles. Nothing is `Send`.
 - `Scope` is both the lexical environment and the storage behind `Namespace`. It uses parent-chain (prototype) lookup, and `new_child()` creates a child scope.
 - `Promise` (`value/promise.rs`) is a single-assignment value that never rejects. Code chains on it with `then`, and Swan code chains with the `~>` operator (precedence 13, `evaluator/then_operation.rs`).
-- `builtins::root_scope()` builds the global scope with the `bool`, `numb`, `text`, `list`, `nspace`, `promise`, `undef`, `math` and `time` namespaces plus root functions.
+- `builtins::root_scope()` returns a new, empty user scope below a per-call layer holding `bind`/`label` (which hold the user scope as a `WeakScope`, so no cycle), below a thread-local built-ins scope with the `bool`, `numb`, `text`, `list`, `nspace`, `promise`, `undef`, `math` and `time` namespaces plus root functions. The built-ins scope is shared by every root scope of the thread and never freed (its namespaces are its children); it and its namespaces are frozen (`Scope::freeze`: Swan `=`/`:` in them give `Undefined`, host `Scope::set` still works, children are not frozen); a root scope is freed with its last reference. Swan closures (`Func`) still capture their defining scope strongly, so a scope that stores a function defined in it is never freed.
 
 `evaluator.rs` handles most node kinds itself. Operations with more involved logic are in the `evaluator/*_operation(s).rs` submodules.
 
@@ -87,16 +87,17 @@ The language manual is `docs/src/swan/` (part of the documentation book, see bel
 
 - `template::render(template, &scope)` is `async`. It evaluates each `<% expr %>` in order against one shared scope, so assignments carry over to later tags. When a tag returns a `Value::Promise`, rendering waits for it to resolve before continuing.
 - `helpers.rs` keeps the core runtime-agnostic. The host can pass a `SpawnFn` to run background tasks (tokio, or `spawn_local` in wasm). If it does not, tasks go onto a thread-local queue that `run_pending()` drains. `promise_async(spawner, fut)` turns a Rust future into a Swan `Promise`.
-- `Engine::create_scope(base_url)` creates a child of the base scope with its own `texl` namespace; `texl.import` resolves relative URIs against the (normalized) `base_url`, or against `/` if it is `None`. `Engine::load` and `Engine::render` build their scopes with it; the bindings expose it as `createContext(vars, uri)` / `create_context(vars, uri)`.
-- `Engine::new(spawner)` holds the base scope (`root_scope()` plus anything added with `add_builtin`), loaders registered per URL scheme (`add_loader`), a default loader for scheme-less paths (`add_default_loader`), and a cache keyed by normalized URL.
-  - Every document scope gets a `texl` namespace whose `import` builtin is bound to that scope. `texl.import(uri)` always returns a Promise that resolves to `{uri, source, data, rendering}`.
-  - The cache holds the pending promise while a document is loading, so concurrent imports of the same document share one load. Once loading finishes, the cache holds the resolved namespace.
-  - If no loader matches or the load fails, the result is `Nothing` and the cache entry is removed.
+- `Engine::new(spawner)` holds configuration only: the globals added with `add_builtin` (a name → value map), loaders registered per URL scheme (`add_loader`) and a default loader for scheme-less paths (`add_default_loader`). There is no engine-wide scope or cache.
+- `Engine::create_scope()` creates a new `root_scope()`, copies the globals into it, and returns a child of it with a new, empty `texl` namespace (no `import`). Globals added later do not reach existing scopes. `bind`/`label` write into that root scope, so they are per document (visible to its tags, not in its `data`). The bindings expose it as `createContext(vars)` / `create_context(vars)`.
+- `fetch(url) -> Option<String>` normalizes the URL (fragment removed, query kept as is) and calls the matching loader; no caching. `render(url, source) -> Value` renders a source as the document at `url` and returns `{uri, source, data, rendering}`. `load(url)` is `fetch` + `render` (`Nothing` if the fetch fails, without rendering).
+  - Each `render` creates an `Imports` (per-render import cache + wait-for graph), stores the root document in it as a pending promise, and adds `import` to the `texl` namespace of every document it renders. The `import` builtin holds `Imports` weakly (only `render` and running import tasks hold it strongly), so a finished rendering is freed when the host drops the document; an import called after that starts a new `Imports`. `texl.import` fetches and renders the imported document in its own `create_scope()` scope (not a child of the importer's), with the same `Imports`.
+  - The cache stores the promise as soon as an import starts, so concurrent imports share one load. A failed load resolves to `Nothing` and removes the entry.
+  - Cycles: before a document X waits for a pending Y, a DFS checks whether Y reaches X in the wait-for graph (X → X counts); if so the import returns `Undefined` (`import.cycle`), otherwise the edge X → Y is added and removed when Y resolves.
 - In tests, async code runs on a small busy-polling `block_on` that calls `helpers::run_pending()` on every iteration (see the tests in `engine.rs`).
 
 ### texl-wasm
 
-`TexlEngine` wraps an `Engine` that spawns tasks with `wasm_bindgen_futures::spawn_local`. `loader.rs` fetches `http://` and `https://` URLs with the global `fetch`. Imports inside a document fetched by URL resolve to full URLs (absolute paths against the document's root), so the default loader only receives scheme-less paths from templates without a document URL (`render`, contexts created without a `uri`); it fetches them from the root folder of the engine's base URL, which defaults to `location.href`. `TexlEngine::load` and `createContext(vars, uri)` resolve their URI against the base URL too. `time.now` is replaced with a JS-clock version, since `SystemTime::now` panics on wasm32-unknown-unknown.
+`TexlEngine` wraps an `Engine` that spawns tasks with `wasm_bindgen_futures::spawn_local`. `loader.rs` fetches `http://` and `https://` URLs with the global `fetch`. `fetch`, `render(uri, source)` and `load` resolve their URI against the base URL (default `location.href`), so every document has a full URL and its imports resolve to full URLs (absolute paths against the document's root): there is no default loader. Invalid URIs reject the returned promise. `time.now` is replaced with a JS-clock version, since `SystemTime::now` panics on wasm32-unknown-unknown.
 
 `convert.rs` converts between JS values and Swan `Value`s in both directions. JS functions become builtins. JS Promises and async functions become Swan Promises (a rejection resolves to `Nothing`), and Swan Promises come back to JS as JS Promises. `load` and `render` return JS Promises.
 

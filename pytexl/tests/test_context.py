@@ -32,7 +32,7 @@ class ContextTest(unittest.IsolatedAsyncioTestCase):
     async def test_set_shadows_globals(self):
         self.context.set("g", "local")
         self.assertEqual(await self.context.render("<% g %>"), "local")
-        self.assertEqual(await self.engine.render("<% g %>"), "global")
+        self.assertEqual((await self.engine.render("doc.texl", "<% g %>")).rendering, "global")
 
     async def test_render_interpolates(self):
         self.assertEqual(await self.context.render("Hello <% name %>!"), "Hello World!")
@@ -165,7 +165,7 @@ class AwaitableOutsideLoopTest(unittest.TestCase):
             return "late"
 
         engine = pytexl.Engine({"value": compute()})
-        self.assertEqual(asyncio.run(engine.render("<% value %>")), "late")
+        self.assertEqual(asyncio.run(engine.render("doc.texl", "<% value %>")).rendering, "late")
 
 
 class PromiseTest(unittest.IsolatedAsyncioTestCase):

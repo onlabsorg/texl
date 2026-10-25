@@ -6,7 +6,7 @@ in Swan, and rendering replaces the tag with the value of its expression.
 Example:
     >>> import asyncio, pytexl
     >>> engine = pytexl.Engine({"user": {"name": "Ada"}})
-    >>> asyncio.run(engine.render("Hello <% user.name %>!"))
+    >>> asyncio.run(engine.render("hello.texl", "Hello <% user.name %>!")).rendering
     'Hello Ada!'
 
 The engine is asynchronous: rendering waits for the promises that tags return,
@@ -58,7 +58,8 @@ Loader = Callable[[str], Union[str, Awaitable[str]]]
 
 @dataclass(frozen=True)
 class Document:
-    """A loaded document, as returned by :meth:`Engine.load`.
+    """A rendered document, as returned by :meth:`Engine.load` and
+    :meth:`Engine.render`.
 
     Attributes:
         uri: The URL of the document.
@@ -96,23 +97,23 @@ class _ThreadBound:
 
 
 class Engine(_ThreadBound):
-    """Renders templates and loads documents from files and URLs.
+    """Renders documents and loads them from files and URLs.
 
     An engine starts with three loaders (see :mod:`pytexl.loaders`): local
     files for ``file://`` URLs and for paths without a scheme, and HTTP for
     ``http://`` and ``https://`` URLs. Add others with :meth:`add_loader`.
 
-    Imports resolve against the importing document: relative paths against
-    its folder, absolute paths (``/dir/doc.texl``) against its root. Templates
-    without a document (:meth:`render`, contexts created without a ``uri``)
-    resolve imports against the root path ``/``, which the default loader
-    reads from the local file system.
+    Every document has a URL: the URIs given to :meth:`fetch`, :meth:`render`
+    and :meth:`load` resolve against :attr:`base_url`. Imports resolve against
+    the importing document: relative paths against its folder, absolute paths
+    (``/dir/doc.texl``) against its root.
 
-    Each document is loaded and rendered at most once per engine: later loads
-    and imports of the same URL share the first result.
-
-    The globals, documents and engine-wide names (bound by templates with
-    ``bind``) are shared by everything the engine renders.
+    The engine holds configuration only: globals and loaders. Every
+    :meth:`render` and :meth:`load` starts from a new scope and a new import
+    cache: within one rendering, each imported document is fetched and
+    rendered once; the next rendering fetches it again. An imported document
+    renders in its own scope: it sees the globals, but not the names of its
+    importer. To cache documents across renders, wrap the loaders.
 
     An engine, its contexts and the promises and functions that come from
     them can only be used on the thread that created the engine. The methods
@@ -120,8 +121,8 @@ class Engine(_ThreadBound):
 
     Args:
         globals: Values bound as globals in every template and document,
-            including contexts created earlier. Optional.
-        base_url: The URL that :meth:`load` resolves relative URIs against. A
+            Optional.
+        base_url: The URL that relative URIs resolve against. A
             path (:class:`os.PathLike`) is converted to a ``file://`` URL; a
             directory gets a final slash, so that URIs resolve inside it.
             Defaults to the current working directory.
@@ -155,8 +156,8 @@ class Engine(_ThreadBound):
     def set(self, name: str, value: Any) -> None:
         """Binds a global, visible to every template and document of the engine.
 
-        The global is also visible in the contexts created earlier. A global
-        with the same name is replaced.
+        Contexts created earlier and renderings in progress do not see it. A
+        global with the same name is replaced.
 
         Args:
             name: The name of the global.
@@ -194,6 +195,11 @@ class Engine(_ThreadBound):
         paths before calling the loader: they are absolute and percent-encoded,
         such as ``/dir/my%20doc.texl``.
 
+        Note:
+            The URIs given to the engine resolve against :attr:`base_url` to
+            full URLs, and so do the imports in their documents, so the
+            engine does not currently produce paths without a scheme.
+
         Args:
             loader: A function that takes the path and returns the source of the
                 document, or an awaitable of it, like the loaders of
@@ -205,17 +211,60 @@ class Engine(_ThreadBound):
         """
         self._native.set_default_loader(loader)
 
-    async def load(self, uri: str | os.PathLike[str]) -> Document | None:
-        """Loads and renders a document.
+    async def fetch(self, uri: str | os.PathLike[str]) -> str | None:
+        """Returns the source of a document, without rendering it.
 
-        The source is rendered in a fresh scope, and the imports inside it
-        resolve against the URL of the document. The result is cached, so later
-        loads and imports of the same URL return it without loading again.
+        Nothing is cached: every call runs the loader again.
 
         Args:
             uri: The URL of the document, resolved against :attr:`base_url`. A
                 path (:class:`os.PathLike`) is resolved against the current
                 working directory and converted to a ``file://`` URL.
+
+        Returns:
+            The source, or ``None`` if it cannot be loaded.
+
+        Raises:
+            ValueError: If ``uri`` cannot be resolved to a URL.
+
+        Example:
+            >>> source = await engine.fetch("templates/report.texl")
+        """
+        return await self._native.fetch(_uri(uri))
+
+    async def render(self, uri: str | os.PathLike[str], source: str) -> Document:
+        """Renders a source as the document at a URL, without loading it.
+
+        The source is rendered in a new scope, and the imports inside it
+        resolve against the URL of ``uri``. An import of that URL itself gives
+        an :class:`Undefined` (a cycle). A source with no real location, such
+        as standard input or an unsaved buffer, can use any URL, for example a
+        file in the folder of the documents it imports.
+
+        Args:
+            uri: The URL of the document, resolved like the URI of
+                :meth:`fetch`.
+            source: The template source.
+
+        Returns:
+            The document.
+
+        Raises:
+            ValueError: If ``uri`` cannot be resolved to a URL.
+
+        Example:
+            >>> doc = await engine.render(Path("templates/draft.texl"), "2 + 2 = <% 2 + 2 %>")
+            >>> doc.rendering
+            '2 + 2 = 4'
+        """
+        return _document(await self._native.render(_uri(uri), source))
+
+    async def load(self, uri: str | os.PathLike[str]) -> Document | None:
+        """Loads and renders a document: :meth:`fetch` followed by :meth:`render`.
+
+        Args:
+            uri: The URL of the document, resolved like the URI of
+                :meth:`fetch`.
 
         Returns:
             The document, or ``None`` if it cannot be loaded.
@@ -227,61 +276,28 @@ class Engine(_ThreadBound):
             >>> doc = await engine.load("templates/report.texl")
             >>> print(doc.rendering if doc else "not found")
         """
-        if isinstance(uri, os.PathLike):
-            uri = Path(uri).resolve().as_uri()
-        doc = await self._native.load(uri)
-        return None if doc is None else Document(doc["uri"], doc["source"], doc["data"], doc["rendering"])
+        doc = await self._native.load(_uri(uri))
+        return None if doc is None else _document(doc)
 
-    async def render(self, template: str) -> str:
-        """Renders a template in a fresh scope.
-
-        The names that the template binds with ``=`` or ``:`` are discarded
-        afterwards. Use a :class:`Context` to keep them.
-
-        Args:
-            template: The template source.
-
-        Returns:
-            The rendered text.
-
-        Example:
-            >>> await engine.render("2 + 2 = <% 2 + 2 %>")
-            '2 + 2 = 4'
-        """
-        return await self._native.render(template)
-
-    def create_context(
-        self,
-        vars: Mapping[str, Any] | None = None,
-        uri: str | os.PathLike[str] | None = None,
-    ) -> Context:
+    def create_context(self, vars: Mapping[str, Any] | None = None) -> Context:
         """Creates a context: a scope that keeps its names across renders.
 
-        With a ``uri``, the context stands for the document at that URL: the
-        imports in its templates resolve against it, as in a document loaded
-        with :meth:`load`. Nothing is loaded from it, so a context can render
-        a document whose source you already have. Without one, imports resolve
-        against the root path ``/``, as in :meth:`render`.
+        A context is not a document: its templates cannot import documents
+        (``texl.import`` is not defined in it). Use :meth:`render` or
+        :meth:`load` to render documents that import others.
 
         Args:
             vars: Values bound in the context. Optional.
-            uri: The URL of the document that the context stands for, resolved
-                like the URI of :meth:`load`. Optional.
 
         Returns:
             A new context, which also sees the globals of the engine.
 
-        Raises:
-            ValueError: If ``uri`` cannot be resolved to a URL.
-
         Example:
             >>> context = engine.create_context({"user": "Ada"})
-            >>> report = engine.create_context(uri=Path("templates/report.texl"))
-            >>> text = await report.render(source)
+            >>> await context.render("Hello <% user %>!")
+            'Hello Ada!'
         """
-        if isinstance(uri, os.PathLike):
-            uri = Path(uri).resolve().as_uri()
-        return Context(self._native.create_context(vars, uri))
+        return Context(self._native.create_context(vars))
 
 
 class Context(_ThreadBound):
@@ -338,7 +354,8 @@ class Context(_ThreadBound):
         """Returns the names bound in the context, sorted.
 
         Engine globals and built-ins are not included. The list always
-        includes ``texl``, the namespace that holds ``texl.import``.
+        includes ``texl``, the namespace of the engine's helpers (in a
+        context, it has no ``import``).
 
         Returns:
             The sorted names.
@@ -367,6 +384,18 @@ class Context(_ThreadBound):
             'Count: 1'
         """
         return await self._native.render(template)
+
+
+def _uri(uri: str | os.PathLike[str]) -> str:
+    """Returns the URI of a document as a string: a path becomes a ``file://`` URL."""
+    if isinstance(uri, os.PathLike):
+        return Path(uri).resolve().as_uri()
+    return uri
+
+
+def _document(doc: dict[str, Any]) -> Document:
+    """Converts a document namespace into a :class:`Document`."""
+    return Document(doc["uri"], doc["source"], doc["data"], doc["rendering"])
 
 
 def _base_url(base_url: str | os.PathLike[str] | None) -> str:

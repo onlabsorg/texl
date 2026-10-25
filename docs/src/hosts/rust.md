@@ -2,7 +2,7 @@
 
 Two crates make up the Rust API:
 
-- [`texl_core`](../../api/texl_core/index.html) renders templates and loads
+- [`texl_core`](../../api/texl_core/index.html) renders and loads
   documents. Most programs only need its
   [`Engine`](../../api/texl_core/engine/struct.Engine.html).
 - [`swan_core`](../../api/swan_core/index.html) implements the Swan language.
@@ -28,7 +28,7 @@ The examples on this page use [tokio](https://tokio.rs) and
 [url](https://docs.rs/url), but the engine works with any async runtime, or
 with none.
 
-## Rendering a template
+## Rendering a document
 
 ```rust,ignore
 use swan_core::value::Value;
@@ -43,11 +43,19 @@ async fn main() {
         })));
         engine.add_builtin("name", Value::Text("Ada".into()));
 
-        let text = engine.render("Hello <% name %>!").await;
-        assert_eq!(text, "Hello Ada!");
+        let Value::Namespace(doc) = engine.render("/hello.texl", "Hello <% name %>!").await else {
+            unreachable!("render always returns a document")
+        };
+        assert_eq!(doc.get("rendering"), Value::Text("Hello Ada!".into()));
     }).await;
 }
 ```
+
+`Engine::render(url, source)` renders a source as the document at `url`, and
+returns the document: a namespace with the members `uri`, `source`, `data`
+(the names the template bound) and `rendering`. The URL is where the
+template's imports resolve from; a source with no real location, such as
+standard input, can use any URL, for example a file in the working directory.
 
 The engine and Swan values use `Rc`, so they are not `Send`, and rendering
 futures must run on one thread. With tokio, that means a `LocalSet` and
@@ -99,19 +107,30 @@ async fn main() {
 - `add_default_loader(loader)` handles URIs without a scheme. The engine
   normalizes them into absolute paths, such as `/docs/report.texl`.
 
-`Engine::load` returns the document as a namespace with the members `uri`,
-`source`, `data` and `rendering`, or `Nothing` if no loader matches or the
-loader fails. Load a document by an absolute URI, so that the imports inside
-it resolve against its location. The same loaders serve `texl.import` in
-templates, and the engine caches every document it loads.
+Each method does one thing: `Engine::fetch(url)` returns the source of a
+document through its loader (`None` if no loader matches or the loader
+fails), `Engine::render(url, source)` renders it, and `Engine::load(url)` is
+`fetch` followed by `render`. `load` returns the document namespace, or
+`Nothing` if the document cannot be fetched. Load a document by an absolute
+URI, so that the imports inside it resolve against its location. The same
+loaders serve `texl.import` in templates.
 
 `Value` has no `Display` implementation: match on the variant to get the
 text, as above.
 
-When the host already has the source of a document, it can render it without
-a loader: create a scope with the document's URI, with
-`engine.create_scope(Some(uri))`, and pass it to `template::render`. The
-imports inside it resolve against the URI, as if the document had been loaded.
+### Caching
+
+The engine holds configuration only: its built-ins and loaders. Every
+`render` and `load` starts from a new scope and a new import cache, dropped
+with the rendering. Within one rendering, each imported document is fetched
+and rendered once, and concurrent imports of it share that rendering; the
+next rendering fetches it again. Nothing is cached across renders: a host
+that wants to wraps its loaders. Imported documents render in their own
+scopes, and do not see the names of their importer.
+
+An import that closes a cycle, such as a document importing itself, returns
+`Undefined` instead of waiting forever. See
+[Import cycles](../templates/documents.md#import-cycles).
 
 ## Globals and host functions
 
@@ -145,8 +164,10 @@ async fn main() {
             }
         })));
 
-        let text = engine.render("<% user.name %> <% repeat (\"*\", 3) %>").await;
-        assert_eq!(text, "Ada ***");
+        let Value::Namespace(doc) = engine.render("/doc.texl", "<% user.name %> <% repeat (\"*\", 3) %>").await else {
+            unreachable!()
+        };
+        assert_eq!(doc.get("rendering"), Value::Text("Ada ***".into()));
     }).await;
 }
 ```
@@ -186,18 +207,20 @@ async fn main() {
             })
         })));
 
-        assert_eq!(engine.render("<% slow_double 21 %>").await, "42");
+        let Value::Namespace(doc) = engine.render("/doc.texl", "<% slow_double 21 %>").await else {
+            unreachable!()
+        };
+        assert_eq!(doc.get("rendering"), Value::Text("42".into()));
     }).await;
 }
 ```
 
 ## Keeping names between renders
 
-`Engine::render` uses a fresh scope each time. To render several templates in
+`Engine::render` uses a new scope each time. To render several templates in
 the same scope, create one with `Engine::create_scope` and call
-`template::render`. Its argument is the URI of the document the scope stands
-for, which `texl.import` resolves relative URIs against; `None` resolves them
-against the root path `/`, as in `Engine::render`:
+`template::render`. Such a scope is not a document: its `texl` namespace has
+no `import`, so its templates cannot import documents.
 
 ```rust,ignore
 use swan_core::value::Value;
@@ -209,7 +232,7 @@ async fn main() {
         let engine = Engine::new(Some(spawner_fn(|task| {
             tokio::task::spawn_local(task);
         })));
-        let scope = engine.create_scope(None);
+        let scope = engine.create_scope();
 
         template::render("<% total = 6 * 7 %>", &scope).await;
         assert_eq!(scope.get("total"), Value::Numb(42.0));
@@ -227,6 +250,7 @@ run the queued tasks:
 
 ```rust,ignore
 use std::{future::Future, pin::pin, task::{Context, Poll, Waker}};
+use swan_core::value::Value;
 use texl_core::{Engine, helpers::run_pending};
 
 fn block_on<F: Future>(future: F) -> F::Output {
@@ -242,7 +266,8 @@ fn block_on<F: Future>(future: F) -> F::Output {
 
 fn main() {
     let engine = Engine::new(None);
-    assert_eq!(block_on(engine.render("<% 6 * 7 %>")), "42");
+    let Value::Namespace(doc) = block_on(engine.render("/doc.texl", "<% 6 * 7 %>")) else { unreachable!() };
+    assert_eq!(doc.get("rendering"), Value::Text("42".into()));
 }
 ```
 

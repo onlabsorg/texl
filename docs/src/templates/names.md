@@ -87,16 +87,17 @@ Each rendering of a template gets its own scope for the names it binds, below
 the globals and the built-ins. Binding a global or built-in name in a template
 hides it for the rest of that template only.
 
-An imported document is rendered in a scope below the scope of the template
-that imports it, so it can read the importer's names (see
-[Passing data to a partial](documents.md#passing-data-to-a-partial)).
+An imported document is rendered in a scope of its own, below the globals and
+the built-ins, not below the scope of the template that imports it: it cannot
+read the importer's names, and the importer sees its names only through the
+document's `data` (see
+[Each document has its own names](documents.md#each-document-has-its-own-names)).
 
-### Engine-wide names
+### Document-wide names
 
 [`bind`](../swan/builtins/root.md#bind) binds a name in the global scope of
-the engine. The name is then visible in every template and document that the
-engine renders afterwards, not only in the current one. That is how a
-document shares a library with its importer (see
-[Using a library](documents.md#using-a-library)), but it also means that two
-documents binding the same global name overwrite each other. Choose distinctive
-names for globals.
+the document, wherever it is called from: inside a function, or in the
+callback of a promise. That is how a document makes a library available to its
+later tags (see [Using a library](documents.md#using-a-library)). A name bound
+with `bind` is not visible in other documents, nor in later renderings, and it
+is not part of the document's `data`.

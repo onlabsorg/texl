@@ -285,11 +285,15 @@ pub fn eval(node: &Node, scope: &Scope) -> Value {
             map_values!(promises, |p| then_operation::eval(p, func.clone(), bin.pos))
         }
 
-        // Assignment: `name = V` - evaluates to Nothing, binds names in scope. Invalid names give an Undefined and nothing is bound.
+        // Assignment: `name = V` - evaluates to Nothing, binds names in scope. Invalid names, or a
+        // frozen scope, give an Undefined and nothing is bound.
         Node::AssignmentOp(bin) => {
             let names = eval_names(&bin.lho);
             if matches!(names, Value::Undefined(_)) {
                 return invalid_names("assignment", names, bin.pos);
+            }
+            if scope.is_frozen() {
+                return frozen_scope("assignment", scope, bin.pos);
             }
 
             let values = eval(&bin.rho, scope);
@@ -297,11 +301,15 @@ pub fn eval(node: &Node, scope: &Scope) -> Value {
             Value::Nothing
         }
 
-        // Labelling: `name : V` - evaluates to V, binds names in scope. Invalid names give an Undefined and nothing is bound.
+        // Labelling: `name : V` - evaluates to V, binds names in scope. Invalid names, or a
+        // frozen scope, give an Undefined and nothing is bound.
         Node::LabellingOp(bin) => {
             let names = eval_names(&bin.lho);
             if matches!(names, Value::Undefined(_)) {
                 return invalid_names("labelling", names, bin.pos);
+            }
+            if scope.is_frozen() {
+                return frozen_scope("labelling", scope, bin.pos);
             }
 
             let values = eval(&bin.rho, scope);
@@ -506,6 +514,12 @@ pub fn eval(node: &Node, scope: &Scope) -> Value {
 /// The result is `Undef::BinaryOperation { op, lhv: names, rhv: Nothing, pos }`.
 fn invalid_names(op: &'static str, names: Value, pos: usize) -> Value {
     Value::undef_binary(op, names, Value::Nothing, pos)
+}
+
+/// The `Undefined` of an assignment or labelling (`op`) evaluated in a frozen scope.
+/// The right side is not evaluated, and the frozen scope is the left value.
+fn frozen_scope(op: &'static str, scope: &Scope, pos: usize) -> Value {
+    Value::undef_binary(op, Value::Namespace(scope.clone()), Value::Nothing, pos)
 }
 
 /// Resolves an AST node into names, without evaluating it.

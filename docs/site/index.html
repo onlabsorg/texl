@@ -139,21 +139,21 @@ texl report.texl -o report.md</code></pre>
 <pre><code>import init, { TexlEngine } from "@onlabsorg/texl";
 await init();
 const engine = new TexlEngine({ user: "Ada" });
-await engine.render("Hi &lt;% user %&gt;!");</code></pre>
+const doc = await engine.render("hi.texl", "Hi &lt;% user %&gt;!");</code></pre>
       </div>
       <div class="tx-card tx-host">
         <h3><a href="book/hosts/python.html">Python</a></h3>
         <p>Render templates in Python, with your data and async functions.</p>
 <pre><code>import asyncio, pytexl
 engine = pytexl.Engine({"user": "Ada"})
-asyncio.run(engine.render("Hi &lt;% user %&gt;!"))</code></pre>
+doc = asyncio.run(engine.render("hi.texl", "Hi &lt;% user %&gt;!"))</code></pre>
       </div>
       <div class="tx-card tx-host">
         <h3><a href="book/hosts/rust.html">Rust</a></h3>
         <p>Embed the engine, with your own loaders and host functions.</p>
 <pre><code>let engine = Engine::new(spawner);
 engine.add_builtin("user", Value::Text("Ada".into()));
-let text = engine.render("Hi &lt;% user %&gt;!").await;</code></pre>
+let doc = engine.render("/hi.texl", "Hi &lt;% user %&gt;!").await;</code></pre>
       </div>
     </div>
     <p>A Node.js library is <span class="tx-soon">coming soon</span></p>

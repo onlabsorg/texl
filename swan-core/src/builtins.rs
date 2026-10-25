@@ -33,7 +33,7 @@
 //
 // Adding a root-level function:
 //   1. Write `fn my_fn(arg: Value) -> Value`.
-//   2. Register it in `root_scope()` with `scope.set("my_fn", map_1("my_fn", my_fn))`.
+//   2. Register it in `builtins_scope()` with `scope.set("my_fn", map_1("my_fn", my_fn))`.
 //      `map_1` makes it map over tuples and pass `Nothing` through.
 //
 // Adding a function to a namespace: put it in the matching submodule (`numb`,
@@ -43,7 +43,7 @@
 // so `math.pow 10` returns a function that takes the second argument.
 //
 
-use crate::value::{BuiltinFn, Scope, Undef, Value};
+use crate::value::{BuiltinFn, Scope, Undef, Value, WeakScope};
 use crate::lexer::Lexer;
 use crate::parser::Parser;
 use crate::evaluator::eval;
@@ -72,10 +72,18 @@ mod time;
 
 /// Builds a fresh scope in which every built-in name is available.
 ///
-/// The built-ins live in a parent scope, and the returned scope is an empty
-/// child of it, so user code can shadow a built-in name without changing it.
-/// The global names created by the `bind` and `label` built-ins go into the
-/// returned scope.
+/// The built-ins live in ancestors of the returned scope, which is empty, so
+/// user code can shadow a built-in name without changing it. The global names
+/// created by the `bind` and `label` built-ins go into the returned scope.
+///
+/// The built-in namespaces and constants are created once per thread and
+/// shared by every root scope of that thread; only `bind` and `label`, which
+/// target the returned scope, are created per call. The shared scopes are
+/// frozen (see [`Scope::freeze`]): Swan code cannot bind names in them, so
+/// `text.(size = 0)` gives `Undefined` instead of changing `text.size` for
+/// every root scope. The host can still change them with [`Scope::set`]. Nothing refers back to the
+/// returned scope from its ancestors, so it is freed once the last reference to
+/// it (or to one of its children) is dropped.
 ///
 /// Every evaluation session should start from a scope created here (or from a
 /// child of one).
@@ -94,7 +102,32 @@ mod time;
 /// assert_eq!(eval(&ast, &scope), swan_core::value::Value::Numb(3.0));
 /// ```
 pub fn root_scope() -> Scope {
-    // Built-ins are installed in this base scope.
+    // Layer between the shared built-ins and the user scope, holding `bind` and `label`
+    let binders = BUILTINS.with(Scope::new_child);
+
+    // Fresh empty child scope where user code runs. User code defines and shadows
+    // names here and cannot overwrite the built-ins stored in its ancestors.
+    let user_scope = binders.new_child();
+
+    // `bind` and `label` write into `user_scope`, so they are global from the point
+    // of view of user code, even when called from inside a function body. They hold
+    // it weakly: `user_scope` already holds them through its parent.
+    set_global_binders(&binders, &user_scope);
+
+    // Return the scope in which user code is evaluated
+    user_scope
+}
+
+thread_local! {
+    /// The built-in namespaces and constants, shared by every root scope of the thread.
+    ///
+    /// The namespaces are children of this scope, which also holds them, so it is never
+    /// freed; there is one per thread.
+    static BUILTINS: Scope = builtins_scope();
+}
+
+/// Builds the scope of the built-in namespaces and constants.
+fn builtins_scope() -> Scope {
     let scope = Scope::new();
 
     // Each namespace is registered under its own name, e.g. `math.sqrt`.
@@ -114,30 +147,32 @@ pub fn root_scope() -> Scope {
     scope.set("type" , map_1("type" , type_function));
     scope.set("parse", map_1("parse", parse_function));
 
-    // Fresh empty child scope where user code runs. User code defines and shadows
-    // names here and cannot overwrite the built-ins stored in the parent.
-    let user_scope = scope.new_child();
+    // Shared by every root scope of the thread: Swan code must not change them
+    scope.freeze();
+    for value in scope.0.borrow().bindings.values() {
+        if let Value::Namespace(ns) = value {
+            ns.freeze();
+        }
+    }
 
-    // `bind` and `label` write into `user_scope`, so they are global from the point
-    // of view of user code, even when called from inside a function body.
-    // Each `move` closure needs its own clone.
-    //
-    // NOTE: this creates an Rc cycle (scope -> bind closure -> user_scope -> scope),
-    // so a root scope is never freed. `Scope` has no weak reference, so this is accepted.
-    let bind_target = user_scope.clone();
+    scope
+}
+
+/// Binds `bind` and `label` in `scope`, so that they bind names in `target`.
+/// `target` is held weakly; once it is dropped, they bind nothing.
+fn set_global_binders(scope: &Scope, target: &Scope) {
+    // Each `move` closure needs its own clone
+    let bind_target = target.downgrade();
     scope.set("bind", Value::Builtin(BuiltinFn::new(
         "bind",
         move |arg| set_global("bind", arg, bind_target.clone(), false)
     )));
 
-    let label_target = user_scope.clone();
+    let label_target = target.downgrade();
     scope.set("label", Value::Builtin(BuiltinFn::new(
         "label",
         move |arg| set_global("label", arg, label_target.clone(), true)
     )));
-
-    // Return the scope in which user code is evaluated
-    user_scope
 }
 
 
@@ -199,7 +234,7 @@ fn parse_function(arg: Value) -> Value {
 ///
 /// - `op`: `"bind"` or `"label"`, used as the label of the `Undefined` result.
 /// - `name_arg`: a `Text`, a tuple of `Text`s, or `Nothing`. These are the names.
-/// - `target_scope`: the scope where the names are bound.
+/// - `target_scope`: the scope where the names are bound (nothing is bound if it was dropped).
 /// - `retval`: `false` for `bind` (like `=`, returns `Nothing`),
 ///   `true` for `label` (like `:`, returns the bound values).
 ///
@@ -207,7 +242,7 @@ fn parse_function(arg: Value) -> Value {
 /// using `assignment_operation::eval`. That is the same function behind `=` and `:`,
 /// so mismatched numbers of names and values follow the same rules as those operators.
 /// If `name_arg` is not valid names, returns `Undefined` (unary operation `op`).
-fn set_global(op: &'static str, name_arg: Value, target_scope: Scope, retval: bool) -> Value {
+fn set_global(op: &'static str, name_arg: Value, target_scope: WeakScope, retval: bool) -> Value {
 
     // Convert Text / tuple of Text into Name / tuple of Name
     let names = wrap_names(&name_arg);
@@ -216,7 +251,9 @@ fn set_global(op: &'static str, name_arg: Value, target_scope: Scope, retval: bo
     }
 
     Value::Builtin(BuiltinFn::new(op, move |val| {
-        assignment_operation::eval(&target_scope, &names, &val);
+        if let Some(target) = target_scope.upgrade() {
+            assignment_operation::eval(&target, &names, &val);
+        }
         if retval { val } else { Value::Nothing }
     }))
 }
@@ -385,5 +422,47 @@ mod tests {
         // Invalid names give Undefined labelled "label"
         assert!(matches!(run("label 5"), Value::Undefined(Undef::UnaryOperation { op: "label", .. })));
         assert!(matches!(run(r#"label ("a", 5)"#), Value::Undefined(Undef::UnaryOperation { op: "label", .. })));
+    }
+
+    #[test]
+    fn test_root_scopes_share_the_built_ins_but_not_their_globals() {
+        let (a, b) = (root_scope(), root_scope());
+        let (Value::Namespace(text_a), Value::Namespace(text_b)) = (a.get("text"), b.get("text")) else { panic!() };
+        assert!(std::rc::Rc::ptr_eq(&text_a.0, &text_b.0));
+
+        let ast = Parser::new(Lexer::new(r#"(() -> bind "x" 1)()"#)).parse();
+        eval(&ast, &a);
+        assert_eq!(a.get("x"), Value::Numb(1.0));
+        assert_eq!(b.get("x"), Value::Nothing);
+    }
+
+    #[test]
+    fn test_built_ins_cannot_be_changed_from_swan() {
+        let scope = root_scope();
+        let run_in = |src: &str| eval(&Parser::new(Lexer::new(src)).parse(), &scope);
+
+        assert!(matches!(run_in("text.(size = 0)"), Value::Undefined(Undef::BinaryOperation { op: "assignment", .. })));
+        assert!(matches!(run_in("math.(pi : 3)"), Value::Undefined(Undef::BinaryOperation { op: "labelling", .. })));
+        assert!(matches!(run_in("(nspace.parent text).(TRUE = 0)"), Value::Undefined(_)));
+        assert_eq!(run_in(r#"text.size "abc""#), Value::Numb(3.0));
+        assert_eq!(run_in("TRUE"), Value::Bool(true));
+
+        // Function calls on a frozen scope bind their parameters in a child scope
+        assert_eq!(run_in("text.((x -> x + 1) 1)"), Value::Numb(2.0));
+        // The user scope is not frozen
+        assert_eq!(run_in("size = 0, size"), Value::Numb(0.0));
+    }
+
+    #[test]
+    fn test_root_scopes_are_freed() {
+        let scope = root_scope();
+        let ast = Parser::new(Lexer::new(r#"bind "x" 1, label "y" 2"#)).parse();
+        eval(&ast, &scope);
+        let binders = scope.0.borrow().parent.clone().unwrap();
+        let (weak_scope, weak_binders) = (scope.downgrade(), binders.downgrade());
+
+        drop((scope, binders));
+        assert!(weak_scope.upgrade().is_none());
+        assert!(weak_binders.upgrade().is_none());
     }
 }

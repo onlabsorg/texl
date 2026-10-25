@@ -17,8 +17,9 @@
 //! - [`template::render`] renders a template in a given [`Scope`](swan_core::value::Scope).
 //!   It is the low-level entry point.
 //! - [`Engine`] adds what a full application needs: globals shared by every
-//!   template, loaders that fetch documents by URI, `texl.import` with relative
-//!   URIs, and a cache.
+//!   template, loaders that fetch documents by URL, and documents that import
+//!   each other with `texl.import`, with relative URIs and an import cache per
+//!   rendering.
 //! - [`helpers`] connects the engine to the host's async runtime.
 //!
 //! # Async rendering
@@ -32,7 +33,7 @@
 //! use texl_core::{Engine, helpers::spawner_fn};
 //!
 //! let engine = Engine::new(Some(spawner_fn(|task| { tokio::task::spawn_local(task); })));
-//! let text = tokio::task::LocalSet::new().run_until(engine.render("<% 6 * 7 %>")).await;
+//! let doc = tokio::task::LocalSet::new().run_until(engine.render("/main.texl", "<% 6 * 7 %>")).await;
 //! ```
 //!
 //! Without a runtime, pass `None` and drive the futures yourself, calling

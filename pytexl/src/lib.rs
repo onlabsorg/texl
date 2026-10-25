@@ -29,7 +29,8 @@ use runtime::AwaitPy;
 /// The native engine behind `pytexl.Engine`.
 ///
 /// Args:
-///     base_url (str): The absolute URL that `load` resolves relative URIs against.
+///     base_url (str): The absolute URL that `fetch`, `load` and `render` resolve
+///         relative URIs against.
 ///
 /// Raises:
 ///     ValueError: If `base_url` is not an absolute URL.
@@ -78,6 +79,21 @@ impl NativeEngine {
         resolve_document_url(uri, &self.base_url).map_err(PyValueError::new_err)
     }
 
+    /// Returns a promise of the source of the document at `uri` (resolved against the base
+    /// URL), or of None if it cannot be fetched.
+    ///
+    /// Raises:
+    ///     ValueError: If `uri` cannot be resolved to a URL.
+    fn fetch(&self, uri: &str) -> PyResult<Promise> {
+        let url = self.resolve(uri)?;
+        let engine = self.engine.clone();
+        Ok(Promise {
+            inner: runtime::promise_of(async move {
+                engine.fetch(&url).await.map_or(Value::Nothing, |source| Value::Text(source.into()))
+            }),
+        })
+    }
+
     /// Returns a promise of the document at `uri` (resolved against the base URL), as a
     /// dict, or of None if it cannot be loaded.
     ///
@@ -89,22 +105,21 @@ impl NativeEngine {
         Ok(Promise { inner: runtime::promise_of(async move { engine.load(&url).await }) })
     }
 
-    /// Returns a promise of the rendering of `template`, in a fresh scope.
-    fn render(&self, template: String) -> Promise {
-        let engine = self.engine.clone();
-        Promise { inner: runtime::promise_of(async move { Value::Text(engine.render(&template).await.into()) }) }
-    }
-
-    /// Creates a native context, with the bindings of the mapping `vars`. Imports in it
-    /// resolve against `uri` (resolved against the base URL), or against the root path
-    /// `/` if it is None.
+    /// Returns a promise of `source` rendered as the document at `uri` (resolved against
+    /// the base URL), as a dict.
     ///
     /// Raises:
     ///     ValueError: If `uri` cannot be resolved to a URL.
-    #[pyo3(signature = (vars=None, uri=None))]
-    fn create_context(&self, vars: Option<&Bound<'_, PyAny>>, uri: Option<&str>) -> PyResult<NativeContext> {
-        let url = uri.map(|uri| self.resolve(uri)).transpose()?;
-        let scope = self.engine.create_scope(url);
+    fn render(&self, uri: &str, source: String) -> PyResult<Promise> {
+        let url = self.resolve(uri)?;
+        let engine = self.engine.clone();
+        Ok(Promise { inner: runtime::promise_of(async move { engine.render(&url, &source).await }) })
+    }
+
+    /// Creates a native context, with the bindings of the mapping `vars`. It cannot import.
+    #[pyo3(signature = (vars=None))]
+    fn create_context(&self, vars: Option<&Bound<'_, PyAny>>) -> PyResult<NativeContext> {
+        let scope = self.engine.create_scope();
         if let Some(vars) = vars {
             for_each_entry(vars, |name, value| scope.set(name, value))?;
         }
