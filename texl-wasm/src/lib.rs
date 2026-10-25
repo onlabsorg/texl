@@ -13,6 +13,8 @@
 //! const draft = await engine.render("docs/draft.texl", "Hello <% reader %>!");
 //! ```
 //!
+//! The module also exports `collect()`, the cycle collector (see [`collect`]).
+//!
 //! See the [JavaScript API reference](https://onlabsorg.github.io/texl/book/hosts/javascript.html).
 
 mod convert;
@@ -251,6 +253,21 @@ impl TexlContext {
             Ok(JsValue::from_str(&template::render(&template, &scope).await))
         })
     }
+}
+
+/// Frees the scopes and values of templates that only reference cycles keep alive.
+///
+/// A function defined in a template holds the scope it was defined in, so a scope
+/// that stores one is never freed by reference counting alone. `collect` finds the
+/// scopes that nothing outside such cycles refers to any more, and frees them.
+///
+/// `TexlEngine.render` and `TexlEngine.load` run it when they are done, so a page
+/// that only renders documents does not need it. Call it after freeing a
+/// `TexlContext` (`context.free()`) that defined functions. It works for every
+/// engine of the page or worker.
+#[wasm_bindgen(return_description = "The number of scopes and promises it cleared.")]
+pub fn collect() -> usize {
+    swan_core::gc::collect()
 }
 
 /// `location.href` of the current page or worker, if any.

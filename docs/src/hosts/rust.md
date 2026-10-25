@@ -299,9 +299,27 @@ Evaluation never fails and never panics: errors are `Value::Undefined` values.
 See the [`swan_core` documentation](../../api/swan_core/index.html) for the
 pipeline and the value model.
 
+## Memory
+
+Swan values are reference-counted. A function holds the scope it was defined
+in, so a function stored in that scope makes a reference cycle, which
+reference counting alone never frees.
+[`swan_core::gc::collect`](../../api/swan_core/gc/fn.collect.html) frees the
+cycles that nothing outside them refers to any more. `Engine::render` (and so
+`Engine::load`) runs it when the rendering is done, so a host that only
+renders documents has nothing to do. A host that evaluates Swan code itself,
+with `template::render` or `eval`, calls `collect` when it has dropped what it
+no longer needs.
+
+The collector cannot see the values captured by a Rust closure. A host
+function that keeps Swan values (a function, a promise, a collection) should
+hold them with
+[`BuiltinFn::capturing`](../../api/swan_core/value/struct.BuiltinFn.html#method.capturing)
+rather than in its closure; otherwise a cycle through it is never freed.
+
 ## API reference
 
 - [`texl_core`](../../api/texl_core/index.html): `Engine`, `template::render`,
   loaders and the async helpers.
 - [`swan_core`](../../api/swan_core/index.html): `Value`, `Namespace`, `Scope`, `Promise`,
-  `BuiltinFn`, the lexer, the parser and the evaluator.
+  `BuiltinFn`, the lexer, the parser, the evaluator and the cycle collector.

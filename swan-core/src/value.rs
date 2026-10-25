@@ -35,7 +35,7 @@ use crate::ast::Node;
 
 // Lexical scopes and namespaces
 mod scope;
-pub use scope::{Scope, WeakScope};
+pub use scope::{Scope, ScopeData, WeakScope};
 
 // Immutable namespace values
 mod namespace;
@@ -51,7 +51,7 @@ pub use func::BuiltinFn;
 
 // Single-assignment asynchronous values
 mod promise;
-pub use promise::Promise;
+pub use promise::{Promise, PromiseCallback, PromiseData};
 
 
 

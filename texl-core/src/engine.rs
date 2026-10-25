@@ -44,9 +44,10 @@
 //!   `label` bind names in the document's own scope, the scope of its tags,
 //!   which no other document sees.
 //! - Each [`Engine::render`] has its own import cache, dropped with it: once the
-//!   host drops the returned document, the documents of the rendering are freed
-//!   (except those kept alive by Swan functions they define, which capture their
-//!   scope). Within
+//!   host drops the returned document, the documents of the rendering are freed.
+//!   A document that defines functions is in a reference cycle (its functions
+//!   capture its scope); the cycle collector ([`swan_core::gc`]), which
+//!   [`Engine::render`] runs when it is done, frees it. Within
 //!   one rendering, a document is fetched and rendered at most once, and
 //!   concurrent imports of it share that rendering. Nothing is cached across
 //!   renders: the next rendering fetches its imports again.
@@ -93,6 +94,7 @@ use std::rc::{Rc, Weak};
 use url::Url;
 
 use swan_core::builtins::root_scope;
+use swan_core::gc;
 use swan_core::value::{BuiltinFn, Namespace, Promise, Scope, Value};
 
 use crate::helpers::{spawn, SpawnFn};
@@ -266,6 +268,10 @@ impl Engine {
     /// rendered: an import of `url` from inside the rendering is a cycle, and
     /// returns `Undefined`. Nothing is fetched for `url`.
     ///
+    /// When the rendering is done, it runs the cycle collector
+    /// ([`swan_core::gc::collect`]), which frees the documents the host no
+    /// longer holds.
+    ///
     /// `url` is normalized like the URL of [`Engine::fetch`]. A host with no real
     /// location for the source (standard input, an unsaved buffer, a test)
     /// passes a URL of its choice, such as the path of a file in the working
@@ -313,6 +319,9 @@ impl Engine {
         let doc = self.render_document(&imports, &url, source).await;
         imports.borrow_mut().resolved(&url);
         root.resolve(doc.clone());
+
+        // Free the documents and values that only reference cycles keep alive
+        gc::collect();
         doc
     }
 
@@ -845,6 +854,30 @@ mod tests {
         run_pending();
 
         // Documents that do not store functions hold no scope: data is a plain namespace
+        assert_eq!(Scope::live_count(), before);
+    }
+
+    #[test]
+    fn test_engine_render_collects_documents_that_define_functions() {
+        let main = r#"<% fact = n -> n <= 1 ? 1 ; n * fact (n - 1) %><% texl.import("lib.texl") ~> (doc -> bind "lib" doc) %><% lib.data.twice 2 %> <% fact 4 %>"#;
+        let (engine, _) = engine_with_docs(&[("/lib.texl", "<% twice = x -> x * 2 %>")]);
+        drop(engine.create_scope());
+        let before = Scope::live_count();
+
+        // The functions capture the scopes of their documents: reference cycles
+        let doc = block_on(engine.render("/main.texl", main));
+        assert_eq!(rendering(doc.clone()), "4 24");
+        let twice = data(data(doc.clone()).get("lib")).get("twice");
+        drop(doc);
+        run_pending();
+        assert!(Scope::live_count() > before);
+
+        // The next rendering collects them, except the library held through `twice`
+        drop(block_on(engine.render("/other.texl", "other")));
+        assert!(Scope::live_count() > before);
+        assert_eq!(swan_core::evaluator::eval_apply(twice.clone(), Value::Numb(5.0), 0), Value::Numb(10.0));
+        drop(twice);
+        drop(block_on(engine.render("/other.texl", "other")));
         assert_eq!(Scope::live_count(), before);
     }
 

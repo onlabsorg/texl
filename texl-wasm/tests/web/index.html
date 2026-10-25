@@ -36,7 +36,7 @@
 <pre id="expected" hidden></pre>
 
 <script type="module">
-import init, { TexlEngine } from "../../pkg/texl_wasm.js";
+import init, { TexlEngine, collect } from "../../pkg/texl_wasm.js";
 
 const checks = document.getElementById("checks");
 let failures = 0;
@@ -181,12 +181,29 @@ async function testContext() {
     check("contexts cannot import", Object.keys(context.get("texl")).length, 0);
 }
 
+async function testCollect() {
+    const engine = new TexlEngine();
+    collect();
+
+    // A function stored in the context holds its scope: a reference cycle
+    const kept = engine.createContext({ rate: 2 });
+    await kept.render("<% convert = a -> a * rate %>");
+    const dropped = engine.createContext();
+    await dropped.render("<% f = x -> x %>");
+    dropped.free();
+
+    check("collect frees the scopes of freed contexts", collect() > 0, true);
+    check("collect keeps the contexts in use", await kept.render("<% convert 10 %>"), "20");
+    check("collect has nothing left to free", collect(), 0);
+}
+
 const status = document.getElementById("status");
 try {
     await init();
     await testSample();
     await testEngine();
     await testContext();
+    await testCollect();
 } catch (err) {
     failures++;
     check(`unexpected error: ${err}`, false, true);

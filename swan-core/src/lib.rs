@@ -51,7 +51,8 @@
 //! - **Single-threaded and shared.** Values use `Rc`, so cloning is cheap and
 //!   nothing is `Send`. [`Scope`](value::Scope), [`Promise`](value::Promise)
 //!   and [`BuiltinFn`](value::BuiltinFn) are handles: clones share the same
-//!   state.
+//!   state. Functions capture their scope, so they make reference cycles;
+//!   [`gc::collect`] frees the cycles nothing refers to any more.
 //!
 //! # Extending the language
 //!
@@ -87,3 +88,5 @@ pub mod value;
 pub mod evaluator;
 
 pub mod builtins;
+
+pub mod gc;

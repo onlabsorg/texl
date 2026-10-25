@@ -68,10 +68,13 @@ fn promise_create(_arg: Value) -> Value {
 ///   with `p` as left operand and `Nothing` as right operand).
 fn promise_resolve(p: Value) -> Value {
     match p {
-        Value::Promise(promise) => Value::Builtin(BuiltinFn::new(
+        Value::Promise(promise) => Value::Builtin(BuiltinFn::capturing(
             "promise.resolve",
-            move |v| {
-                promise.resolve(v);
+            vec![Value::Promise(promise)],
+            |captured, v| {
+                if let Value::Promise(promise) = &captured[0] {
+                    promise.resolve(v);
+                }
                 Value::Nothing
             },
         )),

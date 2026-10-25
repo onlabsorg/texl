@@ -290,6 +290,25 @@ engine: the methods of an engine or a context raise `RuntimeError` on another
 thread. Each thread can have engines of its own. The loaders read files and
 fetch URLs in worker threads, so they do not block the event loop.
 
+## Memory
+
+A function defined in a template holds the scope it was defined in, so a
+scope that stores one keeps itself alive: a reference cycle. The cycle
+collector, [`pytexl.collect`](#collect), frees the scopes that nothing
+outside such cycles refers to any more. `engine.render` and `engine.load` run
+it when they are done, so a program that only renders documents has nothing
+to do. After dropping a context that defined functions, call `collect`:
+
+```python
+del context
+pytexl.collect()
+```
+
+Python's own garbage collector does not reach Swan scopes, and `collect` does
+not reach Python objects. A Swan value held by a Python object (a
+[`Function`](#function) in a list, for example) is kept while that object
+lives.
+
 ## API reference
 
 The docstrings of the package document the same API, in Google style. Run
@@ -653,6 +672,20 @@ await context.render('<% err = text.size 1 %>')
 err = context.get("err")
 err.type               # 'UnaryOperation'
 err.inspect()          # {'type': 'UnaryOperation', 'op': 'text.size', 'val': 1, 'pos': 0}
+```
+
+### `collect`
+
+```python
+def collect() -> int
+```
+
+Frees the Swan scopes and values that only reference cycles keep alive (see
+[Memory](#memory)), for every engine of the current thread. Returns the number
+of scopes and promises it cleared.
+
+```python
+pytexl.collect()       # 0 when there is nothing to free
 ```
 
 ### `Loader`

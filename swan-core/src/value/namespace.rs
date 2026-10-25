@@ -82,6 +82,11 @@ impl Namespace {
         self.0.iter()
     }
 
+    /// The shared map, for the cycle collector.
+    pub(crate) fn map(&self) -> &Rc<HashMap<String, Value>> {
+        &self.0
+    }
+
     /// Whether `self` and `other` share the same map.
     pub fn ptr_eq(&self, other: &Self) -> bool {
         Rc::ptr_eq(&self.0, &other.0)

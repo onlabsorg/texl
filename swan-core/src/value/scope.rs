@@ -72,6 +72,11 @@ impl WeakScope {
     pub fn upgrade(&self) -> Option<Scope> {
         self.0.upgrade().map(Scope)
     }
+
+    /// Whether the scope is still alive.
+    pub(crate) fn is_alive(&self) -> bool {
+        self.0.strong_count() > 0
+    }
 }
 
 /// The shared state behind a [`Scope`].
@@ -112,12 +117,19 @@ impl Drop for ScopeData {
 impl Scope {
     /// Create a top-level scope with no parent.
     pub fn new() -> Self {
-        Self(Rc::new(RefCell::new(ScopeData::new(None, Namespace::new(), false))))
+        Self::register(ScopeData::new(None, Namespace::new(), false))
     }
 
     /// Create a child scope that inherits from a parent.
     pub fn with_parent(parent: Scope) -> Self {
-        Self(Rc::new(RefCell::new(ScopeData::new(Some(parent), Namespace::new(), false))))
+        Self::register(ScopeData::new(Some(parent), Namespace::new(), false))
+    }
+
+    /// Wraps `data` in a new scope known to the cycle collector.
+    fn register(data: ScopeData) -> Self {
+        let scope = Self(Rc::new(RefCell::new(data)));
+        crate::gc::track_scope(&scope);
+        scope
     }
 
     /// Returns the number of scopes alive on the current thread.
@@ -167,7 +179,7 @@ impl Scope {
     /// assert!(sub.is_frozen());
     /// ```
     pub fn subcontext(&self, ns: Namespace) -> Self {
-        Self(Rc::new(RefCell::new(ScopeData::new(Some(self.clone()), ns, true))))
+        Self::register(ScopeData::new(Some(self.clone()), ns, true))
     }
 
     /// Returns the parent scope, or `None` for a top-level scope.

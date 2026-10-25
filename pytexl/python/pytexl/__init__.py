@@ -48,9 +48,10 @@ from pathlib import Path
 from typing import Any, Union
 
 from . import loaders
+from . import _pytexl
 from ._pytexl import Function, NativeContext, NativeEngine, Promise, Undefined
 
-__all__ = ["Context", "Document", "Engine", "Function", "Loader", "Promise", "Undefined", "loaders"]
+__all__ = ["Context", "Document", "Engine", "Function", "Loader", "Promise", "Undefined", "collect", "loaders"]
 
 #: A document loader: takes a URI and returns the source, or an awaitable of it.
 Loader = Callable[[str], Union[str, Awaitable[str]]]
@@ -384,6 +385,26 @@ class Context(_ThreadBound):
             'Count: 1'
         """
         return await self._native.render(template)
+
+
+def collect() -> int:
+    """Frees the Swan scopes and values that only reference cycles keep alive.
+
+    A function defined in a template holds the scope it was defined in, so a
+    scope that stores one keeps itself alive. ``collect`` frees the scopes that
+    nothing outside such cycles refers to any more, for every engine of the
+    current thread. :meth:`Engine.render` and :meth:`Engine.load` run it when
+    they are done; call it after dropping a :class:`Context` that defined
+    functions.
+
+    Returns:
+        The number of Swan scopes and promises it cleared.
+
+    Example:
+        >>> pytexl.collect()
+        0
+    """
+    return _pytexl.collect()
 
 
 def _uri(uri: str | os.PathLike[str]) -> str:

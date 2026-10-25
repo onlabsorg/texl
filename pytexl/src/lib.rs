@@ -182,6 +182,13 @@ fn resolve_document_url(uri: &str, base: &Url) -> Result<String, String> {
     base.join(uri).map(String::from).map_err(|e| format!("{uri}: {e}"))
 }
 
+/// Frees the Swan scopes and values that only reference cycles keep alive, and
+/// returns the number of scopes and promises it cleared. Documented in `pytexl.collect`.
+#[pyfunction]
+fn collect() -> usize {
+    swan_core::gc::collect()
+}
+
 /// The native module of the `pytexl` package.
 #[pymodule(gil_used = true)]
 fn _pytexl(m: &Bound<'_, PyModule>) -> PyResult<()> {
@@ -190,6 +197,7 @@ fn _pytexl(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<Promise>()?;
     m.add_class::<Function>()?;
     m.add_class::<Undefined>()?;
+    m.add_function(wrap_pyfunction!(collect, m)?)?;
     Ok(())
 }
 

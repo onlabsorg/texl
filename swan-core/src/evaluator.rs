@@ -720,9 +720,10 @@ fn eval_apply_namespace(ns: &Namespace, arg: Value, pos: usize) -> Value {
 /// operator and is used for any application error. `>>` calls this with its
 /// operands swapped. Tuple operands are broadcast by the caller using `map_pairs!`.
 fn eval_composition(f: Value, g: Value, pos: usize) -> Value {
-    Value::Builtin(BuiltinFn::new("composed", move |x:Value| {
-        let y = eval_apply(g.clone(), x, pos);    // y = g(x)
-        eval_apply(f.clone(), y, pos)             // z = f(y)
+    // f and g are captured where the cycle collector can see them
+    Value::Builtin(BuiltinFn::capturing("composed", vec![f, g], move |fg, x| {
+        let y = eval_apply(fg[1].clone(), x, pos);    // y = g(x)
+        eval_apply(fg[0].clone(), y, pos)             // z = f(y)
     }))
 }
 

@@ -227,8 +227,8 @@ fn text_split(sep: Value, target: Value) -> Value {
 
 /// Curried: `text.join sep items` joins all Text items with `sep`. Returns Undefined if `sep` is not Text or if any item is not Text.
 fn text_join(sep: Value) -> Value {
-    Value::Builtin(BuiltinFn::new("text.join", move |items| {
-        match &sep {
+    Value::Builtin(BuiltinFn::capturing("text.join", vec![sep], |captured, items| {
+        match &captured[0] {
             Value::Text(s1) => {
                 // Validate and collect first, so one non-Text item aborts the whole join.
                 let mut strings: Vec<String> = Vec::new();

@@ -18,6 +18,10 @@ pub fn map_curried(
     f: impl Fn(Value, Value) -> Value + 'static + Copy,
 ) -> Value {
     map_1(name, move |arg1| {
-        map_1(name, move |arg2| f(arg1.clone(), arg2))
+        // arg1 is captured where the cycle collector can see it
+        Value::Builtin(BuiltinFn::capturing(name, vec![arg1], move |captured, arg| {
+            let arg1 = captured[0].clone();
+            arg.map(move |arg2| f(arg1.clone(), arg2))
+        }))
     })
 }

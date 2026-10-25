@@ -25,11 +25,28 @@ use std::rc::Rc;
 use crate::value::Value;
 use crate::evaluator::eval_apply;
 
-/// A Rust callback queued on a pending promise.
+/// A callback queued on a pending promise.
 ///
 /// It receives the parent's resolved value and returns the value that will
 /// resolve the corresponding child promise.
-pub type PromiseCallback = Rc<dyn Fn(Value) -> Value>;
+#[derive(Clone)]
+pub enum PromiseCallback {
+    /// A Rust closure, registered with [`Promise::then`]. The cycle collector
+    /// ([`crate::gc`]) cannot see the values it captures.
+    Native(Rc<dyn Fn(Value) -> Value>),
+    /// A Swan callable and a source position, registered with
+    /// [`Promise::then_apply`]. The cycle collector traces the callable.
+    Apply(Value, usize),
+}
+
+impl PromiseCallback {
+    fn call(&self, v: Value) -> Value {
+        match self {
+            PromiseCallback::Native(f) => f(v),
+            PromiseCallback::Apply(f, pos) => eval_apply(f.clone(), v, *pos),
+        }
+    }
+}
 
 /// The shared state of a [`Promise`], kept behind `Rc<RefCell<..>>`.
 #[derive(Clone)]
@@ -98,10 +115,12 @@ pub struct Promise(pub Rc<RefCell<PromiseData>>);
 impl Promise {
     /// Creates a new pending promise with no value and no queued callbacks.
     pub fn new() -> Self {
-        Self(Rc::new(RefCell::new(PromiseData {
+        let promise = Self(Rc::new(RefCell::new(PromiseData {
             value: None,
             children: Vec::new(),
-        })))
+        })));
+        crate::gc::track_promise(&promise);
+        promise
     }
 
     /// Registers a Rust callback and returns a child promise (as `Value::Promise`)
@@ -114,17 +133,7 @@ impl Promise {
     /// `f` is invoked at most once. If `f` returns `Value::Undefined`, the child
     /// resolves to `Value::Nothing` (see [`Promise::resolve`]).
     pub fn then(&self, f: impl Fn(Value) -> Value + 'static) -> Value {
-        let callback: PromiseCallback = Rc::new(f);
-        let child = Promise::new();
-        let child_val = Value::Promise(child.clone());
-
-        let resolved = self.0.borrow().value.clone();
-        match resolved {
-            Some(v) => child.resolve(callback(v)),
-            None => self.0.borrow_mut().children.push((callback, child_val.clone())),
-        }
-
-        child_val
+        self.chain(PromiseCallback::Native(Rc::new(f)))
     }
 
     /// Like [`Promise::then`], but takes a Swan callable instead of a Rust closure.
@@ -134,7 +143,21 @@ impl Promise {
     /// `Undefined` (for example, when `f` is not callable). Such an `Undefined`
     /// result resolves the child to `Value::Nothing`.
     pub fn then_apply(&self, f: Value, pos: usize) -> Value {
-        self.then(move |v| eval_apply(f.clone(), v, pos))
+        self.chain(PromiseCallback::Apply(f, pos))
+    }
+
+    /// Runs `callback` now if resolved, or queues it; returns the child promise.
+    fn chain(&self, callback: PromiseCallback) -> Value {
+        let child = Promise::new();
+        let child_val = Value::Promise(child.clone());
+
+        let resolved = self.0.borrow().value.clone();
+        match resolved {
+            Some(v) => child.resolve(callback.call(v)),
+            None => self.0.borrow_mut().children.push((callback, child_val.clone())),
+        }
+
+        child_val
     }
 
     /// Resolves this promise with `v` and runs all queued callbacks.
@@ -170,7 +193,7 @@ impl Promise {
         drop(inner);
 
         for (f, child_val) in children {
-            let res = f(resolve_val.clone());
+            let res = f.call(resolve_val.clone());
             if let Value::Promise(child) = child_val {
                 child.resolve(res);
             }

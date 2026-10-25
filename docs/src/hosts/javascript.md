@@ -179,6 +179,22 @@ A context is not a document: its templates cannot import documents, and
 `texl.import` is not defined in it. To render a source with imports, use
 [`engine.render`](#rendering-a-source).
 
+## Memory
+
+A function defined in a template holds the scope it was defined in, so a
+scope that stores one keeps itself alive: a reference cycle. The cycle
+collector, [`collect`](#collect), frees the scopes that nothing outside such
+cycles refers to any more. `engine.render` and `engine.load` run it when they
+are done, so a page that only renders documents has nothing to do. After
+freeing a context that defined functions, call `collect`:
+
+```js
+import { collect } from "@onlabsorg/texl";
+
+context.free();
+collect();
+```
+
 ## API reference
 
 ### `init`
@@ -436,6 +452,23 @@ free(): void
 ```
 
 Releases the memory of the context, like [`engine.free`](#enginefree).
+Scopes the context made reference cycles with stay until the next
+[`collect`](#collect).
+
+### `collect`
+
+```ts
+function collect(): number
+```
+
+Frees the scopes and values of templates that only reference cycles keep
+alive (see [Memory](#memory)), for every engine of the page or worker.
+Returns the number of scopes and promises it cleared.
+
+```js
+import { collect } from "@onlabsorg/texl";
+collect();    // 0 when there is nothing to free
+```
 
 ### `TexlDocument`
 
