@@ -14,6 +14,37 @@ Texl is a text-template engine whose `<% ... %>` tags contain expressions in **S
 
 Planned crates (`texl.nvim`, `vscode-texl`) are commented out in the root `Cargo.toml`.
 
+## Summary for OnLabs.org (`texl.summary.md`)
+
+`texl.summary.md` (repository root, committed) is the factual summary of
+this repository for the OnLabs.org coordination folder (the parent folder):
+what it is, how it is built at a high level, published versions, status,
+next steps and known limitations. Strategy sessions read it instead of the
+code. Strategic matters (why it matters for OnLabs, priorities, timing,
+strategic open points) are not written here: they live in the coordination
+folder's `SUBPROJECTS.md`.
+
+**When to update it:** only when the user runs `/update-summary` (the
+skill in `.claude/skills/update-summary/`). The skill reads the commits
+made since the commit in the summary's `Checked against:` line, updates the
+summary from the committed changes only (never from uncommitted or
+unstaged work), stamps the line with `HEAD` and today's date, and leaves the
+result for the user to review and commit. Do not update the summary on your
+own initiative; if a task clearly makes it outdated, say so once at the end
+and suggest committing and running `/update-summary`.
+
+**Decisions from the coordination folder:** at the start of a session, if
+`../DECISIONS.md` exists, check it for entries dated after the summary's
+`Checked against:` date that concern this repository, and tell the user
+about any you find before starting the task.
+
+Rules:
+
+- Stay at helicopter level, in plain words for a non-programmer reader; code
+  details belong in this repository's docs and this file.
+- Do not write strategic content or decisions into the summary.
+- English; Markdown wrapped at about 80 characters.
+
 ## Commands
 
 ```bash
