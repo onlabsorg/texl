@@ -24,19 +24,20 @@ code. Strategic matters (why it matters for OnLabs, priorities, timing,
 strategic open points) are not written here: they live in the coordination
 folder's `SUBPROJECTS.md`.
 
-**When to update it:** only when the user runs `/update-summary` (the
-skill in `.claude/skills/update-summary/`). The skill reads the commits
-made since the commit in the summary's `Checked against:` line, updates the
-summary from the committed changes only (never from uncommitted or
-unstaged work), stamps the line with `HEAD` and today's date, and leaves the
-result for the user to review and commit. Do not update the summary on your
-own initiative; if a task clearly makes it outdated, say so once at the end
-and suggest committing and running `/update-summary`.
+**When to update it:** only when the user runs `/commit-changes` (the skill
+in `.claude/skills/commit-changes/`). The skill updates the summary with the
+pending changes and with any commits it does not cover yet, then commits the
+changes and the summary together. The summary covers every commit up to and
+including the last commit that changed it (`git log -1 -- texl.summary.md`).
+Do not update the summary or commit on your own initiative; if a task
+clearly makes the summary outdated, say so once at the end and suggest
+running `/commit-changes`.
 
 **Decisions from the coordination folder:** at the start of a session, if
-`../DECISIONS.md` exists, check it for entries dated after the summary's
-`Checked against:` date that concern this repository, and tell the user
-about any you find before starting the task.
+`../DECISIONS.md` exists, check it for entries dated after the last commit
+that changed the summary (`git log -1 --format=%ad --date=short --
+texl.summary.md`) that concern this repository, and tell the user about any
+you find before starting the task.
 
 Rules:
 

@@ -4,7 +4,7 @@
 words. The OnLabs.org coordination folder reads this file instead of the
 code; keep it current as described in `CLAUDE.md`.*
 
-Checked against: d8b745b (2026-10-25)
+Checked against: 30df07d (2026-10-25)
 
 ## In one sentence
 
@@ -56,7 +56,10 @@ document and a little program that produces it.
   syntax error, becomes an `Undefined` value that flows on like any other
   value, so a broken expression never stops the rendering of a document.
   Values are numbers, text, lists, namespaces, functions, tuples and promises;
-  operators apply item-by-item over tuples.
+  operators apply item-by-item over tuples. All values except promises are
+  immutable: a namespace (a set of named values) cannot change once it is
+  created, so a document's data cannot be changed by the documents that use
+  it.
 - **Asynchronous by design.** Loading a document or fetching data may take
   time. Swan has a built-in `Promise` value (chained with `~>`) and rendering
   waits for promises before continuing. Within one rendering, each document
@@ -108,8 +111,10 @@ available to hosts too, but it cannot import documents.
 - The repository holds the next, not yet released versions (`swan-core`
   0.2.0, `texl-core` 0.3.0, `texl-cli` 0.2.0, `texl-wasm` and `pytexl`
   0.4.0). They change how hosts use the engine: rendering text now needs a
-  location, documents are no longer cached between renderings, and imported
-  documents no longer see the names of their importer.
+  location, documents are no longer cached between renderings, imported
+  documents no longer see the names of their importer, namespaces are
+  immutable and no longer inherit names from where they were created, and
+  names a document binds with `bind` are now part of its data.
 - Available and published: CLI, browser/JavaScript, Python, Rust.
 - Documentation site (template manual, Swan manual with built-in reference,
   host guides, rustdoc): <https://onlabsorg.github.io/texl/>.
@@ -121,6 +126,8 @@ available to hosts too, but it cannot import documents.
 ## Known limitations
 
 - Memory: a rendering is freed once the host no longer uses it, except for
-  documents that define Swan functions, which stay in memory. This matters
-  for programs that keep rendering for a long time, such as an editor or a
-  server.
+  documents that keep Swan functions (or callbacks waiting on a promise),
+  which stay in memory. Documents with only data and namespaces are freed.
+  This matters for programs that keep rendering for a long time, such as an
+  editor or a server. A developer example (`texl-cli/examples/leak.rs`)
+  measures how much memory each rendering leaves behind.
