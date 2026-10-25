@@ -104,7 +104,7 @@ class RenderTest(unittest.IsolatedAsyncioTestCase):
         engine = pytexl.Engine()
         doc = await engine.render("mem://a", '<% (() -> bind "shared" 7)() %><% shared %>')
         self.assertEqual(doc.rendering, "7")
-        self.assertNotIn("shared", doc.data)  # bound above the document's own names
+        self.assertEqual(doc.data["shared"], 7)  # bound in the document scope, like a top-level `=`
         self.assertEqual(await render(engine, "[<% shared %>]"), "[]")
 
     async def test_render_without_tags_copies_the_text(self):

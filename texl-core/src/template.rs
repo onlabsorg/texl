@@ -31,7 +31,7 @@
 //! | `Nothing`              | empty text                                          |
 //! | `Tuple`                | the items, rendered and joined with `", "`          |
 //! | `List`                 | `[[List of N]]`                                     |
-//! | `Namespace`            | `[[Namespace of N]]` (N = number of local bindings) |
+//! | `Namespace`            | `[[Namespace of N]]` (N = number of members) |
 //! | `Func`                 | `[[Func]]`                                          |
 //! | `Undefined`            | `[[Undefined]]`                                     |
 //! | `Promise` (resolved)   | the rendered resolved value                         |
@@ -211,7 +211,7 @@ pub async fn render(template: &str, scope: &Scope) -> String {
 /// | `Nothing`              | empty string                                        |
 /// | `Tuple`                | items rendered and joined with `", "`               |
 /// | `List`                 | `[[List of N]]`                                     |
-/// | `Namespace`            | `[[Namespace of N]]` (N = number of local bindings) |
+/// | `Namespace`            | `[[Namespace of N]]` (N = number of members) |
 /// | `Func` / `Builtin`     | `[[Func]]`                                          |
 /// | `Undefined`            | `[[Undefined]]`                                     |
 /// | `Name`                 | the name text                                       |
@@ -227,7 +227,7 @@ fn value_to_string(val: Value) -> String {
         Value::Bool(b) => if b { "TRUE".into() } else { "FALSE".into() },
         Value::Nothing => String::new(),
         Value::List(l) => format!("[[List of {}]]", l.len()),
-        Value::Namespace(s) => format!("[[Namespace of {}]]", s.0.borrow().bindings.len()),
+        Value::Namespace(s) => format!("[[Namespace of {}]]", s.len()),
         Value::Func { .. } | Value::Builtin(_) => "[[Func]]".to_string(),
         Value::Undefined(_) => "[[Undefined]]".to_string(),
         Value::Tuple(items) => {

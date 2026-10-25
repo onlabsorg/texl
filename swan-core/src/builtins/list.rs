@@ -7,7 +7,7 @@
 //! need to handle a single (non-tuple) argument (or pair of arguments).
 //! Arguments of the wrong type produce `Value::Undefined`.
 
-use crate::value::{Scope, Value};
+use crate::value::{Namespace, Value};
 use super::helpers::*;
 
 
@@ -16,22 +16,22 @@ use super::helpers::*;
 //  `list` built-in namespace
 // ----------------------------------------------------------------------------
 
-/// Builds the `list` namespace as a child scope of `parent`.
-pub fn create_namespace(parent: &Scope) -> Value {
-    let list_scope = parent.new_child();
+/// Builds the `list` namespace value.
+pub fn create_namespace() -> Value {
+    let mut ns = Namespace::new();
 
     // Unary functions: list -> value
-    list_scope.set("size"   , map_1("list.size"   , list_size));
-    list_scope.set("enum"   , map_1("list.enum"   , list_enum));
-    list_scope.set("reverse", map_1("list.reverse", list_reverse));
+    ns.insert("size"   , map_1("list.size"   , list_size));
+    ns.insert("enum"   , map_1("list.enum"   , list_enum));
+    ns.insert("reverse", map_1("list.reverse", list_reverse));
 
     // Curried functions: (item | count) -> list -> value
-    list_scope.set("find"   , map_curried("list.find"   , list_find));
-    list_scope.set("rfind"  , map_curried("list.rfind"  , list_rfind));
-    list_scope.set("head"   , map_curried("list.head"   , list_head));
-    list_scope.set("tail"   , map_curried("list.tail"   , list_tail));
+    ns.insert("find"   , map_curried("list.find"   , list_find));
+    ns.insert("rfind"  , map_curried("list.rfind"  , list_rfind));
+    ns.insert("head"   , map_curried("list.head"   , list_head));
+    ns.insert("tail"   , map_curried("list.tail"   , list_tail));
 
-    Value::Namespace(list_scope)
+    Value::Namespace(ns)
 }
 
 /// Returns the number of elements in a list. Undefined for non-lists.
@@ -136,6 +136,7 @@ fn list_tail(n: Value, list: Value) -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::value::Scope;
     use crate::evaluator::eval;
     use crate::lexer::Lexer;
     use crate::parser::Parser;
@@ -143,7 +144,7 @@ mod tests {
     /// Creates a scope containing the `list` namespace and the `TRUE`/`FALSE` constants, evaluated in a child scope like real user code.
     fn root_scope() -> Scope {
         let scope = Scope::new();
-        scope.set("list" , create_namespace(&scope));
+        scope.set("list" , create_namespace());
         scope.set("TRUE" , Value::Bool(true));
         scope.set("FALSE", Value::Bool(false));
         scope.new_child()

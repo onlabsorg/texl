@@ -139,7 +139,7 @@ engine. Any [`Value`](../../api/swan_core/value/enum.Value.html) works,
 including namespaces and functions:
 
 ```rust,ignore
-use swan_core::value::{BuiltinFn, Scope, Value};
+use swan_core::value::{BuiltinFn, Namespace, Value};
 use texl_core::{Engine, helpers::spawner_fn};
 
 #[tokio::main(flavor = "current_thread")]
@@ -150,9 +150,9 @@ async fn main() {
         })));
 
         // A namespace: {name: "Ada", tags: ["admin", "dev"]}
-        let user = Scope::new();
-        user.set("name", Value::Text("Ada".into()));
-        user.set("tags", Value::list(vec![Value::Text("admin".into()), Value::Text("dev".into())]));
+        let mut user = Namespace::new();
+        user.insert("name", Value::Text("Ada".into()));
+        user.insert("tags", Value::list(vec![Value::Text("admin".into()), Value::Text("dev".into())]));
         engine.add_builtin("user", Value::Namespace(user));
 
         // A function. Several arguments arrive as one Value::Tuple.
@@ -303,5 +303,5 @@ pipeline and the value model.
 
 - [`texl_core`](../../api/texl_core/index.html): `Engine`, `template::render`,
   loaders and the async helpers.
-- [`swan_core`](../../api/swan_core/index.html): `Value`, `Scope`, `Promise`,
+- [`swan_core`](../../api/swan_core/index.html): `Value`, `Namespace`, `Scope`, `Promise`,
   `BuiltinFn`, the lexer, the parser and the evaluator.

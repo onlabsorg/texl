@@ -8,7 +8,7 @@
 //! |--------------|----------------------------------------------------------|
 //! | `undef.from` | Wraps any value into `Undefined(Undef::Value(<value>))`. |
 
-use crate::value::{BuiltinFn, Scope, Undef, Value};
+use crate::value::{BuiltinFn, Namespace, Undef, Value};
 
 
 
@@ -16,15 +16,12 @@ use crate::value::{BuiltinFn, Scope, Undef, Value};
 //  `undef` built-in namespace
 // ----------------------------------------------------------------------------
 
-/// Builds the `undef` namespace as a child of `parent`.
-///
-/// The child scope keeps the parent's bindings visible from inside the
-/// namespace. It currently contains only `from`.
-pub fn create_namespace(parent: &Scope) -> Value {
-    let undef_scope = parent.new_child();
-    undef_scope.set("from"   , Value::Builtin(BuiltinFn::new("undef.from"   , undef_from)));
-    undef_scope.set("inspect", Value::Builtin(BuiltinFn::new("undef.inspect", undef_inspect)));
-    Value::Namespace(undef_scope)
+/// Builds the `undef` namespace value, with `from` and `inspect`.
+pub fn create_namespace() -> Value {
+    let mut ns = Namespace::new();
+    ns.insert("from"   , Value::Builtin(BuiltinFn::new("undef.from"   , undef_from)));
+    ns.insert("inspect", Value::Builtin(BuiltinFn::new("undef.inspect", undef_inspect)));
+    Value::Namespace(ns)
 }
 
 /// `undef.from X` — wraps `X` into `Value::Undefined(Undef::Value(X))`.
@@ -52,43 +49,43 @@ fn undef_inspect(val: Value) -> Value {
 /// Helper function to convert an `Undef` enum into a `Value::Namespace`,
 /// recursively processing any nested `Value` operands.
 fn inspect_undef(undef: &Undef) -> Value {
-    let scope = Scope::new();
+    let mut ns = Namespace::new();
 
     match undef {
         Undef::UnaryOperation { op, val, pos } => {
-            scope.set("type", Value::Text("UnaryOperation".into()));
-            scope.set("op", Value::Text((*op).into()));
-            scope.set("val", inspect_value(val));
-            scope.set("pos", Value::Numb(*pos as f64));
+            ns.insert("type", Value::Text("UnaryOperation".into()));
+            ns.insert("op", Value::Text((*op).into()));
+            ns.insert("val", inspect_value(val));
+            ns.insert("pos", Value::Numb(*pos as f64));
         }
         Undef::BinaryOperation { op, lhv, rhv, pos } => {
-            scope.set("type", Value::Text("BinaryOperation".into()));
-            scope.set("op", Value::Text((*op).into()));
-            scope.set("lhv", inspect_value(lhv));
-            scope.set("rhv", inspect_value(rhv));
-            scope.set("pos", Value::Numb(*pos as f64));
+            ns.insert("type", Value::Text("BinaryOperation".into()));
+            ns.insert("op", Value::Text((*op).into()));
+            ns.insert("lhv", inspect_value(lhv));
+            ns.insert("rhv", inspect_value(rhv));
+            ns.insert("pos", Value::Numb(*pos as f64));
         }
         Undef::Termination { expected, pos } => {
-            scope.set("type", Value::Text("Termination".into()));
-            scope.set("expected", Value::Text(expected.to_string().into()));
-            scope.set("pos", Value::Numb(*pos as f64));
+            ns.insert("type", Value::Text("Termination".into()));
+            ns.insert("expected", Value::Text(expected.to_string().into()));
+            ns.insert("pos", Value::Numb(*pos as f64));
         }
         Undef::Token { token, pos } => {
-            scope.set("type", Value::Text("Token".into()));
-            scope.set("token", Value::Text(token.as_str().into()));
-            scope.set("pos", Value::Numb(*pos as f64));
+            ns.insert("type", Value::Text("Token".into()));
+            ns.insert("token", Value::Text(token.as_str().into()));
+            ns.insert("pos", Value::Numb(*pos as f64));
         }
         Undef::Name { pos } => {
-            scope.set("type", Value::Text("Name".into()));
-            scope.set("pos", Value::Numb(*pos as f64));
+            ns.insert("type", Value::Text("Name".into()));
+            ns.insert("pos", Value::Numb(*pos as f64));
         }
         Undef::Value(val) => {
-            scope.set("type", Value::Text("Value".into()));
-            scope.set("val", inspect_value(val));
+            ns.insert("type", Value::Text("Value".into()));
+            ns.insert("val", inspect_value(val));
         }
     }
 
-    Value::Namespace(scope)
+    Value::Namespace(ns)
 }
 
 /// Recursively processes a `Value`. If it is a `Value::Undefined`, it converts it
@@ -113,13 +110,14 @@ fn inspect_value(val: &Value) -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::value::Scope;
     use crate::evaluator::eval;
     use crate::lexer::Lexer;
     use crate::parser::Parser;
 
     fn root_scope() -> Scope {
         let scope = Scope::new();
-        scope.set("undef", create_namespace(&scope));
+        scope.set("undef", create_namespace());
         scope.set("TRUE"  , Value::Bool(true));
         scope.set("FALSE" , Value::Bool(false));
         scope.new_child()

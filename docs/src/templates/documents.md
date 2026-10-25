@@ -185,5 +185,6 @@ A document is rendered:
 It does not see the names of the template that imported it. `bind` and
 `label` bind names in the global scope of the document, where every tag of the
 document sees them but no other document does. Its `data` contains the names
-its own tags bound with `=` and `:`, plus `texl`, but not the names bound with
-`bind` or `label`.
+its own tags bound, with `=`, `:`, `bind` or `label`, plus `texl`. It is taken
+when the rendering ends and, like every namespace, it does not change
+afterwards.

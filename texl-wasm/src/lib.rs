@@ -19,6 +19,7 @@ mod convert;
 mod loader;
 
 use js_sys::{Array, Object, Reflect};
+use swan_core::builtins::set_builtin;
 use swan_core::value::{BuiltinFn, Scope, Value};
 use texl_core::helpers::spawner_fn;
 use texl_core::{Engine, loader_fn, template};
@@ -235,9 +236,7 @@ impl TexlContext {
     /// built-ins are not included; `texl` always is.
     #[wasm_bindgen(unchecked_return_type = "string[]")]
     pub fn names(&self) -> Array {
-        let mut keys: Vec<String> = self.scope.0.borrow().bindings.keys().cloned().collect();
-        keys.sort();
-        keys.iter().map(|k| JsValue::from_str(k)).collect()
+        self.scope.namespace().names().iter().map(|k| JsValue::from_str(k)).collect()
     }
 
     /// Renders a template in this context. The names it assigns stay in the context.
@@ -261,13 +260,15 @@ fn location_href() -> Option<String> {
 }
 
 /// Replaces `time.now`, which reads the system clock: wasm32-unknown-unknown has none
-/// and panics. The built-in namespaces are shared by every scope of the thread, so this
-/// changes it for every document.
+/// and panics. The built-ins are shared by every scope of the thread, so this changes it
+/// for every document. Namespaces are immutable: the `time` built-in is replaced by a
+/// copy with the new `now`.
 fn use_js_clock(engine: &Engine) {
-    if let Value::Namespace(time) = engine.create_scope().get("time") {
-        time.set(
+    if let Value::Namespace(mut time) = engine.create_scope().get("time") {
+        time.insert(
             "now",
             Value::Builtin(BuiltinFn::new("time.now", |_| Value::Numb(js_sys::Date::now() / 1000.0))),
         );
+        set_builtin("time", Value::Namespace(time));
     }
 }

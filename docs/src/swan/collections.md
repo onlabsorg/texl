@@ -128,13 +128,27 @@ point "z"            # => ()
 ```
 
 The two differ for names that are not members. `ns "name"` only sees the
-members of the namespace, while `ns.name` also sees the names around the place
-where the namespace was created, like any expression evaluated inside it:
+members of the namespace, while `ns.name` also sees the names of the place
+where it is evaluated, like any other expression there. Members hide those
+names:
 
 ```swan
 point = {x: 3, y: 4}
-point "math"         # => ()
+scale = 10
+point "scale"        # => ()
+point.(x * scale)    # => 30
 type point.math      # => "Namespace"
+x = 1
+point.x              # => 3
+```
+
+A namespace is just its members. It does not remember where it was created,
+so `ns.name` does not see the names around that place:
+
+```swan
+make = () -> (secret = 1, {x: 2})
+p = make()
+p.secret             # => ()
 ```
 
 Reading a member of `Nothing` gives `Nothing`, so a chain of `.` stops safely
@@ -145,25 +159,33 @@ config = {}
 config.server.port   # => ()
 ```
 
-### Adding members
+### Namespaces are immutable
 
-A namespace can gain members after it is created. Bind them inside the
-namespace with `.`:
+A namespace cannot change after it is created: its members are the names bound
+inside its braces, and nothing else. Binding a name inside a namespace with
+`.` gives an undefined value and binds nothing. This also holds for the
+built-in namespaces, such as `text` and `math`, so the built-ins work the
+same everywhere:
 
 ```swan
 point = {x: 3}
-point.(y = 4)
-point                # => {x: 3, y: 4}
-```
-
-The built-in namespaces, such as `text` and `math`, are *frozen*: they cannot
-gain or change members, so the built-ins work the same everywhere. Binding a
-name in one gives an undefined value and binds nothing:
-
-```swan
+type (point.(y = 4))     # => "Undefined"
+point                    # => {x: 3}
 type (text.(size = 0))   # => "Undefined"
 text.size "abc"          # => 3
 ```
+
+To get a namespace with more members, create a new one. Inside its braces,
+`.` gives access to the members of the old one:
+
+```swan
+point = {x: 3}
+point3d = point.{x: x, y: 4}
+point3d                  # => {x: 3, y: 4}
+```
+
+A function call inside `.` still works as usual: its parameters and the names
+its body binds are in its own scope, not in the namespace.
 
 ### Inspecting namespaces
 

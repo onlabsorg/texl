@@ -19,14 +19,13 @@
 //! bindings only), promises become [`Promise`], functions become [`Function`] and undefined
 //! values become [`Undefined`], which keeps the details of the error.
 
-use std::rc::Rc;
 
 use pyo3::prelude::*;
 use pyo3::sync::PyOnceLock;
 use pyo3::types::{PyBool, PyDict, PyFloat, PyInt, PyList, PyString, PyTuple};
 use swan_core::evaluator::eval_apply;
 use pyo3::basic::CompareOp;
-use swan_core::value::{BuiltinFn, Scope, Undef, Value};
+use swan_core::value::{BuiltinFn, Namespace, Undef, Value};
 
 use crate::runtime::{self, AwaitPy};
 
@@ -333,9 +332,9 @@ pub fn py_to_swan(obj: &Bound<'_, PyAny>) -> Value {
     } else if let Ok(tuple) = obj.cast::<PyTuple>() {
         Value::tuple(tuple.iter().map(|item| py_to_swan(&item)).collect())
     } else if obj.is_instance_of::<PyDict>() || mapping_type(py).is_ok_and(|m| obj.is_instance(m).unwrap_or(false)) {
-        let scope = Scope::new();
-        match for_each_entry(obj, |key, value| scope.set(key, value)) {
-            Ok(()) => Value::Namespace(scope),
+        let mut ns = Namespace::new();
+        match for_each_entry(obj, |key, value| ns.insert(key, value)) {
+            Ok(()) => Value::Namespace(ns),
             Err(_) => Value::Nothing,
         }
     } else if is_awaitable(obj) {
@@ -377,12 +376,6 @@ fn py_function(func: Py<PyAny>) -> BuiltinFn {
 
 /// Converts a Swan value to a Python value. See the [module documentation](self).
 pub fn swan_to_py(py: Python<'_>, value: &Value) -> Py<PyAny> {
-    to_py(py, value, &mut Vec::new())
-}
-
-/// `parents` holds the namespaces being converted, so that a namespace containing
-/// itself gives `None` instead of recursing forever.
-fn to_py(py: Python<'_>, value: &Value, parents: &mut Vec<Scope>) -> Py<PyAny> {
     let converted: PyResult<Bound<'_, PyAny>> = match value {
         Value::Nothing | Value::Name(_) => Ok(py.None().into_bound(py)),
         Value::Undefined(undef) => Bound::new(py, Undefined { inner: undef.clone() }).map(Bound::into_any),
@@ -393,27 +386,21 @@ fn to_py(py: Python<'_>, value: &Value, parents: &mut Vec<Scope>) -> Py<PyAny> {
         Value::Numb(n) => Ok(PyFloat::new(py, *n).into_any()),
         Value::Text(s) => Ok(PyString::new(py, s).into_any()),
         Value::List(items) => {
-            let items: Vec<_> = items.iter().map(|item| to_py(py, item, parents)).collect();
+            let items: Vec<_> = items.iter().map(|item| swan_to_py(py, item)).collect();
             PyList::new(py, items).map(Bound::into_any)
         }
         Value::Tuple(items) => {
-            let items: Vec<_> = items.iter().map(|item| to_py(py, item, parents)).collect();
+            let items: Vec<_> = items.iter().map(|item| swan_to_py(py, item)).collect();
             PyTuple::new(py, items).map(Bound::into_any)
         }
-        Value::Namespace(scope) => {
-            if parents.iter().any(|p| Rc::ptr_eq(&p.0, &scope.0)) {
-                return py.None();
-            }
-            parents.push(scope.clone());
+        Value::Namespace(ns) => {
+            // Namespaces are immutable values built from their members, so they cannot contain themselves
             let dict = PyDict::new(py);
-            let mut bindings: Vec<(String, Value)> =
-                scope.0.borrow().bindings.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
-            bindings.sort_by(|a, b| a.0.cmp(&b.0));
             let mut result = Ok(());
-            for (key, item) in bindings {
-                result = result.and(dict.set_item(key, to_py(py, &item, parents)));
+            for key in ns.names() {
+                let item = ns.get(&key);
+                result = result.and(dict.set_item(key, swan_to_py(py, &item)));
             }
-            parents.pop();
             result.map(|()| dict.into_any())
         }
         Value::Promise(p) => Bound::new(py, Promise { inner: p.clone() }).map(Bound::into_any),

@@ -1,5 +1,5 @@
 
-use crate::value::{BuiltinFn, Scope, Value};
+use crate::value::{BuiltinFn, Namespace, Value};
 
 use super::helpers::*;
 
@@ -11,7 +11,7 @@ use super::helpers::*;
 
 /// Constructs and populates the `math` built-in namespace.
 ///
-/// Returns a [`Value::Namespace`] scope containing trigonometric, logarithmic,
+/// Returns a [`Value::Namespace`] containing trigonometric, logarithmic,
 /// exponential, rounding, and utility functions, alongside fundamental constants.
 ///
 /// # Curried Two-Argument Functions
@@ -24,60 +24,60 @@ use super::helpers::*;
 /// pow10 = math.pow 10;
 /// pow10 2  # returns 1024.0 (2 ^ 10)
 /// ```
-pub fn create_namespace(parent: &Scope) -> Value {
-    let math_scope = parent.new_child();
+pub fn create_namespace() -> Value {
+    let mut ns = Namespace::new();
 
     // --- Single-argument math functions (f64 -> f64) ---
-    math_scope.set("sqrt",  builtin_f64_1("math.sqrt",  f64::sqrt));
-    math_scope.set("abs",   builtin_f64_1("math.abs",   f64::abs));
-    math_scope.set("floor", builtin_f64_1("math.floor", f64::floor));
-    math_scope.set("ceil",  builtin_f64_1("math.ceil",  f64::ceil));
-    math_scope.set("round", builtin_f64_1("math.round", f64::round));
-    math_scope.set("trunc", builtin_f64_1("math.trunc", f64::trunc));
+    ns.insert("sqrt",  builtin_f64_1("math.sqrt",  f64::sqrt));
+    ns.insert("abs",   builtin_f64_1("math.abs",   f64::abs));
+    ns.insert("floor", builtin_f64_1("math.floor", f64::floor));
+    ns.insert("ceil",  builtin_f64_1("math.ceil",  f64::ceil));
+    ns.insert("round", builtin_f64_1("math.round", f64::round));
+    ns.insert("trunc", builtin_f64_1("math.trunc", f64::trunc));
 
     // Trigonometric functions
-    math_scope.set("sin",   builtin_f64_1("math.sin",   f64::sin));
-    math_scope.set("cos",   builtin_f64_1("math.cos",   f64::cos));
-    math_scope.set("tan",   builtin_f64_1("math.tan",   f64::tan));
-    math_scope.set("asin",  builtin_f64_1("math.asin",  f64::asin));
-    math_scope.set("acos",  builtin_f64_1("math.acos",  f64::acos));
-    math_scope.set("atan",  builtin_f64_1("math.atan",  f64::atan));
+    ns.insert("sin",   builtin_f64_1("math.sin",   f64::sin));
+    ns.insert("cos",   builtin_f64_1("math.cos",   f64::cos));
+    ns.insert("tan",   builtin_f64_1("math.tan",   f64::tan));
+    ns.insert("asin",  builtin_f64_1("math.asin",  f64::asin));
+    ns.insert("acos",  builtin_f64_1("math.acos",  f64::acos));
+    ns.insert("atan",  builtin_f64_1("math.atan",  f64::atan));
 
     // Hyperbolic functions
-    math_scope.set("sinh",  builtin_f64_1("math.sinh",  f64::sinh));
-    math_scope.set("cosh",  builtin_f64_1("math.cosh",  f64::cosh));
-    math_scope.set("tanh",  builtin_f64_1("math.tanh",  f64::tanh));
-    math_scope.set("asinh", builtin_f64_1("math.asinh", f64::asinh));
-    math_scope.set("acosh", builtin_f64_1("math.acosh", f64::acosh));
-    math_scope.set("atanh", builtin_f64_1("math.atanh", f64::atanh));
+    ns.insert("sinh",  builtin_f64_1("math.sinh",  f64::sinh));
+    ns.insert("cosh",  builtin_f64_1("math.cosh",  f64::cosh));
+    ns.insert("tanh",  builtin_f64_1("math.tanh",  f64::tanh));
+    ns.insert("asinh", builtin_f64_1("math.asinh", f64::asinh));
+    ns.insert("acosh", builtin_f64_1("math.acosh", f64::acosh));
+    ns.insert("atanh", builtin_f64_1("math.atanh", f64::atanh));
 
     // Exponentials and Logarithms
-    math_scope.set("exp",   builtin_f64_1("math.exp",   f64::exp));
-    math_scope.set("ln",    builtin_f64_1("math.ln",    f64::ln));
-    math_scope.set("log2",  builtin_f64_1("math.log2",  f64::log2));
-    math_scope.set("log10", builtin_f64_1("math.log10", f64::log10));
+    ns.insert("exp",   builtin_f64_1("math.exp",   f64::exp));
+    ns.insert("ln",    builtin_f64_1("math.ln",    f64::ln));
+    ns.insert("log2",  builtin_f64_1("math.log2",  f64::log2));
+    ns.insert("log10", builtin_f64_1("math.log10", f64::log10));
 
     // --- Curried two-argument math functions (f64 -> f64 -> f64) ---
     // `pow`:  pow(exp) -> g(base) => base.powf(exp)
-    math_scope.set("pow",   builtin_f64_curried("math.pow",   |exp, base| base.powf(exp)));
+    ns.insert("pow",   builtin_f64_curried("math.pow",   |exp, base| base.powf(exp)));
     // `log`:  log(base) -> g(x) => x.log(base)
-    math_scope.set("log",   builtin_f64_curried("math.log",   |base, x| x.log(base)));
+    ns.insert("log",   builtin_f64_curried("math.log",   |base, x| x.log(base)));
     // `atan2`: atan2(x) -> g(y) => y.atan2(x)
-    math_scope.set("atan2", builtin_f64_curried("math.atan2", |x, y| y.atan2(x)));
+    ns.insert("atan2", builtin_f64_curried("math.atan2", |x, y| y.atan2(x)));
     // `hypot`: hypot(x) -> g(y) => x.hypot(y)
-    math_scope.set("hypot", builtin_f64_curried("math.hypot", |x, y| x.hypot(y)));
+    ns.insert("hypot", builtin_f64_curried("math.hypot", |x, y| x.hypot(y)));
 
     // --- Variadic / Multi-argument math functions ---
-    math_scope.set("max", Value::Builtin(BuiltinFn::new("math.max", math_max)));
-    math_scope.set("min", Value::Builtin(BuiltinFn::new("math.min", math_min)));
+    ns.insert("max", Value::Builtin(BuiltinFn::new("math.max", math_max)));
+    ns.insert("min", Value::Builtin(BuiltinFn::new("math.min", math_min)));
 
     // --- Mathematical constants ---
-    math_scope.set("PI",       Value::Numb(std::f64::consts::PI));
-    math_scope.set("E",        Value::Numb(std::f64::consts::E));
-    math_scope.set("INF",      Value::Numb(f64::INFINITY));
-    math_scope.set("INFINITY", Value::Numb(f64::INFINITY));
+    ns.insert("PI",       Value::Numb(std::f64::consts::PI));
+    ns.insert("E",        Value::Numb(std::f64::consts::E));
+    ns.insert("INF",      Value::Numb(f64::INFINITY));
+    ns.insert("INFINITY", Value::Numb(f64::INFINITY));
 
-    Value::Namespace(math_scope)
+    Value::Namespace(ns)
 }
 
 /// Evaluates `math.max` over a single scalar or a tuple of numeric values.
@@ -199,13 +199,14 @@ fn builtin_f64_curried(name: &'static str, f: fn(f64, f64) -> f64) -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::value::Scope;
     use crate::evaluator::eval;
     use crate::lexer::Lexer;
     use crate::parser::Parser;
 
     fn root_scope() -> Scope {
         let scope = Scope::new();
-        scope.set("math" , create_namespace(&scope));
+        scope.set("math" , create_namespace());
         scope.set("TRUE" , Value::Bool(true));
         scope.set("FALSE", Value::Bool(false));
         scope.new_child()

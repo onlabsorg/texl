@@ -15,7 +15,8 @@
 //!
 //! # Submodules
 //!
-//! - [`Scope`]: lexical environment, also used as the storage of `Namespace`.
+//! - [`Scope`]: lexical environment: a parent link and a live table of bindings.
+//! - [`Namespace`]: the immutable table of members of a namespace value.
 //! - [`Undef`]: description of why an operation was undefined.
 //! - [`BuiltinFn`]: wrapper around a native Rust function.
 //! - [`Promise`]: single-assignment asynchronous value.
@@ -35,6 +36,10 @@ use crate::ast::Node;
 // Lexical scopes and namespaces
 mod scope;
 pub use scope::{Scope, WeakScope};
+
+// Immutable namespace values
+mod namespace;
+pub use namespace::Namespace;
 
 // Explanations of why an operation is undefined
 mod undef;
@@ -57,8 +62,8 @@ pub use promise::Promise;
 /// Any first-class Swan value.
 ///
 /// Cloning is cheap: heap-backed variants (`Text`, `List`, `Tuple`, `Name`)
-/// use `Rc`, and `Scope`, `Promise` and `BuiltinFn` are handles that share
-/// state when cloned.
+/// use `Rc`, and `Namespace`, `Scope`, `Promise` and `BuiltinFn` are handles
+/// that share state when cloned.
 ///
 /// The Swan type name of each variant (as returned by the `type` built-in) is
 /// the variant name, except that `Builtin` reports `Func`.
@@ -92,10 +97,10 @@ pub enum Value {
 
     /// A first-class namespace — `{ x: 1, y: 2 }`.
     ///
-    /// Backed by a [`Scope`]. Applying a namespace to a `Text` key performs an
-    /// own-only lookup (parent scopes are not consulted) and yields `Nothing`
-    /// if the key is absent. Equality compares bindings (and parents) by value.
-    Namespace(Scope),
+    /// An immutable table of members (see [`Namespace`]), with no parent.
+    /// Applying a namespace to a `Text` key looks up that member and yields
+    /// `Nothing` if it is absent. Equality compares the members by value.
+    Namespace(Namespace),
 
     /// A user-defined function.
     Func {
@@ -455,7 +460,7 @@ impl From<Value> for bool {
             Value::Func{..}     => true,
             Value::Builtin(_)   => true,
             Value::Undefined(_) => false,
-            Value::Namespace(s) => s.0.borrow().bindings.len() > 0,
+            Value::Namespace(ns) => !ns.is_empty(),
             Value::Tuple(_) => {
                 // Returns true if AT LEAST ONE item in the tuple converts to true.
                 // If ALL items map to false, `.any()` returns false.

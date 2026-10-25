@@ -11,7 +11,7 @@
 //! numb.from("abc")      -> undefined
 //! ```
 
-use crate::value::{Scope, Value};
+use crate::value::{Namespace, Value};
 use super::helpers::*;
 
 
@@ -21,14 +21,11 @@ use super::helpers::*;
 // ----------------------------------------------------------------------------
 
 /// Builds the `numb` namespace value.
-///
-/// The namespace scope is a child of `parent`, so root-scope names stay
-/// visible inside it.
-pub fn create_namespace(parent: &Scope) -> Value {
-    let numb_scope = parent.new_child();
+pub fn create_namespace() -> Value {
+    let mut ns = Namespace::new();
     // Unary function: `map_1` applies it to each item of the argument.
-    numb_scope.set("from", map_1("numb.from", numb_from));
-    Value::Namespace(numb_scope)
+    ns.insert("from", map_1("numb.from", numb_from));
+    Value::Namespace(ns)
 }
 
 
@@ -69,6 +66,7 @@ fn numb_from(val: Value) -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::value::Scope;
     use crate::evaluator::eval;
     use crate::lexer::Lexer;
     use crate::parser::Parser;
@@ -77,7 +75,7 @@ mod tests {
     /// Returns a child scope, mirroring how user code is evaluated.
     fn root_scope() -> Scope {
         let scope = Scope::new();
-        scope.set("numb" , create_namespace(&scope));
+        scope.set("numb" , create_namespace());
         scope.set("TRUE" , Value::Bool(true));
         scope.set("FALSE", Value::Bool(false));
         scope.new_child()

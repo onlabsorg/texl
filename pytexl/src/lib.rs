@@ -147,9 +147,7 @@ impl NativeContext {
 
     /// Returns the names bound in the context, sorted.
     fn names(&self) -> Vec<String> {
-        let mut names: Vec<String> = self.scope.0.borrow().bindings.keys().cloned().collect();
-        names.sort();
-        names
+        self.scope.namespace().names()
     }
 
     /// Returns a promise of the rendering of `template`, in this context.

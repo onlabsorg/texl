@@ -32,24 +32,23 @@
 //!
 //! Note: chaining (`promise.chain`) is not provided by this module.
 
-use crate::value::{BuiltinFn, Promise, Scope, Value};
+use crate::value::{BuiltinFn, Namespace, Promise, Value};
 
-/// Builds the `promise` namespace as a child of `parent`.
+/// Builds the `promise` namespace value.
 ///
 /// The returned `Value::Namespace` binds:
 /// - `create`  -> `promise.create`  (see [`promise_create`])
 /// - `resolve` -> `promise.resolve` (see [`promise_resolve`])
 ///
-/// The caller is expected to bind the result under the name `promise` in
-/// `parent` (or an enclosing scope).
-pub fn create_namespace(parent: &Scope) -> Value {
-    let promise_scope = parent.new_child();
+/// The caller is expected to bind the result under the name `promise`.
+pub fn create_namespace() -> Value {
+    let mut ns = Namespace::new();
 
-    promise_scope.set("create", Value::Builtin(BuiltinFn::new("promise.create", promise_create)));
+    ns.insert("create", Value::Builtin(BuiltinFn::new("promise.create", promise_create)));
 
-    promise_scope.set("resolve", Value::Builtin(BuiltinFn::new("promise.resolve", promise_resolve)));
+    ns.insert("resolve", Value::Builtin(BuiltinFn::new("promise.resolve", promise_resolve)));
 
-    Value::Namespace(promise_scope)
+    Value::Namespace(ns)
 }
 
 /// `promise.create ()`: creates a new pending `Value::Promise`.
@@ -89,6 +88,7 @@ fn promise_resolve(p: Value) -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::value::Scope;
     use crate::evaluator::eval;
     use crate::lexer::Lexer;
     use crate::parser::Parser;
@@ -97,7 +97,7 @@ mod tests {
     /// matching the setup used in other builtin module tests.
     fn root_scope() -> Scope {
         let scope = Scope::new();
-        scope.set("promise", create_namespace(&scope));
+        scope.set("promise", create_namespace());
         scope.set("TRUE"   , Value::Bool(true));
         scope.set("FALSE"  , Value::Bool(false));
         scope.new_child()

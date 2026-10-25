@@ -16,7 +16,7 @@
 //! become JS Promises, and functions and undefined values become `undefined`.
 
 use js_sys::{Array, Function, Object, Reflect};
-use swan_core::value::{BuiltinFn, Promise, Scope, Value};
+use swan_core::value::{BuiltinFn, Namespace, Promise, Value};
 use wasm_bindgen::prelude::*;
 
 /// True for native Promises and any other "thenable" (object with a callable `then`).
@@ -95,10 +95,10 @@ pub fn js_to_swan_value(val: JsValue) -> Result<Value, JsValue> {
 
         Ok(Value::Builtin(builtin))
     } else if val.is_object() {
-        // Convert JS Object to nested Swan Scope/Namespace
-        let sub_scope = Scope::new();
-        for_each_entry(&val.into(), |key, value| sub_scope.set(key, value))?;
-        Ok(Value::Namespace(sub_scope))
+        // Convert JS Object to nested Swan Namespace
+        let mut ns = Namespace::new();
+        for_each_entry(&val.into(), |key, value| ns.insert(key, value))?;
+        Ok(Value::Namespace(ns))
     } else {
         Ok(Value::Nothing)
     }
@@ -129,11 +129,10 @@ pub fn swan_value_to_js(val: &Value) -> JsValue {
             }
             arr.into()
         }
-        Value::Namespace(scope) => {
+        Value::Namespace(ns) => {
             let obj = Object::new();
-            let bindings = scope.0.borrow().bindings.clone();
-            for (k, v) in bindings {
-                let _ = Reflect::set(&obj, &JsValue::from_str(&k), &swan_value_to_js(&v));
+            for (k, v) in ns.iter() {
+                let _ = Reflect::set(&obj, &JsValue::from_str(k), &swan_value_to_js(v));
             }
             obj.into()
         }

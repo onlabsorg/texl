@@ -6,7 +6,7 @@
 //! type produce `Value::Undefined`. All positions and lengths count Unicode
 //! characters, not bytes.
 
-use crate::value::{BuiltinFn, Scope, Value};
+use crate::value::{BuiltinFn, Namespace, Value};
 use super::helpers::*;
 
 
@@ -15,32 +15,30 @@ use super::helpers::*;
 // ----------------------------------------------------------------------------
 
 /// Builds the `text` namespace and returns it as a `Value::Namespace`.
-///
-/// The namespace scope is a child of `parent`, so root-scope names stay visible inside it.
-pub fn create_namespace(parent: &Scope) -> Value {
-    let text_scope = parent.new_child();
+pub fn create_namespace() -> Value {
+    let mut ns = Namespace::new();
 
     // Unary functions: map over each item of the argument.
-    text_scope.set("from"     , map_1("text.from"     , text_from));
-    text_scope.set("size"     , map_1("text.size"     , text_size));
-    text_scope.set("enum"     , map_1("text.enum"     , text_enum));
-    text_scope.set("lower"    , map_1("text.lower"    , text_lower));
-    text_scope.set("upper"    , map_1("text.upper"    , text_upper));
-    text_scope.set("trim"     , map_1("text.trim"     , text_trim));
-    text_scope.set("trim_head", map_1("text.trim_head", text_trim_head));
-    text_scope.set("trim_tail", map_1("text.trim_tail", text_trim_tail));
+    ns.insert("from"     , map_1("text.from"     , text_from));
+    ns.insert("size"     , map_1("text.size"     , text_size));
+    ns.insert("enum"     , map_1("text.enum"     , text_enum));
+    ns.insert("lower"    , map_1("text.lower"    , text_lower));
+    ns.insert("upper"    , map_1("text.upper"    , text_upper));
+    ns.insert("trim"     , map_1("text.trim"     , text_trim));
+    ns.insert("trim_head", map_1("text.trim_head", text_trim_head));
+    ns.insert("trim_tail", map_1("text.trim_tail", text_trim_tail));
 
     // Curried binary functions: (needle/count/separator) first, then the target text.
-    text_scope.set("find"     , map_curried("text.find" , text_find));
-    text_scope.set("rfind"    , map_curried("text.rfind", text_rfind));
-    text_scope.set("head"     , map_curried("text.head" , text_head));
-    text_scope.set("tail"     , map_curried("text.tail" , text_tail));
-    text_scope.set("split"    , map_curried("text.split", text_split));
+    ns.insert("find"     , map_curried("text.find" , text_find));
+    ns.insert("rfind"    , map_curried("text.rfind", text_rfind));
+    ns.insert("head"     , map_curried("text.head" , text_head));
+    ns.insert("tail"     , map_curried("text.tail" , text_tail));
+    ns.insert("split"    , map_curried("text.split", text_split));
     // `join` uses map_1 (not map_curried) on purpose: the separator is mapped, but the
     // returned function receives the whole tuple of items to join.
-    text_scope.set("join"     , map_1("text.join"     , text_join));
+    ns.insert("join"     , map_1("text.join"     , text_join));
 
-    Value::Namespace(text_scope)
+    Value::Namespace(ns)
 }
 
 // ----------------------------------------------------------------------------
@@ -68,8 +66,8 @@ fn text_from(val: Value) -> Value {
         Value::Undefined(_) => {
             "[[Undefined]]".to_string()
         }
-        Value::Namespace(scope) => {
-            format!("[[Namespace of {}]]", scope.0.borrow().bindings.len())
+        Value::Namespace(ns) => {
+            format!("[[Namespace of {}]]", ns.len())
         }
         // Bool/Numb/Text/etc. handled above; Nothing and Tuple never reach here (handled by map_1).
         _ => return Value::undef_unary("text.from", val, 0),
@@ -255,13 +253,14 @@ fn text_join(sep: Value) -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::value::Scope;
     use crate::evaluator::eval;
     use crate::lexer::Lexer;
     use crate::parser::Parser;
 
     fn root_scope() -> Scope {
         let scope = Scope::new();
-        scope.set("text", create_namespace(&scope));
+        scope.set("text", create_namespace());
         scope.set("TRUE", Value::Bool(true));
         scope.set("FALSE", Value::Bool(false));
         scope.new_child()

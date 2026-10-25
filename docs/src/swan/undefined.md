@@ -19,7 +19,7 @@ In a template, an undefined value renders as `[[Undefined]]`.
 - Math results that are not numbers: `math.sqrt (-1)`.
 - Syntax errors: `(1 + 2`, `1 + * 2`.
 - Binding something that is not a name: `1 = 2`.
-- Binding a name in a built-in namespace: `math.(pi = 3)`.
+- Binding a name inside a namespace: `math.(pi = 3)`.
 - `undef.from`, which creates one on purpose.
 
 An unbound name is *not* undefined: it is `Nothing`.

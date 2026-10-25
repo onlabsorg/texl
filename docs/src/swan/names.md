@@ -76,9 +76,11 @@ New scopes are created by:
 - **function calls**: the body of a function runs in a new scope, whose
   parent is the scope where the function was *defined*;
 - **namespaces**: the expression inside `{ }` runs in a new scope, whose
-  parent is the current scope.
-
-`ns.expr` evaluates `expr` in the scope of the namespace `ns`.
+  parent is the current scope. When it is done, the names bound in that scope
+  become the members of the namespace;
+- **subcontexting**: `ns.expr` evaluates `expr` in a new scope whose names are
+  the members of the namespace `ns`, and whose parent is the current scope.
+  Namespaces are immutable, so `expr` cannot bind names in it.
 
 Binding a name always affects the current scope. Inside a function, `=`
 creates a local name, even when an outer scope has the same name:
@@ -96,7 +98,8 @@ them, so you can reuse a built-in name without changing the built-in.
 ## Global names: bind and label
 
 `bind` and `label` bind names in the global scope, the scope where top-level
-code runs, wherever they are called from. They take the name as text, which
+code runs, wherever they are called from: inside a function, a namespace or
+`ns.expr`. They never change a namespace. They take the name as text, which
 makes them useful inside functions and in promise callbacks:
 
 ```swan

@@ -58,15 +58,19 @@ mod tests {
     #[test]
     fn lifting() {
         // Name
-        assert_eq!(evaluate("{x=1}.{x=2}.x"), Value::Numb(2.0));
-        assert_eq!(evaluate("{x=1}.{x=2}.$x"), Value::Numb(1.0));
+        assert_eq!(evaluate("{x=1}.({x=2}.x)"), Value::Numb(2.0));
+        assert_eq!(evaluate("{x=1}.({x=2}.$x)"), Value::Numb(1.0));
+        assert_eq!(evaluate("x = 0, {x=1}.({x=2}.$x)"), Value::Numb(0.0));
+
+        // A namespace has no parent: lifting from a namespace member sees only its subcontexts
+        assert_eq!(evaluate("{x=1}.{x=2}.$x"), Value::Numb(2.0));
 
         // Nothing
-        assert_eq!(evaluate("{x=1}.{x=2}.$()"), Value::Nothing);
+        assert_eq!(evaluate("{x=1}.({x=2}.$())"), Value::Nothing);
 
         // Tuple
         assert_eq!(
-            evaluate("{x=1}.{x=2,y=3}.$(x,y)"),
+            evaluate("{x=1}.({x=2,y=3}.$(x,y))"),
             Value::tuple(vec![
                 Value::Numb(1.0),
                 Value::Numb(3.0),

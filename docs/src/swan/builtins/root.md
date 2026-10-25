@@ -44,8 +44,9 @@ parse source -> Func
 
 Compiles the Swan expression in the text `source` and returns a function. The
 function takes a namespace and evaluates the expression inside it, so the
-expression can use the members of the namespace, and the names visible where
-the namespace was created.
+expression can use the members of the namespace and the built-in names, but
+not the other names of the program. Like any expression inside a namespace,
+it cannot bind names there.
 
 The source is parsed once, when `parse` is called. A syntax error does not
 make `parse` fail: the function returns `Undefined` when it runs. A `source`
@@ -69,8 +70,9 @@ returns `Nothing`. `name` is a text, or a tuple of texts to bind several names
 at once, following the rules of [destructuring](../names.md#destructuring).
 
 `bind` is how a function, or a callback waiting on a promise, makes a value
-available to the rest of the program. In a template, the global scope is the
-engine's global scope, shared by every document the engine renders.
+available to the rest of the program. It binds the name in the global scope
+even when it is called inside a namespace: it never changes a namespace. In a
+template, the global scope is the scope of the document, where its tags run.
 
 ```swan
 f = () -> bind "seen" TRUE

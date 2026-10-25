@@ -99,5 +99,5 @@ document's `data` (see
 the document, wherever it is called from: inside a function, or in the
 callback of a promise. That is how a document makes a library available to its
 later tags (see [Using a library](documents.md#using-a-library)). A name bound
-with `bind` is not visible in other documents, nor in later renderings, and it
-is not part of the document's `data`.
+with `bind` is not visible in other documents, nor in later renderings. Like
+the names bound with `=`, it is part of the document's `data`.

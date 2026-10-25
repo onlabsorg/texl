@@ -22,11 +22,13 @@
 //! |-------------|-------------|--------------------------------------------------|
 //! | `uri`       | `Text`      | The normalized URL of the document               |
 //! | `source`    | `Text`      | The template source                              |
-//! | `data`      | `Namespace` | The scope the template was rendered in           |
+//! | `data`      | `Namespace` | The names bound by the template                  |
 //! | `rendering` | `Text`      | The rendered text                                |
 //!
-//! The `data` field holds every name the template assigned, so a document can
-//! act as a library of values and functions.
+//! The `data` field holds every name the template bound, with `=`, `:`,
+//! `bind` or `label`, so a document can act as a library of values and
+//! functions. It is a snapshot taken when the rendering ends: like every
+//! namespace, it does not change afterwards.
 //!
 //! # Imports
 //!
@@ -39,8 +41,8 @@
 //! - Each document renders in its own scope from [`Engine::create_scope`],
 //!   not in a child of its importer's scope: it sees the built-ins and the
 //!   globals, but not the names of the document that imports it. `bind` and
-//!   `label` bind names in the document's own global scope (the parent of its
-//!   `data` scope), which no other document sees.
+//!   `label` bind names in the document's own scope, the scope of its tags,
+//!   which no other document sees.
 //! - Each [`Engine::render`] has its own import cache, dropped with it: once the
 //!   host drops the returned document, the documents of the rendering are freed
 //!   (except those kept alive by Swan functions they define, which capture their
@@ -91,7 +93,7 @@ use std::rc::{Rc, Weak};
 use url::Url;
 
 use swan_core::builtins::root_scope;
-use swan_core::value::{BuiltinFn, Promise, Scope, Value};
+use swan_core::value::{BuiltinFn, Namespace, Promise, Scope, Value};
 
 use crate::helpers::{spawn, SpawnFn};
 use crate::template;
@@ -355,11 +357,11 @@ impl Engine {
 
     /// Creates a new scope with the built-ins and the globals of the engine.
     ///
-    /// The scope is a child of a new [`root_scope`], where the globals of the
-    /// engine are copied and where `bind` and `label` bind names. It has its own
-    /// `texl` namespace. The `texl` namespace of a scope from this method alone
-    /// has no `import`: such a scope cannot import documents. [`Engine::render`]
-    /// adds it.
+    /// The scope is a new [`root_scope`], where `bind` and `label` bind names.
+    /// The globals of the engine are copied into its parent, so they are not
+    /// bindings of the scope itself. It has its own `texl` namespace. The `texl`
+    /// namespace of a scope from this method alone has no `import`: such a
+    /// scope cannot import documents. [`Engine::render`] adds it.
     ///
     /// Nothing else refers to the new scope, so it is freed with the last
     /// reference to it.
@@ -388,13 +390,16 @@ impl Engine {
     /// # }
     /// ```
     pub fn create_scope(&self) -> Scope {
-        let root = root_scope();
-        for (name, value) in self.builtins.borrow().iter() {
-            root.set(name.as_str(), value.clone());
+        let scope = root_scope();
+
+        // The parent of a root scope is the layer holding `bind` and `label`, private to it
+        if let Some(globals) = scope.parent() {
+            for (name, value) in self.builtins.borrow().iter() {
+                globals.set(name.as_str(), value.clone());
+            }
         }
 
-        let scope = root.new_child();
-        scope.set("texl", Value::Namespace(Scope::new()));
+        scope.set("texl", Value::Namespace(Namespace::new()));
         scope
     }
 
@@ -403,17 +408,18 @@ impl Engine {
     /// Renders `source` as the document at the normalized `url`, importing with `imports`
     async fn render_document(&self, imports: &Rc<RefCell<Imports>>, url: &str, source: &str) -> Value {
         let scope = self.create_scope();
-        if let Value::Namespace(texl) = scope.get("texl") {
-            texl.set("import", self.import_builtin(imports.clone(), url.to_string()));
-        }
+        let texl: Namespace = [("import", self.import_builtin(imports.clone(), url.to_string()))]
+            .into_iter().collect();
+        scope.set("texl", Value::Namespace(texl));
 
         let rendering = template::render(source, &scope).await;
 
-        let doc = Scope::new();
-        doc.set("uri", Value::Text(url.into()));
-        doc.set("source", Value::Text(source.into()));
-        doc.set("data", Value::Namespace(scope));
-        doc.set("rendering", Value::Text(rendering.into()));
+        let doc: Namespace = [
+            ("uri", Value::Text(url.into())),
+            ("source", Value::Text(source.into())),
+            ("data", Value::Namespace(scope.namespace())),
+            ("rendering", Value::Text(rendering.into())),
+        ].into_iter().collect();
         Value::Namespace(doc)
     }
 
@@ -537,7 +543,7 @@ mod tests {
     use std::pin::pin;
     use std::sync::Arc;
     use std::task::{Context, Poll, Wake, Waker};
-    use swan_core::value::{Value, WeakScope};
+    use swan_core::value::Value;
 
     // --- Async Test Helpers ---
 
@@ -562,7 +568,7 @@ mod tests {
     }
 
     /// Test helper to extract a namespace from a Value or panic
-    fn unwrap_namespace(val: Value) -> Scope {
+    fn unwrap_namespace(val: Value) -> Namespace {
         match val {
             Value::Namespace(ns) => ns,
             other => panic!("Expected Namespace, got {:?}", other),
@@ -578,7 +584,7 @@ mod tests {
     }
 
     /// The `data` field of a document namespace
-    fn data(doc: Value) -> Scope {
+    fn data(doc: Value) -> Namespace {
         unwrap_namespace(unwrap_namespace(doc).get("data"))
     }
 
@@ -756,7 +762,7 @@ mod tests {
         let a_data = data(block_on(engine.render("/a.texl", a)));
         let d_of = |name: &str| unwrap_namespace(data(a_data.get(name)).get("d"));
 
-        assert!(Rc::ptr_eq(&d_of("b").0, &d_of("c").0));
+        assert!(d_of("b").ptr_eq(&d_of("c")));
         assert_eq!(d_of("b").get("rendering"), Value::Text("D".into()));
         assert_eq!(requested.borrow().iter().filter(|url| *url == "/d.texl").count(), 1);
     }
@@ -815,37 +821,43 @@ mod tests {
 
         let doc = block_on(engine.render("/a.texl", r#"<% (() -> bind "x" 1)() %><% x %>"#));
         assert_eq!(rendering(doc.clone()), "1");
-        // Bound in the parent of `data`, where the globals are, not in `data` itself
-        assert!(!data(doc).0.borrow().bindings.contains_key("x"));
+        // Bound in the scope of the document, so it is in `data`
+        assert_eq!(data(doc).get("x"), Value::Numb(1.0));
 
         // Names bound by one rendering are not seen by the next
         let doc = block_on(engine.render("/b.texl", "<% x %>"));
         assert_eq!(rendering(doc), "0");
     }
 
-    /// Weak handles to the scope of a document and to the root scope above it
-    fn weak_scopes(doc: &Value) -> (WeakScope, WeakScope) {
-        let data = data(doc.clone());
-        let root = data.0.borrow().parent.clone().unwrap();
-        (data.downgrade(), root.downgrade())
+    #[test]
+    fn test_engine_renderings_are_freed() {
+        let main = r#"<% x = 1, ns = {y: x} %><% texl.import("lib.texl") ~> (doc -> bind "lib" doc) %><% texl.import("other.texl") %>"#;
+        let (engine, _) = engine_with_docs(&[("/lib.texl", "<% y = 2, point = {x: 1} %>lib"), ("/other.texl", "other")]);
+        engine.add_builtin("global", Value::Text("kept".into()));
+
+        // The first scope of the thread also creates the built-ins, which are never freed
+        drop(engine.create_scope());
+        let before = Scope::live_count();
+
+        let doc = block_on(engine.render("/main.texl", main));
+        assert_eq!(rendering(data(doc.clone()).get("lib")), "lib");
+        drop(doc);
+        run_pending();
+
+        // Documents that do not store functions hold no scope: data is a plain namespace
+        assert_eq!(Scope::live_count(), before);
     }
 
     #[test]
-    fn test_engine_renderings_are_freed() {
-        let main = r#"<% x = 1 %><% texl.import("lib.texl") ~> (doc -> bind "lib" doc) %><% texl.import("other.texl") %>"#;
-        let (engine, _) = engine_with_docs(&[("/lib.texl", "<% y = 2 %>lib"), ("/other.texl", "other")]);
-        engine.add_builtin("global", Value::Text("kept".into()));
+    fn test_engine_data_is_a_snapshot() {
+        let engine = Engine::new(None);
+        let doc = block_on(engine.render("/a.texl", r#"<% x = 1, later = () -> bind "y" 2 %>"#));
+        let data = data(doc);
 
-        let doc = block_on(engine.render("/main.texl", main));
-        let lib = unwrap_namespace(unwrap_namespace(doc.clone()).get("data")).get("lib");
-        let weak = [weak_scopes(&doc), weak_scopes(&lib)];
-        drop((doc, lib));
-        run_pending();
-
-        for (data, root) in weak {
-            assert!(data.upgrade().is_none());
-            assert!(root.upgrade().is_none());
-        }
+        // Binding a name after the rendering does not change `data`
+        swan_core::evaluator::eval_apply(data.get("later"), Value::Nothing, 0);
+        assert_eq!(data.get("y"), Value::Nothing);
+        assert_eq!(data.get("x"), Value::Numb(1.0));
     }
 
     #[test]
@@ -909,7 +921,7 @@ mod tests {
         let texl = unwrap_namespace(one.get("texl"));
         assert_eq!(texl.get("import"), Value::Nothing);
         // Each scope has its own `texl` namespace
-        assert!(!Rc::ptr_eq(&texl.0, &unwrap_namespace(two.get("texl")).0));
+        assert!(!texl.ptr_eq(&unwrap_namespace(two.get("texl"))));
     }
 
     #[test]

@@ -33,8 +33,8 @@ type (1, "a")        # => ("Numb", "Text")
 type ()              # => ()
 ```
 
-All values are immutable, except namespaces and promises: a namespace can gain
-new names (see [Namespaces](collections.md#namespaces)), and a promise receives
+All values are immutable, namespaces included (see
+[Namespaces](collections.md#namespaces)), except promises: a promise receives
 its value once (see [Promises](promises.md)).
 
 ## Truth values

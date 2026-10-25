@@ -35,14 +35,17 @@
 //! names by `eval_names`.
 //!
 //! # Scopes
-//! - `{X}` evaluates `X` in a new child scope and returns it as a `Namespace`.
+//! - `{X}` evaluates `X` in a new child scope and returns the bindings of that
+//!   scope as a `Namespace`, an immutable table with no parent.
 //! - `A -> B` captures the current scope as a closure; applying it evaluates
 //!   the body in a child of that closure scope.
-//! - `ns.X` evaluates `X` inside the scope of the namespace `ns`.
+//! - `ns.X` evaluates `X` in a frozen child of the current scope whose bindings
+//!   are the members of `ns` (see [`Scope::subcontext`]): `X` sees the members
+//!   and the names of the current scope, and cannot bind names.
 
 use std::rc::Rc;
 use crate::ast::Node;
-use crate::value::{Scope, Value, Undef, BuiltinFn};
+use crate::value::{BuiltinFn, Namespace, Scope, Undef, Value};
 
 
 // Unary operations
@@ -199,11 +202,12 @@ pub fn eval(node: &Node, scope: &Scope) -> Value {
             Value::list(vec)
         }
 
-        // Namespace creation: `{X}` - body is evaluated for side effects (bindings), result is discarded
+        // Namespace creation: `{X}` - body is evaluated for side effects (bindings), result is discarded.
+        // The namespace is a snapshot of the bindings of the child scope.
         Node::Namespace(unary) => {
             let child_scope = scope.new_child();
             eval(&unary.opd, &child_scope);
-            Value::Namespace(child_scope)
+            Value::Namespace(child_scope.namespace())
         }
 
 
@@ -320,12 +324,13 @@ pub fn eval(node: &Node, scope: &Scope) -> Value {
         // `ns.expression` — namespace sub-contexting
         Node::SubcontextingOp(bin) => {
             // The left-hand side must evaluate to a `Value::Namespace`.
-            // The right-hand side may be any expression and is evaluated within the namespace's scope.
+            // The right-hand side may be any expression. It is evaluated in a frozen child of
+            // the current scope that holds the members of the namespace, so it cannot bind names.
             // A non-namespace left side gives an `Undefined`.
             let nst = eval(&bin.lho, scope);
             map_values!(nst, |ns| match ns {
-                Value::Namespace(ns_scope) => {
-                    eval(&bin.rho, &ns_scope)
+                Value::Namespace(ns) => {
+                    eval(&bin.rho, &scope.subcontext(ns))
                 }
                 lhv => Value::undef_binary("subcontexting", lhv, Value::Nothing, bin.pos),
             })
@@ -517,9 +522,9 @@ fn invalid_names(op: &'static str, names: Value, pos: usize) -> Value {
 }
 
 /// The `Undefined` of an assignment or labelling (`op`) evaluated in a frozen scope.
-/// The right side is not evaluated, and the frozen scope is the left value.
+/// The right side is not evaluated, and the bindings of the frozen scope are the left value.
 fn frozen_scope(op: &'static str, scope: &Scope, pos: usize) -> Value {
-    Value::undef_binary(op, Value::Namespace(scope.clone()), Value::Nothing, pos)
+    Value::undef_binary(op, Value::Namespace(scope.namespace()), Value::Nothing, pos)
 }
 
 /// Resolves an AST node into names, without evaluating it.
@@ -584,7 +589,7 @@ fn eval_names(node: &Node) -> Value {
 ///   and evaluates the body there.
 /// - `Value::List`: indexing by a zero-based number. A tuple argument gives a
 ///   tuple of results, normalized (so out-of-range indices are dropped).
-/// - `Value::Namespace`: own-only lookup by text key. A tuple argument gives a
+/// - `Value::Namespace`: member lookup by text key. A tuple argument gives a
 ///   normalized tuple of results (missing keys are dropped).
 /// - `Value::Text`: character indexing by a zero-based number. A tuple argument
 ///   gives a normalized tuple of results.
@@ -617,15 +622,15 @@ pub fn eval_apply(func: Value, arg: Value, pos: usize) -> Value {
         }
 
         // --- Namespace Application ---
-        Value::Namespace(scope) => {
+        Value::Namespace(ns) => {
             if matches!(arg, Value::Tuple(_)) {
                 let items: Vec<Value> = arg
                     .items()
-                    .map(|key| eval_apply_namespace(&scope, key, pos))
+                    .map(|key| eval_apply_namespace(&ns, key, pos))
                     .collect();
                 Value::tuple(items)
             } else {
-                eval_apply_namespace(&scope, arg, pos)
+                eval_apply_namespace(&ns, arg, pos)
             }
         }
 
@@ -691,17 +696,13 @@ fn eval_apply_text(text: &Rc<str>, arg: Value, pos: usize) -> Value {
 
 /// Applies a Namespace to a single key `arg`.
 ///
-/// Own-only lookup: parent scopes are not searched.
 /// A missing key gives `Nothing`; a non-text key gives
 /// `Undef::BinaryOperation { op: "application", .. }`.
-fn eval_apply_namespace(scope: &Scope, arg: Value, pos: usize) -> Value {
+fn eval_apply_namespace(ns: &Namespace, arg: Value, pos: usize) -> Value {
     match arg {
-        Value::Text(t) => {
-            let found = scope.0.borrow().bindings.get(t.as_ref()).cloned();
-            found.unwrap_or(Value::Nothing)
-        }
+        Value::Text(t) => ns.get(&t),
         // Argument is not a string
-        other => Value::undef_binary("application", Value::Namespace(scope.clone()), other, pos),
+        other => Value::undef_binary("application", Value::Namespace(ns.clone()), other, pos),
     }
 }
 
@@ -807,12 +808,13 @@ mod tests {
     #[test]
     fn namespace_literal() {
         match evaluate("{x:10, y:20}") {
-            Value::Namespace(scope) => {
-                assert_eq!(scope.get("x"), Value::Numb(10.0));
-                assert_eq!(scope.get("y"), Value::Numb(20.0));
+            Value::Namespace(ns) => {
+                assert_eq!(ns.get("x"), Value::Numb(10.0));
+                assert_eq!(ns.get("y"), Value::Numb(20.0));
 
-                // Inherited from parent scope
-                assert_eq!(scope.get("TRUE"), Value::Bool(true));
+                // A namespace has no parent: names of the enclosing scope are not members
+                assert_eq!(ns.get("TRUE"), Value::Nothing);
+                assert_eq!(ns.len(), 2);
             }
             other => panic!("expected Namespace, got {:?}", other),
         }
@@ -974,7 +976,30 @@ mod tests {
     fn subcontexting() {
         assert_eq!(evaluate("{x:10}.x"), Value::Numb(10.0));
         assert_eq!(evaluate("{x:10, y:20}.(x+y)"), Value::Numb(30.0));
+        // Names that are not members are looked up in the current scope
         assert_eq!(evaluate("{x:10, y:20}.TRUE"), Value::Bool(true));
+        assert_eq!(evaluate("ns = {x: 10}, y = 5, ns.(x + y)"), Value::Numb(15.0));
+        assert_eq!(evaluate("f = () -> (z = 1, {}), z = 2, (f()).z"), Value::Numb(2.0));
+
+        // Members hide the names of the current scope
+        assert_eq!(evaluate("x = 1, {x: 10}.x"), Value::Numb(10.0));
+
+        // Namespaces are immutable: no names can be bound in a subcontext
+        assert!(matches!(
+            evaluate("ns = {x: 1}, ns.(y = 2)"),
+            Value::Undefined(Undef::BinaryOperation { op: "assignment", .. })
+        ));
+        assert!(matches!(
+            evaluate("ns = {x: 1}, ns.(x : 2)"),
+            Value::Undefined(Undef::BinaryOperation { op: "labelling", .. })
+        ));
+        assert_eq!(evaluate("ns = {x: 1}, z = ns.(y = 2), (ns \"y\", ns.x)"), Value::Numb(1.0));
+
+        // Function calls in a subcontext bind their parameters in their own scope
+        assert_eq!(evaluate("{k: 3}.((n -> n * k) 2)"), Value::Numb(6.0));
+
+        // A namespace created in a subcontext holds only its own members
+        assert_eq!(evaluate("ns = {a: 1}, nspace = ns.{b: a + 1}, (nspace \"a\", nspace \"b\")"), Value::Numb(2.0));
         match evaluate("x=10, x.TRUE") {
             Value::Undefined(Undef::BinaryOperation { op, lhv, rhv, pos }) => {
                 assert_eq!(op, "subcontexting");

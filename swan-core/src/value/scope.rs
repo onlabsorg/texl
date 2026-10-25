@@ -1,23 +1,28 @@
 use super::*;
+use std::cell::Cell;
 
 
 // ----------------------------------------------------------------------------
 //  Scope  (evaluation environment — NOT a first-class Swan value)
 //
-//  A `Scope` is the lexical environment used during evaluation. It forms a
-//  parent-chained singly-linked list of binding tables, one per lexical block.
-//  It is reference-counted so that closures can cheaply capture a snapshot of
-//  the current environment.
+//  A `Scope` is the lexical environment used during evaluation: a parent link
+//  and a *live namespace*, the table of the names bound in this scope. Scopes
+//  form a parent-chained singly-linked list, one per lexical block. They are
+//  reference-counted so that closures can cheaply capture the current
+//  environment.
 //
 //  This type is intentionally separate from `Value::Namespace`. A Scope is an
-//  internal evaluator concept; a Namespace is a first-class Swan value.
+//  internal evaluator concept; a Namespace is a first-class, immutable Swan
+//  value. `Scope::namespace` takes a snapshot of the live namespace (cheap:
+//  the map is shared until the scope binds a name again).
 // ----------------------------------------------------------------------------
 
-/// A lexical environment: a table of bindings with an optional parent.
+/// A lexical environment: a live namespace of bindings with an optional parent.
 ///
 /// Name lookup ([`Scope::get`]) searches the scope itself and then its
 /// ancestors. New bindings ([`Scope::set`]) always go into the scope itself.
-/// A `Scope` is also the storage of a [`Value::Namespace`].
+/// [`Scope::namespace`] returns the bindings of the scope as a [`Namespace`]
+/// value, which later bindings do not change.
 ///
 /// `Scope` is a cheap handle: clones share the same bindings.
 ///
@@ -34,6 +39,10 @@ use super::*;
 ///
 /// assert_eq!(child.get("x"), Value::Numb(1.0));   // inherited
 /// assert_eq!(parent.get("y"), Value::Nothing);    // not visible upwards
+///
+/// let snapshot = child.namespace();
+/// child.set("z", Value::Numb(3.0));
+/// assert_eq!(snapshot.get("z"), Value::Nothing);  // namespaces are immutable
 /// ```
 #[derive(Clone, Debug)]
 pub struct Scope(pub Rc<RefCell<ScopeData>>);
@@ -66,33 +75,70 @@ impl WeakScope {
 }
 
 /// The shared state behind a [`Scope`].
-#[derive(Clone)]
 pub struct ScopeData {
     /// The enclosing scope, searched when a name is not bound here.
     pub parent: Option<Scope>,
-    /// The bindings defined in this scope (not in its ancestors).
-    pub bindings: HashMap<String, Value>,
+    /// The live namespace: the bindings defined in this scope (not in its ancestors).
+    pub bindings: Namespace,
     /// Whether Swan code is forbidden to bind names here (see [`Scope::freeze`]).
     pub frozen: bool,
+}
+
+thread_local! {
+    /// The number of `ScopeData` alive on this thread (see [`Scope::live_count`]).
+    static LIVE_SCOPES: Cell<usize> = const { Cell::new(0) };
+}
+
+impl ScopeData {
+    fn new(parent: Option<Scope>, bindings: Namespace, frozen: bool) -> Self {
+        LIVE_SCOPES.with(|n| n.set(n.get() + 1));
+        Self { parent, bindings, frozen }
+    }
+}
+
+impl Clone for ScopeData {
+    fn clone(&self) -> Self {
+        Self::new(self.parent.clone(), self.bindings.clone(), self.frozen)
+    }
+}
+
+impl Drop for ScopeData {
+    fn drop(&mut self) {
+        // `try_with`: the counter may already be gone when thread-locals are destroyed
+        let _ = LIVE_SCOPES.try_with(|n| n.set(n.get() - 1));
+    }
 }
 
 impl Scope {
     /// Create a top-level scope with no parent.
     pub fn new() -> Self {
-        Self(Rc::new(RefCell::new(ScopeData {
-            parent: None,
-            bindings: HashMap::new(),
-            frozen: false,
-        })))
+        Self(Rc::new(RefCell::new(ScopeData::new(None, Namespace::new(), false))))
     }
 
     /// Create a child scope that inherits from a parent.
     pub fn with_parent(parent: Scope) -> Self {
-        Self(Rc::new(RefCell::new(ScopeData {
-            parent: Some(parent),
-            bindings: HashMap::new(),
-            frozen: false,
-        })))
+        Self(Rc::new(RefCell::new(ScopeData::new(Some(parent), Namespace::new(), false))))
+    }
+
+    /// Returns the number of scopes alive on the current thread.
+    ///
+    /// It is a diagnostic for memory leaks: a host can compare it before and
+    /// after a piece of work. It includes the built-ins scope, which lives as
+    /// long as the thread.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use swan_core::value::Scope;
+    ///
+    /// let before = Scope::live_count();
+    /// let scope = Scope::new();
+    /// assert_eq!(Scope::live_count(), before + 1);
+    /// drop(scope);
+    /// assert_eq!(Scope::live_count(), before);
+    /// ```
+    pub fn live_count() -> usize {
+        LIVE_SCOPES.with(|n| n.get())
     }
 
     /// Creates a new child scope using `self` as the parent environment.
@@ -100,12 +146,50 @@ impl Scope {
         Self::with_parent(self.clone())
     }
 
+    /// Creates a frozen child scope whose bindings are the members of `ns`.
+    ///
+    /// This is the scope of the subcontexting operation `ns.expr`: names are
+    /// looked up in `ns` first, then in `self` and its ancestors. Swan code
+    /// cannot bind names in it (see [`Scope::freeze`]).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use swan_core::value::{Namespace, Scope, Value};
+    ///
+    /// let scope = Scope::new();
+    /// scope.set("y", Value::Numb(2.0));
+    /// let ns: Namespace = [("x", Value::Numb(1.0))].into_iter().collect();
+    ///
+    /// let sub = scope.subcontext(ns);
+    /// assert_eq!(sub.get("x"), Value::Numb(1.0));
+    /// assert_eq!(sub.get("y"), Value::Numb(2.0));
+    /// assert!(sub.is_frozen());
+    /// ```
+    pub fn subcontext(&self, ns: Namespace) -> Self {
+        Self(Rc::new(RefCell::new(ScopeData::new(Some(self.clone()), ns, true))))
+    }
+
+    /// Returns the parent scope, or `None` for a top-level scope.
+    pub fn parent(&self) -> Option<Scope> {
+        self.0.borrow().parent.clone()
+    }
+
+    /// Returns the bindings of this scope (not of its ancestors) as a namespace.
+    ///
+    /// The namespace is a snapshot: names bound in the scope afterwards are not
+    /// in it. It is cheap, since the scope and the namespace share their map
+    /// until the scope binds a name again.
+    pub fn namespace(&self) -> Namespace {
+        self.0.borrow().bindings.clone()
+    }
+
     /// Freezes the scope: Swan code can no longer bind names in it.
     ///
     /// An assignment (`=`) or a labelling (`:`) evaluated in a frozen scope binds
-    /// nothing and gives `Undefined`, for example `text.(size = 0)` on a built-in
-    /// namespace. The host can still change the scope with [`Scope::set`], and
-    /// the children of a frozen scope are not frozen.
+    /// nothing and gives `Undefined`, for example `text.(size = 0)`. The host can
+    /// still change the scope with [`Scope::set`], and the children of a frozen
+    /// scope are not frozen.
     ///
     /// # Examples
     ///
@@ -146,7 +230,7 @@ impl Scope {
         // Release the borrow before any recursive call.
         let (found, parent) = {
             let inner = self.0.borrow();
-            let found = inner.bindings.get(key).cloned();
+            let found = inner.bindings.contains(key).then(|| inner.bindings.get(key));
             let parent = inner.parent.clone();
             (found, parent)
         };
@@ -177,8 +261,8 @@ impl Scope {
         // Search top-down (root is at the back of `chain`)
         for scope in chain.iter().rev() {
             let inner = scope.0.borrow();
-            if let Some(val) = inner.bindings.get(key) {
-                return val.clone();
+            if inner.bindings.contains(key) {
+                return inner.bindings.get(key);
             }
         }
 
@@ -186,8 +270,10 @@ impl Scope {
     }
 
     /// Inserts or updates a binding in the current local scope only.
+    ///
+    /// Namespaces taken from the scope before ([`Scope::namespace`]) do not change.
     pub fn set(&self, key: impl Into<String>, val: Value) {
-        self.0.borrow_mut().bindings.insert(key.into(), val);
+        self.0.borrow_mut().bindings.insert(key, val);
     }
 }
 
@@ -213,10 +299,8 @@ impl fmt::Debug for ScopeData {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         // Print only the binding names: values may be Funcs whose closures
         // point back to this very scope, which would recurse forever.
-        let mut keys: Vec<&String> = self.bindings.keys().collect();
-        keys.sort();
         f.debug_struct("ScopeData")
-            .field("bindings", &keys)
+            .field("bindings", &self.bindings.names())
             .field("has_parent", &self.parent.is_some())
             .field("frozen", &self.frozen)
             .finish()

@@ -29,7 +29,7 @@
 // live directly in it (`type`, `parse`, `TRUE`, `FALSE`).
 // `bind` and `label` are also defined here: they take a name (or tuple of names) and return
 // a function that binds the names globally. `bind` returns Nothing, `label` returns the values.
-// Every other built-in lives in a submodule that exposes `create_namespace(&Scope) -> Value`.
+// Every other built-in lives in a submodule that exposes `create_namespace() -> Value`.
 //
 // Adding a root-level function:
 //   1. Write `fn my_fn(arg: Value) -> Value`.
@@ -37,7 +37,8 @@
 //      `map_1` makes it map over tuples and pass `Nothing` through.
 //
 // Adding a function to a namespace: put it in the matching submodule (`numb`,
-// `text`, `time`, …) and register it in that module's `create_namespace`.
+// `text`, `time`, …) and register it in that module's `create_namespace` with
+// `ns.insert("my_fn", ...)`.
 //
 // Multi-argument functions: these are curried. Use `map_curried` from `helpers`,
 // so `math.pow 10` returns a function that takes the second argument.
@@ -78,10 +79,10 @@ mod time;
 ///
 /// The built-in namespaces and constants are created once per thread and
 /// shared by every root scope of that thread; only `bind` and `label`, which
-/// target the returned scope, are created per call. The shared scopes are
-/// frozen (see [`Scope::freeze`]): Swan code cannot bind names in them, so
-/// `text.(size = 0)` gives `Undefined` instead of changing `text.size` for
-/// every root scope. The host can still change them with [`Scope::set`]. Nothing refers back to the
+/// target the returned scope, are created per call. The shared scope is
+/// frozen (see [`Scope::freeze`]), and namespaces are immutable, so Swan code
+/// cannot change the built-ins: `text.(size = 0)` gives `Undefined`. The host
+/// can replace a built-in with [`set_builtin`]. Nothing refers back to the
 /// returned scope from its ancestors, so it is freed once the last reference to
 /// it (or to one of its children) is dropped.
 ///
@@ -131,15 +132,15 @@ fn builtins_scope() -> Scope {
     let scope = Scope::new();
 
     // Each namespace is registered under its own name, e.g. `math.sqrt`.
-    scope.set("bool"   , bool_::create_namespace(&scope));
-    scope.set("numb"   , numb::create_namespace(&scope));
-    scope.set("text"   , text::create_namespace(&scope));
-    scope.set("list"   , list::create_namespace(&scope));
-    scope.set("nspace" , nspace::create_namespace(&scope));
-    scope.set("promise", promise::create_namespace(&scope));
-    scope.set("undef"  , undef::create_namespace(&scope));
-    scope.set("math"   , math::create_namespace(&scope));
-    scope.set("time"   , time::create_namespace(&scope));
+    scope.set("bool"   , bool_::create_namespace());
+    scope.set("numb"   , numb::create_namespace());
+    scope.set("text"   , text::create_namespace());
+    scope.set("list"   , list::create_namespace());
+    scope.set("nspace" , nspace::create_namespace());
+    scope.set("promise", promise::create_namespace());
+    scope.set("undef"  , undef::create_namespace());
+    scope.set("math"   , math::create_namespace());
+    scope.set("time"   , time::create_namespace());
 
     scope.set("TRUE" , Value::Bool(true));
     scope.set("FALSE", Value::Bool(false));
@@ -147,15 +148,36 @@ fn builtins_scope() -> Scope {
     scope.set("type" , map_1("type" , type_function));
     scope.set("parse", map_1("parse", parse_function));
 
-    // Shared by every root scope of the thread: Swan code must not change them
+    // Shared by every root scope of the thread: Swan code must not change it
     scope.freeze();
-    for value in scope.0.borrow().bindings.values() {
-        if let Value::Namespace(ns) = value {
-            ns.freeze();
-        }
-    }
 
     scope
+}
+
+/// Binds `name` to `value` among the built-ins of the current thread.
+///
+/// The built-ins are shared by every root scope of the thread, so the change
+/// is seen by every scope, including the scopes created before. A host uses it
+/// to add a built-in, or to replace one: namespaces are immutable, so to
+/// replace a member of a built-in namespace, it binds a changed copy of the
+/// namespace.
+///
+/// # Examples
+///
+/// ```
+/// use swan_core::builtins::{root_scope, set_builtin};
+/// use swan_core::value::{BuiltinFn, Value};
+///
+/// let scope = root_scope();
+/// let Value::Namespace(mut time) = scope.get("time") else { panic!() };
+/// time.insert("now", Value::Builtin(BuiltinFn::new("time.now", |_| Value::Numb(0.0))));
+/// set_builtin("time", Value::Namespace(time));
+///
+/// let Value::Namespace(time) = scope.get("time") else { panic!() };
+/// assert_eq!(swan_core::evaluator::eval_apply(time.get("now"), Value::Nothing, 0), Value::Numb(0.0));
+/// ```
+pub fn set_builtin(name: &str, value: Value) {
+    BUILTINS.with(|scope| scope.set(name, value));
 }
 
 /// Binds `bind` and `label` in `scope`, so that they bind names in `target`.
@@ -206,8 +228,9 @@ fn type_function(val: Value) -> Value {
 /// Builtin `parse` function:
 ///   - takes a `Text` containing source code and parses it immediately.
 ///   - returns a builtin function named `"eval"`.
-///   - that function takes a `Namespace` and evaluates the captured AST in
-///     that namespace as its scope.
+///   - that function takes a `Namespace` and evaluates the captured AST in a
+///     frozen scope holding its members, below the built-ins (so it sees the
+///     members and the built-ins, and cannot bind names).
 ///   - a non-`Text` argument to `parse` gives `Undefined`, labelled `"parse"`.
 ///   - a non-`Namespace` argument to the returned function gives `Undefined`,
 ///     labelled `"eval"`.
@@ -220,7 +243,7 @@ fn parse_function(arg: Value) -> Value {
             // The closure takes ownership of the AST.
             Value::Builtin(BuiltinFn::new("eval", move |ns_arg| {
                 match ns_arg {
-                    Value::Namespace(scope) => eval(&ast, &scope),
+                    Value::Namespace(ns) => BUILTINS.with(|builtins| eval(&ast, &builtins.subcontext(ns))),
                     other => Value::undef_unary("eval", other, 0),
                 }
             }))
@@ -428,7 +451,7 @@ mod tests {
     fn test_root_scopes_share_the_built_ins_but_not_their_globals() {
         let (a, b) = (root_scope(), root_scope());
         let (Value::Namespace(text_a), Value::Namespace(text_b)) = (a.get("text"), b.get("text")) else { panic!() };
-        assert!(std::rc::Rc::ptr_eq(&text_a.0, &text_b.0));
+        assert!(text_a.ptr_eq(&text_b));
 
         let ast = Parser::new(Lexer::new(r#"(() -> bind "x" 1)()"#)).parse();
         eval(&ast, &a);
@@ -443,11 +466,10 @@ mod tests {
 
         assert!(matches!(run_in("text.(size = 0)"), Value::Undefined(Undef::BinaryOperation { op: "assignment", .. })));
         assert!(matches!(run_in("math.(pi : 3)"), Value::Undefined(Undef::BinaryOperation { op: "labelling", .. })));
-        assert!(matches!(run_in("(nspace.parent text).(TRUE = 0)"), Value::Undefined(_)));
         assert_eq!(run_in(r#"text.size "abc""#), Value::Numb(3.0));
         assert_eq!(run_in("TRUE"), Value::Bool(true));
 
-        // Function calls on a frozen scope bind their parameters in a child scope
+        // Function calls in a subcontext bind their parameters in a child scope
         assert_eq!(run_in("text.((x -> x + 1) 1)"), Value::Numb(2.0));
         // The user scope is not frozen
         assert_eq!(run_in("size = 0, size"), Value::Numb(0.0));
@@ -464,5 +486,39 @@ mod tests {
         drop((scope, binders));
         assert!(weak_scope.upgrade().is_none());
         assert!(weak_binders.upgrade().is_none());
+    }
+
+    #[test]
+    fn test_namespaces_do_not_keep_their_scope_alive() {
+        // A namespace has no parent, so storing it in the scope it was created in is no cycle
+        for src in ["ns = {y: 2}", "x = 1, ns = {y: x, inner = {z: 3}}", "ns = {a: 1}, b = ns.{c: a}"] {
+            let scope = root_scope();
+            eval(&Parser::new(Lexer::new(src)).parse(), &scope);
+            let weak = scope.downgrade();
+            drop(scope);
+            assert!(weak.upgrade().is_none(), "{src}");
+        }
+    }
+
+    #[test]
+    fn test_bind_writes_only_in_the_live_scope() {
+        let scope = root_scope();
+        let run_in = |src: &str| eval(&Parser::new(Lexer::new(src)).parse(), &scope);
+
+        // Called while a namespace is being built, `bind` binds in the global scope, not in it
+        run_in(r#"ns = {f = () -> bind "x" 1, y = f()}"#);
+        assert_eq!(run_in("x"), Value::Numb(1.0));
+        assert_eq!(run_in(r#"ns "x""#), Value::Nothing);
+
+        // Called in a subcontext, it binds in the global scope, not in the namespace
+        run_in(r#"ns.(label "z" 2)"#);
+        assert_eq!(run_in("z"), Value::Numb(2.0));
+        assert_eq!(run_in(r#"ns "z""#), Value::Nothing);
+
+        // A namespace taken from the global scope does not see later bindings
+        let snapshot = scope.namespace();
+        run_in(r#"bind "w" 3"#);
+        assert_eq!(snapshot.get("w"), Value::Nothing);
+        assert_eq!(scope.namespace().get("w"), Value::Numb(3.0));
     }
 }

@@ -14,7 +14,7 @@
 //! - `to_string(t)`  : ISO-8601 text, e.g. `2026-05-28T20:26:40.000Z`
 //! - `from_string(s)`: parse ISO-8601 text (date, or date + time)
 
-use crate::value::{BuiltinFn, Scope, Value};
+use crate::value::{BuiltinFn, Namespace, Value};
 use super::helpers::*;
 
 
@@ -23,22 +23,22 @@ use super::helpers::*;
 //  `time` built-in namespace
 // ----------------------------------------------------------------------------
 
-/// Builds the `time` namespace as a child of `parent`.
-pub fn create_namespace(parent: &Scope) -> Value {
-    let time_scope = parent.new_child();
+/// Builds the `time` namespace value.
+pub fn create_namespace() -> Value {
+    let mut ns = Namespace::new();
 
-    time_scope.set("now", Value::Builtin(BuiltinFn::new("time.now", time_now)));
+    ns.insert("now", Value::Builtin(BuiltinFn::new("time.now", time_now)));
 
-    time_scope.set("to_date", map_1("time.to_date", time_to_date));
-    time_scope.set("from_date", map_1("time.from_date", time_from_date));
+    ns.insert("to_date", map_1("time.to_date", time_to_date));
+    ns.insert("from_date", map_1("time.from_date", time_from_date));
 
-    time_scope.set("week_day", map_1("time.week_day", time_week_day));
-    time_scope.set("week_number", map_1("time.week_number", time_week_number));
+    ns.insert("week_day", map_1("time.week_day", time_week_day));
+    ns.insert("week_number", map_1("time.week_number", time_week_number));
 
-    time_scope.set("to_string", map_1("time.to_string", time_to_string));
-    time_scope.set("from_string", map_1("time.from_string", time_from_string));
+    ns.insert("to_string", map_1("time.to_string", time_to_string));
+    ns.insert("from_string", map_1("time.from_string", time_from_string));
 
-    Value::Namespace(time_scope)
+    Value::Namespace(ns)
 }
 
 
@@ -62,14 +62,14 @@ fn time_to_date(t: Value) -> Value {
     match t {
         Value::Numb(t) => {
             let dt = datetime_from_epoch(t);
-            let scope = Scope::new();
-            scope.set("year", Value::Numb(dt.year as f64));
-            scope.set("month", Value::Numb(dt.month as f64));
-            scope.set("day", Value::Numb(dt.day as f64));
-            scope.set("hour", Value::Numb(dt.hour as f64));
-            scope.set("minute", Value::Numb(dt.minute as f64));
-            scope.set("second", Value::Numb(dt.second));
-            Value::Namespace(scope)
+            let mut ns = Namespace::new();
+            ns.insert("year", Value::Numb(dt.year as f64));
+            ns.insert("month", Value::Numb(dt.month as f64));
+            ns.insert("day", Value::Numb(dt.day as f64));
+            ns.insert("hour", Value::Numb(dt.hour as f64));
+            ns.insert("minute", Value::Numb(dt.minute as f64));
+            ns.insert("second", Value::Numb(dt.second));
+            Value::Namespace(ns)
         }
         other => Value::undef_unary("time.to_date", other, 0),
     }
@@ -78,13 +78,13 @@ fn time_to_date(t: Value) -> Value {
 /// Missing or non-numeric fields default to year 0 / month 1 / day 1 / 00:00:00.
 fn time_from_date(date: Value) -> Value {
     match date {
-        Value::Namespace(scope) => {
-            let y = numb_field(&scope, "year", 0.0) as i64;
-            let m = numb_field(&scope, "month", 1.0) as i64;
-            let d = numb_field(&scope, "day", 1.0) as i64;
-            let h = numb_field(&scope, "hour", 0.0) as i64;
-            let min = numb_field(&scope, "minute", 0.0) as i64;
-            let s = numb_field(&scope, "second", 0.0);
+        Value::Namespace(ns) => {
+            let y = numb_field(&ns, "year", 0.0) as i64;
+            let m = numb_field(&ns, "month", 1.0) as i64;
+            let d = numb_field(&ns, "day", 1.0) as i64;
+            let h = numb_field(&ns, "hour", 0.0) as i64;
+            let min = numb_field(&ns, "minute", 0.0) as i64;
+            let s = numb_field(&ns, "second", 0.0);
             Value::Numb(epoch_from_parts(y, m, d, h, min, s))
         }
         other => Value::undef_unary("time.from_date", other, 0),
@@ -188,8 +188,8 @@ fn epoch_from_parts(y: i64, m: i64, d: i64, h: i64, min: i64, sec: f64) -> f64 {
 
 /// Reads a numeric field from a date namespace, or returns `default`
 /// if the field is missing or not a `Numb`.
-fn numb_field(scope: &Scope, name: &str, default: f64) -> f64 {
-    match scope.get(name) {
+fn numb_field(ns: &Namespace, name: &str, default: f64) -> f64 {
+    match ns.get(name) {
         Value::Numb(n) => n,
         _ => default,
     }
@@ -303,6 +303,7 @@ fn parse_iso_string(s: &str) -> Option<f64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::value::Scope;
     use crate::evaluator::eval;
     use crate::lexer::Lexer;
     use crate::parser::Parser;
@@ -311,7 +312,7 @@ mod tests {
     /// Returns a child scope, mirroring how user code is evaluated.
     fn root_scope() -> Scope {
         let scope = Scope::new();
-        scope.set("time", create_namespace(&scope));
+        scope.set("time", create_namespace());
         scope.set("TRUE", Value::Bool(true));
         scope.set("FALSE", Value::Bool(false));
         scope.new_child()

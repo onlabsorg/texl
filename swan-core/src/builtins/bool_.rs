@@ -7,7 +7,7 @@
 //! - `bool.all`:  `true` if every item of its argument is truthy.
 //!
 //! Truthiness itself is defined by `impl From<Value> for bool`.
-use crate::value::{BuiltinFn, Scope, Value};
+use crate::value::{BuiltinFn, Namespace, Value};
 use super::helpers::*;
 
 
@@ -16,19 +16,19 @@ use super::helpers::*;
 //  `bool` built-in namespace
 // ----------------------------------------------------------------------------
 
-/// Builds the `bool` namespace as a child of `parent`.
+/// Builds the `bool` namespace value.
 ///
 /// `from` is wrapped with `map_1`, so it maps over tuples and returns a tuple
 /// of booleans. `any` and `all` are plain `BuiltinFn`s because they reduce
 /// their whole argument to a single `Bool`.
-pub fn create_namespace(parent: &Scope) -> Value {
-    let bool_scope = parent.new_child();
-    bool_scope.set("TRUE" , Value::Bool(true));
-    bool_scope.set("FALSE", Value::Bool(false));
-    bool_scope.set("from" , map_1("bool.from", bool_from));
-    bool_scope.set("any"  , Value::Builtin(BuiltinFn::new("bool.any", bool_any)));
-    bool_scope.set("all"  , Value::Builtin(BuiltinFn::new("bool.all", bool_all)));
-    Value::Namespace(bool_scope)
+pub fn create_namespace() -> Value {
+    let mut ns = Namespace::new();
+    ns.insert("TRUE" , Value::Bool(true));
+    ns.insert("FALSE", Value::Bool(false));
+    ns.insert("from" , map_1("bool.from", bool_from));
+    ns.insert("any"  , Value::Builtin(BuiltinFn::new("bool.any", bool_any)));
+    ns.insert("all"  , Value::Builtin(BuiltinFn::new("bool.all", bool_all)));
+    Value::Namespace(ns)
 }
 
 /// `bool.from x`: converts a single value to `Bool` using its truthiness.
@@ -58,6 +58,7 @@ fn bool_all(val: Value) -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::value::Scope;
     use crate::evaluator::eval;
     use crate::lexer::Lexer;
     use crate::parser::Parser;
@@ -66,7 +67,7 @@ mod tests {
     /// constants. Returns a child scope, mirroring how user code is evaluated.
     fn root_scope() -> Scope {
         let scope = Scope::new();
-        scope.set("bool" , create_namespace(&scope));
+        scope.set("bool" , create_namespace());
         scope.set("TRUE" , Value::Bool(true));
         scope.set("FALSE", Value::Bool(false));
         scope.new_child()
@@ -196,7 +197,7 @@ mod tests {
     #[test]
     fn test_promise() {
         let scope = root_scope();
-        scope.set("promise", crate::builtins::promise::create_namespace(&scope));
+        scope.set("promise", crate::builtins::promise::create_namespace());
         let run_p = |src: &str| eval(&Parser::new(Lexer::new(src)).parse(), &scope);
 
         // Pending: FALSE
