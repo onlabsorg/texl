@@ -62,10 +62,15 @@ The quickest way to evaluate Swan expressions is a template. Save this as
 <% double = x -> x * 2 %><% double 21 %>
 ```
 
-and render it with the [command-line tool](../hosts/cli.md):
+and render it with the [Python library](../hosts/python.md):
 
-```sh
-texl try.texl
+```python
+import asyncio
+from pathlib import Path
+import pytexl
+
+doc = asyncio.run(pytexl.Engine().load(Path("try.texl")))
+print(doc.rendering)                           # 42
 ```
 
 ## Contents

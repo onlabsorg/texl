@@ -58,9 +58,8 @@ usually documents what it expects, for example in a comment at the top:
 
 Values from the host become Swan values: strings become `Text`, numbers
 `Numb`, arrays `List`, objects namespaces, and functions Swan functions. See
-the host pages for how to pass globals: [JavaScript](../hosts/javascript.md#globals-and-context-values)
-and [Rust](../hosts/rust.md#globals-and-host-functions). The command-line tool
-does not pass any.
+the host pages for how to pass globals: [JavaScript](../hosts/javascript.md#globals-and-context-values),
+[Python](../hosts/python.md#globals-and-context-values) and [Rust](../hosts/rust.md#globals-and-host-functions).
 
 ## Names from other documents
 

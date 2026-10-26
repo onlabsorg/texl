@@ -44,7 +44,6 @@
 # Running texl
 
 - [Hosts and APIs](hosts/index.md)
-- [Command line](hosts/cli.md)
 - [JavaScript](hosts/javascript.md)
 - [Python](hosts/python.md)
 - [Rust](hosts/rust.md)

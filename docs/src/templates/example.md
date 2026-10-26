@@ -84,10 +84,15 @@ top.
 
 ## Rendering it
 
-With the [command-line tool](../hosts/cli.md):
+With the [Python library](../hosts/python.md):
 
-```sh
-texl invoice/invoice.texl -o invoice.md
+```python
+import asyncio
+from pathlib import Path
+import pytexl
+
+doc = asyncio.run(pytexl.Engine().load(Path("invoice/invoice.texl")))
+Path("invoice.md").write_text(doc.rendering)
 ```
 
 `invoice.md` contains:
@@ -129,5 +134,5 @@ Thank you for being a loyal customer!
   adds them up with `money.sum`.
 - **The closing line** depends on a condition.
 
-The imports use paths relative to `invoice.texl`, so the command works from
-any folder.
+The imports use paths relative to `invoice.texl`, so they resolve the same
+way whatever the current folder is.

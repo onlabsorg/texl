@@ -1,7 +1,7 @@
 # Documents and imports
 
-A *document* is a template with a location: a file path for the command-line
-tool, a URL in a web page. Every template the engine renders is a document,
+A *document* is a template with a location: a file path for a Python program, a
+URL in a web page. Every template the engine renders is a document,
 even one that a program renders from a string: the program gives it a
 location. A document can import other
 documents, to reuse pieces of text (*partials*) or collections of functions
@@ -133,9 +133,9 @@ document, the way links work in a web page:
 | `footer.texl`                 | a file in the same folder as the importing document       |
 | `partials/footer.texl`        | a file in a subfolder of that folder                      |
 | `../shared/footer.texl`       | a file in a sibling folder                                |
-| `/shared/footer.texl`         | a path from the root: the root of the web site on the web, the root of the file system on the command line |
+| `/shared/footer.texl`         | a path from the root: the root of the web site on the web, the root of the file system for local files |
 | `https://example.com/a.texl`  | a full URL (on the web)                                   |
-| `file:///home/me/a.texl`      | a full file URL (on the command line)                     |
+| `file:///home/me/a.texl`      | a full file URL (local files)                             |
 
 A template that a program renders from a string resolves relative locations
 against the location the program gives it.

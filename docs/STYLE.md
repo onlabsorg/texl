@@ -9,7 +9,7 @@ code.
 | What                                   | Where                                   |
 |----------------------------------------|-----------------------------------------|
 | Landing page                           | `docs/site/index.html`                  |
-| Template manual, Swan manual, host guides, CLI and JavaScript API | `docs/src` (an mdBook) |
+| Template manual, Swan manual, host guides, JavaScript and Python API | `docs/src` (an mdBook) |
 | Rust API (`swan-core`, `texl-core`)    | doc comments in the code (rustdoc)      |
 | JavaScript API typings                 | doc comments in `texl-wasm/src/lib.rs` (copied into `texl_wasm.d.ts`) |
 | Python API                             | `docs/src/hosts/python.md`, and the docstrings of `pytexl/python/pytexl` |
@@ -38,7 +38,7 @@ Pages publishes.
 | tag                | one `<% ... %>`                                                  |
 | document           | a template identified by a URI, loaded by an engine              |
 | engine             | the object that renders templates and loads documents           |
-| host               | the program that runs the engine: the CLI, a web page, a Rust program |
+| host               | the program that runs the engine: a web page, a Python or Rust program |
 | global             | a name that the host binds for every template                    |
 | `Nothing`, `Undefined`, `Numb`, `Text`, ... | Swan types, always in code font         |
 | name               | a Swan identifier (not "variable", except in passing)            |

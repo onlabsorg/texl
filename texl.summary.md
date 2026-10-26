@@ -8,8 +8,8 @@ code; keep it current as described in `CLAUDE.md`.*
 
 Texl is a template engine for any kind of text, with an embedded expression
 language (Swan), that turns documents into small programs which compute their
-own content, import other documents by URL, and run the same way on the
-command line, in the browser, in Python and in Rust.
+own content, import other documents by URL, and run the same way in the
+browser, in Python and in Rust.
 
 ## What it does
 
@@ -81,17 +81,16 @@ document and a little program that produces it.
           │ builtins     │            │ (per rendering)  │
           └──────────────┘            └────────┬─────────┘
                                                │
-              ┌──────────────┬─────────────────┼───────────────┐
-              ▼              ▼                 ▼               ▼
-         texl-cli       texl-wasm           pytexl         Rust API
-       (`texl` binary)  (browser, npm)     (Python, PyPI)  (crates)
+                              ┌────────────────┼───────────────┐
+                              ▼                ▼               ▼
+                          texl-wasm         pytexl         Rust API
+                        (browser, npm)   (Python, PyPI)    (crates)
 ```
 
 | Component   | Role                                                                 | Distribution |
 |-------------|----------------------------------------------------------------------|--------------|
 | `swan-core` | The Swan language: lexer, Pratt parser, evaluator, standard library (`bool`, `numb`, `text`, `list`, `nspace`, `promise`, `undef`, `math`, `time`), and a memory cleaner (cycle collector). No dependencies. | Rust crate |
 | `texl-core` | Template rendering and the `Engine`: pluggable loaders per URL scheme, and `fetch` (get a document's source), `render` (render a source as the document at a location) and `load` (both), with `texl.import` and an import cache per rendering. | Rust crate |
-| `texl-cli`  | The `texl` command: renders a file to stdout or a file, loading imports from the local file system. | Prebuilt binaries for Linux, macOS, Windows (GitHub Releases) |
 | `texl-wasm` | JavaScript library for the browser via WebAssembly: `TexlEngine` (`fetch`, `load`, `render`, `set`, `createContext`) with HTTP loading, and `collect` (the memory cleaner); JS functions and promises cross into Swan and back. | npm: `@onlabsorg/texl` |
 | `pytexl`    | Python library (PyO3): async `Engine` (`fetch`, `load`, `render`), `Context`, `collect` (the memory cleaner), file and HTTP loaders; Python callables, mappings and awaitables cross into Swan and back. | PyPI: `pytexl` |
 
@@ -104,17 +103,20 @@ available to hosts too, but it cannot import documents.
 ## Status
 
 - MIT licensed; source at <https://github.com/onlabsorg/texl>.
-- Latest releases (2026-10-24): `texl-cli` 0.1.1, `texl-wasm` 0.3.0,
-  `pytexl` 0.3.0.
-- The repository holds the next, not yet released versions (`swan-core`
-  0.2.0, `texl-core` 0.3.0, `texl-cli` 0.2.0, `texl-wasm` and `pytexl`
-  0.4.0). They change how hosts use the engine: rendering text now needs a
+- Latest releases (2026-10-25): `texl-wasm` 0.4.0, `pytexl` 0.4.0. The Rust
+  crates (`swan-core` 0.2.0, `texl-core` 0.3.0) are used from the
+  repository; they are not on crates.io.
+- Version 0.4.0 changed how hosts use the engine: rendering text now needs a
   location, documents are no longer cached between renderings, imported
   documents no longer see the names of their importer, namespaces are
   immutable and no longer inherit names from where they were created,
   names a document binds with `bind` are now part of its data, and memory
   is now cleaned up after each rendering (see "Memory" below).
-- Available and published: CLI, browser/JavaScript, Python, Rust.
+- Available: browser/JavaScript, Python, Rust.
+- The `texl` command-line tool (`texl-cli`) has been removed from the
+  repository; its last release was 0.2.0 (2026-10-25), and its binaries
+  remain on GitHub Releases. The documentation examples that used it now use
+  the Python library.
 - Documentation site (template manual, Swan manual with built-in reference,
   host guides, rustdoc): <https://onlabsorg.github.io/texl/>.
 - Planned next: a Node.js library, editor support (`texl.nvim`,
@@ -130,10 +132,11 @@ never free it. Swan therefore has a memory cleaner (a cycle collector, the
 technique Python uses) that finds such self-held documents once nothing else
 uses them, and frees them. The engine runs it after every rendering, so
 programs that keep rendering for a long time, such as an editor or a server,
-no longer grow in memory with each rendering. Hosts that render into a *context* call `collect` themselves after
-dropping it; it is available in Rust, JavaScript and Python. A developer
-example (`texl-cli/examples/leak.rs`) measures what each rendering leaves
-behind.
+no longer grow in memory with each rendering. Hosts that render into a
+*context* call `collect` themselves after dropping it; it is available in
+Rust, JavaScript and Python. The developer example that measured what each
+rendering leaves behind was part of the command-line tool and was removed
+with it.
 
 ## Known limitations
 

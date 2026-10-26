@@ -1,1 +1,0 @@
--- the Texl team (<% texl.import("../lib/format.texl") ~> (doc -> doc.data.plural(2, "import")) %> deep)

@@ -37,7 +37,6 @@ the tags.
 You write a template in a file, usually with the `.texl` extension, or in a
 string inside a program. A *host* renders it:
 
-- the [`texl` command](../hosts/cli.md) renders a file from the command line;
 - the [JavaScript library](../hosts/javascript.md) renders templates in a web
   page;
 - the [Python library](../hosts/python.md) renders templates in a Python

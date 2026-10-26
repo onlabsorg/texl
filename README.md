@@ -25,8 +25,7 @@ Total: $18.5 (free shipping)
 - [Getting started](https://onlabsorg.github.io/texl/book/getting-started.html)
 - [Writing templates](https://onlabsorg.github.io/texl/book/templates/index.html)
 - [The Swan language](https://onlabsorg.github.io/texl/book/swan/index.html)
-- [Command line](https://onlabsorg.github.io/texl/book/hosts/cli.html),
-  [JavaScript API](https://onlabsorg.github.io/texl/book/hosts/javascript.html),
+- [JavaScript API](https://onlabsorg.github.io/texl/book/hosts/javascript.html),
   [Python API](https://onlabsorg.github.io/texl/book/hosts/python.html),
   [Rust API](https://onlabsorg.github.io/texl/api/)
 
@@ -36,7 +35,6 @@ Total: $18.5 (free shipping)
 |--------------------------|------------------------------------------------------------|
 | [`swan-core`](swan-core) | The Swan language: lexer, parser, evaluator, built-ins.    |
 | [`texl-core`](texl-core) | The template renderer and the engine.                      |
-| [`texl-cli`](texl-cli)   | The `texl` command.                                        |
 | [`texl-wasm`](texl-wasm) | The JavaScript library for the browser (WebAssembly), published on npm as `@onlabsorg/texl`. |
 | [`pytexl`](pytexl)       | The Python library (a native module built with PyO3).      |
 
@@ -47,7 +45,6 @@ A Node.js library is coming soon.
 ```sh
 cargo build                                     # build the workspace
 cargo test                                      # run the tests
-cargo run -p texl-cli -- texl-cli/tests/fixtures/sample.texl
 docs/build.sh                                   # build the documentation site into target/site
 ```
 

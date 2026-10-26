@@ -1,4 +1,0 @@
-This paragraph comes from partials/greeting.texl. It renders in its own
-scope, so it does not see `reader` of the document that imported it
-(<% reader ; "not visible" %>). It imports "signature.texl" from its own
-folder: <% texl.import("signature.texl") ~> (doc -> text.trim_tail doc.rendering) %>

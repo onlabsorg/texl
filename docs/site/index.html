@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Texl</title>
-<meta name="description" content="Texl is a template engine for text, with expressions in Swan, a small language that never throws. It runs on the command line, in the browser, in Python and in Rust.">
+<meta name="description" content="Texl is a template engine for text, with expressions in Swan, a small language that never throws. It runs in the browser, in Python and in Rust.">
 <link rel="icon" href="assets/favicon.svg" type="image/svg+xml">
 <link rel="stylesheet" href="assets/texl.css">
 <link rel="stylesheet" href="assets/landing.css">
@@ -86,7 +86,7 @@ Total: $18.5 (free shipping)</code></pre>
       </div>
       <div class="tx-card">
         <h3>One engine, many hosts</h3>
-        <p>The engine is written in Rust and runs on the command line, in the
+        <p>The engine is written in Rust and runs in the
         browser through WebAssembly, and inside Python and Rust programs.</p>
       </div>
     </div>
@@ -128,12 +128,6 @@ math.hypot point.x point.y     # =&gt; 5
     host that fits your project.</p>
     <div class="tx-grid tx-two">
       <div class="tx-card tx-host">
-        <h3><a href="book/hosts/cli.html">The command line</a></h3>
-        <p>Render template files from a terminal or a build script.</p>
-<pre><code>cargo install --git https://github.com/onlabsorg/texl texl-cli
-texl report.texl -o report.md</code></pre>
-      </div>
-      <div class="tx-card tx-host">
         <h3><a href="book/hosts/javascript.html">JavaScript</a></h3>
         <p>Render templates in a web page, with your data and functions.</p>
 <pre><code>import init, { TexlEngine } from "@onlabsorg/texl";
@@ -166,7 +160,7 @@ let doc = engine.render("/hi.texl", "Hi &lt;% user %&gt;!").await;</code></pre>
     <div class="tx-grid">
       <a class="tx-card" href="book/getting-started.html">
         <h3>Getting started</h3>
-        <p>Install the <code>texl</code> command and render your first template.</p>
+        <p>Install the Python package and render your first template.</p>
       </a>
       <a class="tx-card" href="book/templates/index.html">
         <h3>Writing templates</h3>
@@ -184,10 +178,6 @@ let doc = engine.render("/hi.texl", "Hi &lt;% user %&gt;!").await;</code></pre>
       <a class="tx-card" href="book/hosts/index.html">
         <h3>Hosts and APIs</h3>
         <p>Where Texl runs, and how to pick the host that fits your project.</p>
-      </a>
-      <a class="tx-card" href="book/hosts/cli.html">
-        <h3>Command line</h3>
-        <p>The <code>texl</code> command, its options and exit codes.</p>
       </a>
       <a class="tx-card" href="book/hosts/javascript.html">
         <h3>JavaScript API</h3>
