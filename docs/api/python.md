@@ -6,17 +6,23 @@ templates call your Python functions, `async` ones included.
 
 ## Installing the package
 
-The package is not published on PyPI yet. Install it from a clone of the
-repository. You need [Rust](https://www.rust-lang.org/tools/install) 1.85 or
-later and Python 3.10 or later:
+Install the package from [PyPI](https://pypi.org/project/pytexl/). You need
+Python 3.10 or later:
 
 ```sh
-pip install ./pytexl
+pip install pytexl
 ```
 
-pip builds the native module with [maturin](https://www.maturin.rs). To build
-a wheel instead, run `maturin build --release -m pytexl/Cargo.toml`; the wheel
-is written to `target/wheels`.
+PyPI has wheels for Linux (x86_64 and aarch64, glibc and musl), Windows (x64
+and arm64) and macOS (x86_64 and arm64). On other platforms, pip builds the
+package from the source distribution, which needs
+[Rust](https://www.rust-lang.org/tools/install) 1.85 or later.
+
+To install the version in a clone of the repository instead, run
+`pip install ./pytexl`; pip builds the native module with
+[maturin](https://www.maturin.rs). To build a wheel, run
+`maturin build --release -m pytexl/Cargo.toml`; the wheel is written to
+`target/wheels`.
 
 ## Quick start
 
@@ -75,7 +81,7 @@ The engine reads documents with *loaders*, chosen by the scheme of the URL:
 | `/home/ada/report.texl` (no scheme)  | `loaders.load_file`, the default loader | a local file, by absolute path |
 | `http://...`, `https://...`          | `loaders.load_http`             | a document over HTTP(S)   |
 
-Inside a document, [imports](../templates/documents.md) are resolved against
+Inside a document, [imports](../language.md#documents-imports-and-caching) are resolved against
 the URL of the document:
 
 | In `file:///home/ada/docs/report.texl`, `texl.import(...)` of | reads                                   |
@@ -244,9 +250,9 @@ await context.get("forecast")                  # 'sunny'
 ### Undefined values
 
 An invalid operation in Swan does not raise an exception: it produces an
-[undefined value](../swan/undefined.md), which records what went wrong. It
+[undefined value](../language.md#safe-by-failure), which records what went wrong. It
 comes back to Python as an [`Undefined`](#undefined) object, with the same
-details as [`undef.inspect`](../swan/builtins/undef.md#undefinspect):
+details as the built-in `undef.inspect`:
 
 ```python
 context = engine.create_context({"price": "12.5"})    # a string, by mistake
@@ -437,7 +443,7 @@ async def render(uri: str | os.PathLike[str], source: str) -> Document
 Renders `source` as the document at `uri`, in a new scope, without reading
 it. Imports in `source` resolve against the URL of `uri`; an import of that
 URL itself gives an [`Undefined`](#undefined) (an
-[import cycle](../templates/documents.md#import-cycles)).
+[import cycle](../language.md#import-cycles)).
 
 | Argument | Description                                                          |
 |----------|----------------------------------------------------------------------|
@@ -644,7 +650,7 @@ class Undefined:
 ```
 
 A Swan undefined value, the result of an invalid operation. Its attributes
-are the members of [`undef.inspect`](../swan/builtins/undef.md#undefinspect):
+are the members of `undef.inspect`:
 `type` names the kind of error, and the other attributes depend on it. The
 attributes that do not apply are `None`.
 

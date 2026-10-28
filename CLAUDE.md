@@ -56,7 +56,7 @@ cargo test -p texl-core test_engine_diamond   # tests whose name contains this s
 cargo test -p texl-wasm --test browser       # builds texl-wasm with wasm-pack and runs tests/web/index.html in headless Chrome (skipped if either is missing)
 cargo run -p texl-wasm --example serve        # builds texl-wasm/pkg and serves the browser test page, to inspect it
 cargo test -p pytexl --test python            # builds the native module and runs the Python unittest suite (pytexl/tests/test_*.py); skipped without python3 >= 3.10 (PYTEXL_PYTHON overrides)
-docs/build.sh                                 # builds the documentation site into target/site (needs mdbook; MDBOOK=path overrides)
+cargo doc --no-deps --open                    # Rust API reference (rustdoc) of the workspace
 ./helper.sh build        # wasm-pack build of texl-wasm into texl-wasm/pkg
 ./helper.sh repomix <dir>                      # writes <dir>.repomix.md, a single-file snapshot used as LLM context
 ```
@@ -81,7 +81,7 @@ Invariants that apply across the crate:
 
 `evaluator.rs` handles most node kinds itself. Operations with more involved logic are in the `evaluator/*_operation(s).rs` submodules.
 
-The language manual is `docs/src/swan/` (part of the documentation book, see below).
+The user manual of the language is not in this repository (see Documentation below); `docs/language.md` describes the language in depth for developers.
 
 ### texl-core
 
@@ -120,8 +120,13 @@ Two tag-triggered workflows build the releases; the tag version must match the c
 
 ### Documentation
 
-`docs/` holds the documentation site, published to GitHub Pages by `.github/workflows/docs.yml`:
-- `docs/src/` — an mdBook: the template manual, the Swan manual (with the built-in reference), and the JavaScript, Python and Rust host guides. `docs/book.toml` builds it into `target/book`.
-- `docs/site/index.html` — the landing page. `docs/assets/` — shared CSS tokens (`texl.css`, mapped onto mdBook by `book.css` and onto rustdoc by `rustdoc.css`) and the Swan/Texl highlighter.
-- The Rust API reference is rustdoc for `swan-core` and `texl-core`, which both use `#![warn(missing_docs)]`. The JavaScript API is documented by the doc comments in `texl-wasm/src/lib.rs` (copied into the generated `.d.ts`) and in `docs/src/hosts/javascript.md`. The Python API is documented by the docstrings in `pytexl/python/pytexl` and in `docs/src/hosts/python.md`.
-- `docs/STYLE.md` defines the narrative style, the API entry format and the example conventions. Every `# =>` result and template rendering in the docs must match the real output.
+This repository has developer documentation only, as plain Markdown in `docs/`, read on GitHub: no site build, no GitHub Pages, no docs workflow (decision D21 of the coordination folder).
+- `docs/README.md` – index. `docs/getting-started.md` – install and a first rendering (Python). `docs/api/` – host guides and API references (`javascript.md`, `python.md`, `rust.md`, overview in `README.md`). `docs/architecture.md` – crates, rendering pipeline, extension points. `docs/language.md` – Swan and Texl in depth (design principles, scopes, evaluation order, promises, imports and caching, memory management and the cycle collector, sandboxing, limits); keep it in step with the code. `docs/examples/` – tutorials (web page, Python report, custom loaders, Rust host functions).
+- The user manual (template language, Swan, built-in reference) is at <https://www.onlabs.org/manual/>, built from the `onlabsorg.github.io` repository and kept in sync from the coordination folder, which reads this repository's commits and docs. This repository knows nothing about that site: only the README files (root and crates) link it; `docs/` and the doc comments do not.
+- The Rust API reference is rustdoc for `swan-core` and `texl-core`, which both use `#![warn(missing_docs)]`. The JavaScript API is documented by the doc comments in `texl-wasm/src/lib.rs` (copied into the generated `.d.ts`) and in `docs/api/javascript.md`. The Python API is documented by the docstrings in `pytexl/python/pytexl` and in `docs/api/python.md`.
+- `docs/STYLE.md` defines the audience, the links, the API entry format and the example conventions. Every result, rendering and printed output in the docs must match the real output.
+- Links between docs are relative. The `texl-wasm` and `pytexl` READMEs are also the npm and PyPI READMEs, so their links are absolute URLs.
+
+### Commit messages
+
+The OnLabs.org user manual is updated from this repository's commit messages. State every user-visible change plainly in the message: Swan syntax or semantics, built-ins added, removed or changed, template behavior, host APIs.

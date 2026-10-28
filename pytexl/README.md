@@ -1,13 +1,11 @@
 # pytexl
 
-The Python library of [Texl](../README.md): renders text templates with Swan
+The Python library of [Texl](https://github.com/onlabsorg/texl): renders text templates with Swan
 expressions, loads documents from local files and over HTTP(S), and lets
 templates call your Python functions, `async` ones included.
 
 ```sh
-pip install maturin
-maturin build --release -m pytexl/Cargo.toml   # builds a wheel into target/wheels
-pip install target/wheels/pytexl-*.whl
+pip install pytexl
 ```
 
 ```python
@@ -19,8 +17,10 @@ doc = asyncio.run(engine.render("hello.texl", "Hello <% user.name %>!"))
 print(doc.rendering)                           # Hello Ada!
 ```
 
-See the [Python API reference](https://onlabsorg.github.io/texl/book/hosts/python.html).
-The docstrings of the `pytexl` package document the same API.
+See the [Python guide and API reference](https://github.com/onlabsorg/texl/blob/main/docs/api/python.md).
+The docstrings of the `pytexl` package document the same API. The template
+language and Swan are taught in the [user manual](https://www.onlabs.org/manual/), with the
+[built-in reference](https://www.onlabs.org/manual/swan/builtins/index.html).
 
 ## Layout
 
@@ -29,6 +29,13 @@ The docstrings of the `pytexl` package document the same API.
 | `src/`           | The native module `pytexl._pytexl` (PyO3), on top of `texl-core` |
 | `python/pytexl/` | The Python package: `Engine`, `Context`, `Document`, the loaders |
 | `tests/`         | The Python unit tests, their fixtures, and the cargo test that runs them |
+
+## Building
+
+```sh
+pip install ./pytexl                            # builds and installs the version in the clone
+maturin build --release -m pytexl/Cargo.toml    # builds a wheel into target/wheels
+```
 
 ## Tests
 
@@ -47,4 +54,4 @@ python -m unittest discover -s pytexl/tests -v
 
 ## License
 
-[MIT](../LICENSE)
+[MIT](https://github.com/onlabsorg/texl/blob/main/LICENSE)

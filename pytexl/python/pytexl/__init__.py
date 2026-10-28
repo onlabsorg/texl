@@ -35,7 +35,7 @@ numbers) or ``float``, ``str``, ``list``, ``tuple``, ``dict`` (namespaces),
 :class:`Promise`, :class:`Function` and :class:`Undefined`. An
 :class:`Undefined` keeps the details of the error that produced it.
 
-See the Python guide: https://onlabsorg.github.io/texl/book/hosts/python.html
+See the Python guide: https://github.com/onlabsorg/texl/blob/main/docs/api/python.md
 """
 
 from __future__ import annotations

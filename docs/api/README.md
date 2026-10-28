@@ -8,7 +8,7 @@ imports. The template language is the same in every host.
 |------------------------------|---------------------------------------------------------|-----------|
 | [JavaScript](javascript.md)  | render templates in a web page or a web worker          | [JavaScript API](javascript.md#api-reference) |
 | [Python](python.md)          | render templates in a Python program, with asyncio      | [Python API](python.md#api-reference) |
-| [Rust](rust.md)              | render templates in a Rust program, or build a new host | [`texl_core`](../../api/texl_core/index.html), [`swan_core`](../../api/swan_core/index.html) |
+| [Rust](rust.md)              | render templates in a Rust program, or build a new host | rustdoc of `texl_core` and `swan_core` (`cargo doc`) |
 | Node.js                      | coming soon                                             |           |
 
 ## What differs between hosts
@@ -24,16 +24,5 @@ The hosts differ in three ways:
   event loop: the browser's, asyncio in Python. This only matters to Rust
   programs, which choose the runtime.
 
-## The crates
-
-Texl is a Cargo workspace with four crates:
-
-| Crate       | Contents                                                              |
-|-------------|-----------------------------------------------------------------------|
-| `swan-core` | The Swan language: lexer, parser, evaluator and built-in library.     |
-| `texl-core` | The template renderer and the engine: documents, loaders, imports.    |
-| `texl-wasm` | The JavaScript library, compiled to WebAssembly (`@onlabsorg/texl` on npm). |
-| `pytexl`    | The Python library: a native module and the `pytexl` package.         |
-
-The API documentation of `swan-core` and `texl-core` is generated from the
-source code by rustdoc.
+How the crates fit together, and where a new host plugs in, is in
+[Architecture](../architecture.md).

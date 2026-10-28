@@ -15,7 +15,7 @@
 //!
 //! The module also exports `collect()`, the cycle collector (see [`collect`]).
 //!
-//! See the [JavaScript API reference](https://onlabsorg.github.io/texl/book/hosts/javascript.html).
+//! See the [JavaScript guide and API reference](https://github.com/onlabsorg/texl/blob/main/docs/api/javascript.md).
 
 mod convert;
 mod loader;

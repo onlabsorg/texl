@@ -24,10 +24,12 @@ Evaluation never fails and never panics: errors are `Value::Undefined` values.
 
 ## Documentation
 
-- [The Swan language manual](https://onlabsorg.github.io/texl/book/swan/index.html)
-- [The built-in library](https://onlabsorg.github.io/texl/book/swan/builtins/index.html)
-- [API reference](https://onlabsorg.github.io/texl/api/swan_core/index.html)
-  (or `cargo doc -p swan-core --open`)
+- [The Swan language](https://www.onlabs.org/manual/swan/index.html) and
+  [the built-in library](https://www.onlabs.org/manual/swan/builtins/index.html), in
+  the OnLabs.org user manual.
+- [Swan and Texl in depth](../docs/language.md): design, scopes, promises,
+  memory management.
+- API reference: `cargo doc -p swan-core --open`.
 
 ## License
 

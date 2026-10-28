@@ -117,8 +117,15 @@ available to hosts too, but it cannot import documents.
   repository; its last release was 0.2.0 (2026-10-25), and its binaries
   remain on GitHub Releases. The documentation examples that used it now use
   the Python library.
-- Documentation site (template manual, Swan manual with built-in reference,
-  host guides, rustdoc): <https://onlabsorg.github.io/texl/>.
+- Documentation: the user manual (writing templates, the Swan language, the
+  built-in reference) is no longer in this repository; it lives on the
+  OnLabs.org site, <https://www.onlabs.org/manual/>, and the README files
+  link to it. The repository keeps developer documentation only, as plain
+  pages in `docs/` read on GitHub: getting started, the JavaScript, Python
+  and Rust guides, an overview of how Texl is built, an in-depth description
+  of the language for advanced users (design, async rendering, memory
+  cleanup, what a template can and cannot reach, limits) and worked
+  examples. The former documentation site and its build are gone.
 - Planned next: a Node.js library, editor support (`texl.nvim`,
   `vscode-texl`), and Swan language extensions (operator overloading on
   namespaces via `__add__`-style members, a recursion depth limit, a `filter`

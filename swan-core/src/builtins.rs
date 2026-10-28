@@ -19,9 +19,9 @@
 //! | `promise`             | namespace | Creating and resolving promises               |
 //! | `undef`               | namespace | Creating and inspecting undefined values      |
 //!
-//! Every function is documented, with examples, in the
-//! [built-in library reference](https://onlabsorg.github.io/texl/book/swan/builtins/index.html)
-//! of the Swan language manual.
+//! Every function is documented, with examples, in the built-in reference of
+//! the user manual, linked from the
+//! [Texl README](https://github.com/onlabsorg/texl#documentation).
 
 // Implementation notes
 //

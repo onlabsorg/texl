@@ -19,10 +19,11 @@ let doc = engine.render("/hello.texl", "Hello <% name %>!").await;   // inside a
 
 ## Documentation
 
-- [Using Texl from Rust](https://onlabsorg.github.io/texl/book/hosts/rust.html)
-- [API reference](https://onlabsorg.github.io/texl/api/texl_core/index.html)
-  (or `cargo doc -p texl-core --open`)
-- [Writing templates](https://onlabsorg.github.io/texl/book/templates/index.html)
+- [Using Texl from Rust](../docs/api/rust.md)
+- [Architecture](../docs/architecture.md)
+- API reference: `cargo doc -p texl-core --open`.
+- [The user manual](https://www.onlabs.org/manual/): the template language and
+  Swan.
 
 ## License
 

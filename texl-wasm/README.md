@@ -16,8 +16,10 @@ const doc = await engine.render("hi.texl", "Hi <% user %>!");
 doc.rendering;                            // "Hi Ada!"
 ```
 
-See the [JavaScript API reference](https://onlabsorg.github.io/texl/book/hosts/javascript.html).
-The doc comments in `src/lib.rs` are also copied into `texl_wasm.d.ts`.
+See the [JavaScript guide and API reference](https://github.com/onlabsorg/texl/blob/main/docs/api/javascript.md).
+The doc comments in `src/lib.rs` are also copied into `texl_wasm.d.ts`. The
+template language and Swan are taught in the [user manual](https://www.onlabs.org/manual/),
+with the [built-in reference](https://www.onlabs.org/manual/swan/builtins/index.html).
 
 ## Building
 

@@ -68,7 +68,7 @@ if (doc) {
 ```
 
 A relative URL is resolved against the engine's base URL, which is the URL of
-the page by default. Inside a document, [imports](../templates/documents.md)
+the page by default. Inside a document, [imports](../language.md#documents-imports-and-caching)
 are resolved against the URL of the document:
 
 | In `https://example.com/docs/report.texl`, `texl.import(...)` of | fetches                                  |
@@ -307,7 +307,7 @@ render(uri: string, source: string): Promise<TexlDocument>
 
 Renders `source` as the document at `uri`, in a new scope, without fetching
 it. Imports in `source` resolve against the URL of `uri`; an import of that
-URL itself gives `Undefined` (an [import cycle](../templates/documents.md#import-cycles)).
+URL itself gives `Undefined` (an [import cycle](../language.md#import-cycles)).
 
 | Argument | Description                                         |
 |----------|-----------------------------------------------------|

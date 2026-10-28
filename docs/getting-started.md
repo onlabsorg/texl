@@ -2,17 +2,19 @@
 
 This page renders a first template with the Python library. If you want to
 use Texl from a web page or a Rust program instead, see
-[JavaScript](hosts/javascript.md) or [Rust](hosts/rust.md).
+[JavaScript](api/javascript.md) or [Rust](api/rust.md).
 
 ## Install the Python package
 
-You need [Rust](https://www.rust-lang.org/tools/install) 1.85 or later and
-Python 3.10 or later. Clone the repository and install the package from it:
+You need Python 3.10 or later. Install the package from
+[PyPI](https://pypi.org/project/pytexl/):
 
 ```sh
-git clone https://github.com/onlabsorg/texl
-pip install ./texl/pytexl
+pip install pytexl
 ```
+
+See [Installing the package](api/python.md#installing-the-package) for other
+platforms and for installing from a clone of the repository.
 
 Check that it works:
 
@@ -65,6 +67,7 @@ To write it to a file instead, replace the last line with
 
 ## Next steps
 
-- Learn the [template basics](templates/index.md).
-- Take the [quick tour](swan/index.md#a-quick-tour) of the Swan language.
-- Read the full [Python guide](hosts/python.md).
+- Learn the template language in the user manual, linked from the
+  [README](../README.md).
+- Read the full [Python guide](api/python.md).
+- Follow the [examples](examples/README.md).

@@ -3,8 +3,10 @@
 //! its reference implementation: a lexer, a parser, an evaluator, the runtime
 //! values and the built-in library. It has no dependencies.
 //!
-//! The language itself is described in the
-//! [Swan language manual](https://onlabsorg.github.io/texl/book/swan/index.html).
+//! The language itself is taught in the user manual, linked from the
+//! [Texl README](https://github.com/onlabsorg/texl#documentation), and
+//! described in depth in
+//! [Swan and Texl in depth](https://github.com/onlabsorg/texl/blob/main/docs/language.md).
 //! This documentation covers the Rust API.
 //!
 //! # Quick start

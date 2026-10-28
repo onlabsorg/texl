@@ -9,8 +9,10 @@
 //! Hello <% name %>, you have <% list.size messages %> new messages.
 //! ```
 //!
-//! The [Texl manual](https://onlabsorg.github.io/texl/book/) explains how to
-//! write templates. This documentation covers the Rust API.
+//! The user manual, linked from the
+//! [Texl README](https://github.com/onlabsorg/texl#documentation), explains how
+//! to write templates; the [Rust guide](https://github.com/onlabsorg/texl/blob/main/docs/api/rust.md)
+//! explains how to use the engine. This documentation covers the Rust API.
 //!
 //! # Overview
 //!

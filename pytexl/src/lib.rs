@@ -11,7 +11,7 @@
 //!   functions reach Python as [`convert::Promise`] and [`convert::Function`], and
 //!   undefined values as [`convert::Undefined`].
 //!
-//! See the [Python API reference](https://onlabsorg.github.io/texl/book/hosts/python.html).
+//! See the [Python guide and API reference](https://github.com/onlabsorg/texl/blob/main/docs/api/python.md).
 
 mod convert;
 mod runtime;

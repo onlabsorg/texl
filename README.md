@@ -20,14 +20,23 @@ Items: pen, ink
 Total: $18.5 (free shipping)
 ```
 
-**Documentation: <https://onlabsorg.github.io/texl/>**
+## Documentation
 
-- [Getting started](https://onlabsorg.github.io/texl/book/getting-started.html)
-- [Writing templates](https://onlabsorg.github.io/texl/book/templates/index.html)
-- [The Swan language](https://onlabsorg.github.io/texl/book/swan/index.html)
-- [JavaScript API](https://onlabsorg.github.io/texl/book/hosts/javascript.html),
-  [Python API](https://onlabsorg.github.io/texl/book/hosts/python.html),
-  [Rust API](https://onlabsorg.github.io/texl/api/)
+**For everyone who writes templates:** the user manual at
+<https://www.onlabs.org/manual/> teaches the template language and
+[the Swan language](https://www.onlabs.org/manual/swan/index.html), with the
+[built-in reference](https://www.onlabs.org/manual/swan/builtins/index.html).
+
+**For programmers:** the developer documentation is in [`docs`](docs/README.md):
+
+- [Getting started](docs/getting-started.md)
+- [JavaScript API](docs/api/javascript.md), [Python API](docs/api/python.md),
+  [Rust guide](docs/api/rust.md) (the Rust API reference is rustdoc:
+  `cargo doc --open`)
+- [Architecture](docs/architecture.md)
+- [Swan and Texl in depth](docs/language.md): design, scopes, async
+  rendering, memory management, sandboxing
+- [Examples](docs/examples/README.md)
 
 ## Crates
 
@@ -45,11 +54,10 @@ A Node.js library is coming soon.
 ```sh
 cargo build                                     # build the workspace
 cargo test                                      # run the tests
-docs/build.sh                                   # build the documentation site into target/site
+cargo doc --no-deps --open                      # build and open the Rust API reference
 ```
 
-The documentation sources are in [`docs`](docs); see
-[`docs/STYLE.md`](docs/STYLE.md) for the conventions.
+See [`docs/STYLE.md`](docs/STYLE.md) for the documentation conventions.
 
 ## License
 

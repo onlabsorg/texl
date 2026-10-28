@@ -17,7 +17,7 @@ classifiers = [
 ]
 
 [project.urls]
-Documentation = "https://onlabsorg.github.io/texl/book/hosts/python.html"
+Documentation = "https://github.com/onlabsorg/texl/blob/main/docs/api/python.md"
 Source = "https://github.com/onlabsorg/texl"
 
 [tool.maturin]

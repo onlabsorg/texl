@@ -77,7 +77,10 @@ plain `git commit`) are not covered yet; this skill covers them too.
    Use the message the user passed with the command, if any; otherwise write
    one in the style of `git log` (short imperative subject line, about the
    changes, not the summary), following any commit conventions in
-   `CLAUDE.md`. Do not push. If a hook fails, report the error and stop; do
+   `CLAUDE.md`. The OnLabs.org user manual is updated from the commit
+   messages, so state every user-visible change plainly in the body: Swan
+   syntax or semantics, built-ins added, removed or changed, template
+   behavior, host APIs. Do not push. If a hook fails, report the error and stop; do
    not bypass it.
 
 6. **Report.** Give the commit hash and subject, the files committed, the
