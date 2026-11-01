@@ -32,7 +32,7 @@ import pytexl
 
 engine = pytexl.Engine({"user": {"name": "Ada"}})
 doc = asyncio.run(engine.render("hello.texl", "Hello <% user.name %>!"))
-print(doc.rendering)                           # Hello Ada!
+print(doc.text)                           # Hello Ada!
 ```
 
 `render` renders a source as the document at a URL, here `hello.texl` in the
@@ -46,14 +46,14 @@ code, `await` them:
 async def main():
     engine = pytexl.Engine()
     doc = await engine.render("sum.texl", "2 + 2 = <% 2 + 2 %>")
-    print(doc.rendering)                       # 2 + 2 = 4
+    print(doc.text)                       # 2 + 2 = 4
 
 asyncio.run(main())
 ```
 
 ## Loading documents
 
-`engine.load` reads a document, renders it, and returns its rendering, source
+`engine.load` reads a document, renders it, and returns its text, source
 and data:
 
 ```python
@@ -61,7 +61,7 @@ from pathlib import Path
 
 doc = await engine.load(Path("templates/report.texl"))
 if doc:
-    Path("report.md").write_text(doc.rendering)
+    Path("report.md").write_text(doc.text)
 ```
 
 A path is resolved against the current working directory. A string is a URL,
@@ -139,7 +139,7 @@ engine = pytexl.Engine({"reader": "Ada"})
 engine.add_loader("mem", lambda uri: templates[uri])
 
 doc = await engine.load("mem://greeting")
-print(doc.rendering)                           # Hello Ada!
+print(doc.text)                           # Hello Ada!
 ```
 
 If the loader raises an exception, or returns something other than a string,
@@ -209,7 +209,7 @@ engine = pytexl.Engine({
     "add": lambda a, b: a + b,
     "answer": lambda: 42,
 })
-(await engine.render("doc.texl", '<% shout "hi" %> <% add(2, 3) %> <% answer() %>')).rendering   # 'HI! 5 42'
+(await engine.render("doc.texl", '<% shout "hi" %> <% add(2, 3) %> <% answer() %>')).text   # 'HI! 5 42'
 ```
 
 The return value is converted to a Swan value. If the function raises an
@@ -222,7 +222,7 @@ async def weather(city):
     return "sunny"
 
 engine = pytexl.Engine({"weather": weather})
-(await engine.render("doc.texl", 'Today in Rome: <% weather "rome" %>')).rendering   # 'Today in Rome: sunny'
+(await engine.render("doc.texl", 'Today in Rome: <% weather "rome" %>')).text   # 'Today in Rome: sunny'
 ```
 
 A coroutine object passed as a value is awaited once, and every template sees
@@ -258,13 +258,41 @@ details as the built-in `undef.inspect`:
 context = engine.create_context({"price": "12.5"})    # a string, by mistake
 await context.render("<% total = price * 4 %>")
 total = context.get("total")
-total                  # <pytexl.Undefined BinaryOperation op='product' lhv='12.5' rhv=4 pos=15>
+total                  # <pytexl.Undefined BinaryOperation pos=17: cannot multiply the text `"12.5"` by the number `4`>
 total.op, total.lhv    # ('product', '12.5')
 bool(total)            # False
 ```
 
 `None` always means `Nothing`: a name that is not bound, or an empty tuple.
 To tell the two apart, test `isinstance(value, pytexl.Undefined)`.
+
+### Finding errors
+
+An undefined value renders as `[[Undefined]]`, and the rendering goes on. The
+document tells you where each one is. Its `tags` list has one
+[`Tag`](#tag) per `<% ... %>` tag, in order, including the tags that render
+nothing, such as assignments. Each tag has its span in the source (`start`,
+`end`), the span of its text in the output (`out_start`, `out_end`), and its
+`value`. An [`Undefined`](#undefined) says what went wrong (`description`),
+where (`uri`, `pos`) and why (`cause`, the operand that was already
+undefined).
+
+```python
+engine = pytexl.Engine({"price": 12.5})
+source = 'Total: <% total = price * "4" %><% total %>'
+doc = await engine.render("cart.texl", source)
+doc.text               # 'Total: [[Undefined]]'
+for tag in doc.tags:
+    if isinstance(tag.value, pytexl.Undefined):
+        print(source[tag.start:tag.end], tag.value.description)
+# <% total %> cannot multiply the number `12.5` by the text `"4"`
+err = doc.data["total"]
+source[err.pos]        # '*'
+```
+
+Positions are in code points, so they index Python strings directly. `pos`
+is in the source of the code that made the value: for an error in a function
+imported from another document, `uri` is that document's URL.
 
 ## Contexts
 
@@ -277,7 +305,7 @@ write from Python.
 context = engine.create_context({"price": 12.5})
 await context.render("<% total = price * 4 %>")
 context.get("total")                           # 50
-await context.render("Total: <% total %>")     # 'Total: 50'
+(await context.render("Total: <% total %>")).text   # 'Total: 50'
 ```
 
 A context is not a document: its templates cannot import documents, and
@@ -455,7 +483,8 @@ resolved to a URL.
 
 ```python
 doc = await engine.render("draft.texl", "2 + 2 = <% 2 + 2 %>")
-doc.rendering                                  # '2 + 2 = 4'
+doc.text                                       # '2 + 2 = 4'
+doc.tags               # [Tag(start=8, end=19, out_start=8, out_end=9, value=4)]
 ```
 
 #### `engine.load(uri)`
@@ -476,7 +505,7 @@ Returns the [document](#document), or `None` if it cannot be loaded. Raises
 
 ```python
 doc = await engine.load("templates/report.texl")
-print(doc.rendering if doc else "not found")
+print(doc.text if doc else "not found")
 ```
 
 #### `engine.create_context(vars)`
@@ -555,11 +584,12 @@ engine.create_context({"b": 1, "a": 2}).names()   # ['a', 'b', 'texl']
 #### `context.render(template)`
 
 ```python
-async def render(template: str) -> str
+async def render(template: str) -> Rendering
 ```
 
-Renders a template in the context, and returns the rendered text. The names
-the template binds stay in the context.
+Renders a template in the context, and returns the [rendering](#rendering):
+the text, the names of the context and the tags. The names the template
+binds stay in the context.
 
 | Argument   | Description            |
 |------------|------------------------|
@@ -567,7 +597,9 @@ the template binds stay in the context.
 
 ```python
 await context.render("<% count = 1 %>")
-await context.render("Count: <% count %>")     # 'Count: 1'
+rendering = await context.render("Count: <% count %>")
+rendering.text         # 'Count: 1'
+rendering.tags         # [Tag(start=7, end=18, out_start=7, out_end=8, value=1)]
 ```
 
 ### `Document`
@@ -578,7 +610,8 @@ class Document:
     uri: str
     source: str
     data: dict[str, Any]
-    rendering: str
+    text: str
+    tags: list[Tag]
 ```
 
 A rendered document, as returned by `engine.load` and `engine.render`.
@@ -588,12 +621,62 @@ A rendered document, as returned by `engine.load` and `engine.render`.
 | `uri`       | The URL of the document.                                           |
 | `source`    | The template source.                                               |
 | `data`      | The names the document's tags bound, [converted](#globals-and-context-values) to Python values. It also holds `texl`. |
-| `rendering` | The rendered text.                                                 |
+| `text`      | The rendered text.                                                 |
+| `tags`      | The [tags](#tag) of the source, in order, including the tags that render nothing. |
 
 ```python
 doc = await engine.load("settings.texl")
-print(doc.data["title"], doc.rendering)
+print(doc.data["title"], doc.text)
 ```
+
+An imported document, in `data` or in a tag value, is a dict with the keys
+`uri`, `source`, `data`, `text` and `tags` (a list of dicts with the members
+of [`Tag`](#tag), positions in code points).
+
+### `Rendering`
+
+```python
+@dataclass(frozen=True)
+class Rendering:
+    text: str
+    data: dict[str, Any]
+    tags: list[Tag]
+```
+
+A template rendered in a context, as returned by
+[`context.render`](#contextrendertemplate).
+
+| Attribute | Description                                                         |
+|-----------|---------------------------------------------------------------------|
+| `text`    | The rendered text.                                                  |
+| `data`    | The names bound in the context when the rendering ended, including those bound before it. |
+| `tags`    | The [tags](#tag) of the template, in order, including the tags that render nothing. |
+
+### `Tag`
+
+```python
+@dataclass(frozen=True)
+class Tag:
+    start: int
+    end: int
+    out_start: int
+    out_end: int
+    value: Any
+```
+
+A `<% ... %>` tag of a rendered template. Positions are in code points:
+`source[tag.start:tag.end]` is the tag and `text[tag.out_start:tag.out_end]`
+is what it rendered.
+
+| Attribute   | Description                                                    |
+|-------------|----------------------------------------------------------------|
+| `start`     | Where the tag starts in the source (at `<%`).                  |
+| `end`       | Where the tag ends in the source (after `%>`).                 |
+| `out_start` | Where the text of the tag starts in the rendered text.         |
+| `out_end`   | Where the text of the tag ends in the rendered text.           |
+| `value`     | The value that was rendered, converted to a Python value. If the expression returned a promise, it is the resolved value; promises nested in the value, such as tuple items, are not awaited. An error is an [`Undefined`](#undefined), also when the tag renders nothing. |
+
+A document keeps the values of all its tags as long as it lives.
 
 ### `Promise`
 
@@ -631,7 +714,7 @@ invalid call returns an [`Undefined`](#undefined).
 await context.render("<% double = x -> x * 2 %>")
 double = context.get("double")
 double(21)             # 42
-double("a")            # <pytexl.Undefined BinaryOperation op='product' lhv='a' rhv=2 pos=17>
+double("a")            # <pytexl.Undefined BinaryOperation pos=19: cannot multiply the text `"a"` by the number `2`>
 ```
 
 ### `Undefined`
@@ -639,19 +722,22 @@ double("a")            # <pytexl.Undefined BinaryOperation op='product' lhv='a' 
 ```python
 class Undefined:
     type: str
+    description: str
     op: str | None
     val: Any
     lhv: Any
     rhv: Any
     pos: int | None
+    uri: str | None
     expected: str | None
     token: str | None
+    cause: Undefined | None
     def inspect(self) -> dict[str, Any]
 ```
 
 A Swan undefined value, the result of an invalid operation. Its attributes
-are the members of `undef.inspect`:
-`type` names the kind of error, and the other attributes depend on it. The
+are the members of `undef.inspect`: `description` explains the error in plain
+words, `type` names its kind, and the other attributes depend on it. The
 attributes that do not apply are `None`.
 
 | `type`              | Attributes                | Meaning                                    |
@@ -661,13 +747,17 @@ attributes that do not apply are `None`.
 | `"Termination"`     | `expected`, `pos`         | the closing bracket `expected` is missing  |
 | `"Token"`           | `token`, `pos`            | a token is in the wrong place              |
 | `"Name"`            | `pos`                     | a name was expected                        |
-| `"Value"`           | `val`                     | created by `undef.from`                    |
+| `"Value"`           | `val`                     | made on purpose, by `undef.from`           |
 
 The operands are [converted](#globals-and-context-values) to Python values,
-so an operand that is itself undefined is an `Undefined` too. `pos` is the
-position of the error in the source of the tag, in bytes; built-in functions
-report 0. `inspect()` returns `type` and the attributes that apply, as a
-dict.
+so an operand that is itself undefined is an `Undefined` too; `cause` is the
+first of them (or the first undefined item of a tuple operand), so following
+`cause` leads to the root cause. `pos` is the position of the error in the
+source of the code that made it, in code points, and `uri` is the URL of
+that document. Both are `None` for errors of built-in functions, and `uri`
+is `None` for a template rendered in a context. `inspect()` returns `type`,
+`description` and the attributes that apply, as a dict. `repr` shows the
+type, the position and the description.
 
 An `Undefined` is falsy. Two `Undefined` objects are equal when they have the
 same type and attributes, whatever their position. Passed back to Swan, an
@@ -677,7 +767,8 @@ same type and attributes, whatever their position. Passed back to Swan, an
 await context.render('<% err = text.size 1 %>')
 err = context.get("err")
 err.type               # 'UnaryOperation'
-err.inspect()          # {'type': 'UnaryOperation', 'op': 'text.size', 'val': 1, 'pos': 0}
+err.description        # '`text.size` is not defined for the number `1`'
+err.inspect()          # {'type': 'UnaryOperation', 'description': '`text.size` is not defined for the number `1`', 'op': 'text.size', 'val': 1}
 ```
 
 ### `collect`

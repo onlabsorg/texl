@@ -45,7 +45,7 @@ from pathlib import Path
 import pytexl
 
 doc = asyncio.run(pytexl.Engine().load(Path("hello.texl")))
-print(doc.rendering)
+print(doc.text)
 ```
 
 and run it:
@@ -63,7 +63,7 @@ Today is 2026-10-16.
 ```
 
 To write it to a file instead, replace the last line with
-`Path("hello.txt").write_text(doc.rendering)`.
+`Path("hello.txt").write_text(doc.text)`.
 
 ## Next steps
 

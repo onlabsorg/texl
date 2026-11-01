@@ -45,6 +45,7 @@
 
 use std::rc::Rc;
 use crate::ast::Node;
+use crate::source;
 use crate::value::{BuiltinFn, Namespace, Scope, Undef, Value};
 
 
@@ -253,6 +254,7 @@ pub fn eval(node: &Node, scope: &Scope) -> Value {
                     params: Box::new(names),
                     body: bin.rho.clone(),
                     closure: scope.clone(),
+                    source: source::current(),
                 }
             }
         }
@@ -493,6 +495,7 @@ pub fn eval(node: &Node, scope: &Scope) -> Value {
             Value::Undefined(Undef::Termination{
                 expected: leaf.val,
                 pos: leaf.pos,
+                source: source::current(),
             })
         }
 
@@ -500,7 +503,8 @@ pub fn eval(node: &Node, scope: &Scope) -> Value {
         Node::UnexpectedToken(leaf) => {
             Value::Undefined(Undef::Token{
                 token: leaf.val.clone(),
-                pos: leaf.pos
+                pos: leaf.pos,
+                source: source::current(),
             })
         }
     }
@@ -516,7 +520,7 @@ pub fn eval(node: &Node, scope: &Scope) -> Value {
 /// - `names`: the `Undefined(Undef::Name{..})` returned by [`eval_names`].
 /// - `pos`: position of the operator.
 ///
-/// The result is `Undef::BinaryOperation { op, lhv: names, rhv: Nothing, pos }`.
+/// The result is `Undef::BinaryOperation { op, lhv: names, rhv: Nothing, pos, .. }`.
 fn invalid_names(op: &'static str, names: Value, pos: usize) -> Value {
     Value::undef_binary(op, names, Value::Nothing, pos)
 }
@@ -567,7 +571,7 @@ fn eval_names(node: &Node) -> Value {
 
 
         // Any other value will return and undefined value
-        node => Value::Undefined(Undef::Name{ pos: node.position() }),
+        node => Value::Undefined(Undef::Name{ pos: node.position(), source: source::current() }),
     }
 }
 
@@ -594,7 +598,7 @@ fn eval_names(node: &Node) -> Value {
 /// - `Value::Text`: character indexing by a zero-based number. A tuple argument
 ///   gives a normalized tuple of results.
 /// - Anything else (including `Nothing` and `Undefined`): returns
-///   `Undef::BinaryOperation { op: "application", lhv: func, rhv: arg, pos }`.
+///   `Undef::BinaryOperation { op: "application", lhv: func, rhv: arg, pos, .. }`.
 ///
 /// Broadcasting over a tuple of *callables* is not done here; the callers
 /// (`ApplicationOp`, `MappingOp`) do it with `map_values!`.
@@ -602,10 +606,12 @@ pub fn eval_apply(func: Value, arg: Value, pos: usize) -> Value {
     match func {
         Value::Builtin(ref f) => f.call(arg),
 
-        Value::Func { params, body, closure } => {
+        Value::Func { params, body, closure, source: func_source } => {
             let local_scope = closure.new_child();
-            assignment_operation::eval(&local_scope, &params, &arg);
-            eval(&body, &local_scope)
+            source::with_source(func_source, || {
+                assignment_operation::eval(&local_scope, &params, &arg);
+                eval(&body, &local_scope)
+            })
         }
 
         // --- List Application ---
@@ -824,10 +830,10 @@ mod tests {
     #[test]
     fn function_definition() {
 
-        assert_matches!(evaluate("(x, y) -> x+y"), Value::Func{params:_, body:_, closure:_});
+        assert_matches!(evaluate("(x, y) -> x+y"), Value::Func{params:_, body:_, closure:_, ..});
 
         // Invalid left-hand names.
-        assert_eq!(evaluate("(x, 12) -> 2*x"), invalid_names("function_definition", Value::Undefined(Undef::Name{pos:4}), 8));
+        assert_eq!(evaluate("(x, 12) -> 2*x"), invalid_names("function_definition", Value::Undefined(Undef::Name{pos:4, source:None}), 8));
     }
 
     #[test]
@@ -948,7 +954,7 @@ mod tests {
         assert_eq!(evaluate("(a, b) = (1, 2), a + b"), Value::Numb(3.0));
 
         // Invalid left-hand names.
-        assert_eq!(evaluate("(x, 12) = (1, 2)"), invalid_names("assignment", Value::Undefined(Undef::Name{pos:4}), 8));
+        assert_eq!(evaluate("(x, 12) = (1, 2)"), invalid_names("assignment", Value::Undefined(Undef::Name{pos:4, source:None}), 8));
     }
 
     #[test]
@@ -970,7 +976,7 @@ mod tests {
         );
 
         // Invalid left-hand names.
-        assert_eq!(evaluate("(x, 12) : (1, 2)"), invalid_names("labelling", Value::Undefined(Undef::Name{pos:4}), 8));
+        assert_eq!(evaluate("(x, 12) : (1, 2)"), invalid_names("labelling", Value::Undefined(Undef::Name{pos:4, source:None}), 8));
     }
 
     #[test]
@@ -1002,7 +1008,7 @@ mod tests {
         // A namespace created in a subcontext holds only its own members
         assert_eq!(evaluate("ns = {a: 1}, nspace = ns.{b: a + 1}, (nspace \"a\", nspace \"b\")"), Value::Numb(2.0));
         match evaluate("x=10, x.TRUE") {
-            Value::Undefined(Undef::BinaryOperation { op, lhv, rhv, pos }) => {
+            Value::Undefined(Undef::BinaryOperation { op, lhv, rhv, pos, .. }) => {
                 assert_eq!(op, "subcontexting");
                 assert_eq!(*lhv, Value::Numb(10.0));
                 assert_eq!(*rhv, Value::Nothing);

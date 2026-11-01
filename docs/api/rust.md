@@ -48,14 +48,15 @@ async fn main() {
         let Value::Namespace(doc) = engine.render("/hello.texl", "Hello <% name %>!").await else {
             unreachable!("render always returns a document")
         };
-        assert_eq!(doc.get("rendering"), Value::Text("Hello Ada!".into()));
+        assert_eq!(doc.get("text"), Value::Text("Hello Ada!".into()));
     }).await;
 }
 ```
 
 `Engine::render(url, source)` renders a source as the document at `url`, and
 returns the document: a namespace with the members `uri`, `source`, `data`
-(the names the template bound) and `rendering`. The URL is where the
+(the names the template bound), `text` (the rendered text) and `tags` (one
+namespace per tag, see [Finding errors](#finding-errors)). The URL is where the
 template's imports resolve from; a source with no real location, such as
 standard input, can use any URL, for example a file in the working directory.
 
@@ -94,9 +95,9 @@ async fn main() {
         let path = std::fs::canonicalize("report.texl").unwrap();
         let url = Url::from_file_path(&path).unwrap();
         match engine.load(url.as_str()).await {
-            Value::Namespace(doc) => match doc.get("rendering") {
+            Value::Namespace(doc) => match doc.get("text") {
                 Value::Text(text) => print!("{text}"),
-                _ => unreachable!("a document's rendering is always text"),
+                _ => unreachable!("a document's text is always text"),
             },
             _ => eprintln!("report.texl could not be loaded"),
         }
@@ -168,7 +169,7 @@ async fn main() {
         let Value::Namespace(doc) = engine.render("/doc.texl", "<% user.name %> <% repeat (\"*\", 3) %>").await else {
             unreachable!()
         };
-        assert_eq!(doc.get("rendering"), Value::Text("Ada ***".into()));
+        assert_eq!(doc.get("text"), Value::Text("Ada ***".into()));
     }).await;
 }
 ```
@@ -210,7 +211,7 @@ async fn main() {
         let Value::Namespace(doc) = engine.render("/doc.texl", "<% slow_double 21 %>").await else {
             unreachable!()
         };
-        assert_eq!(doc.get("rendering"), Value::Text("42".into()));
+        assert_eq!(doc.get("text"), Value::Text("42".into()));
     }).await;
 }
 ```
@@ -219,8 +220,10 @@ async fn main() {
 
 `Engine::render` uses a new scope each time. To render several templates in
 the same scope, create one with `Engine::create_scope` and call
-`template::render`. Such a scope is not a document: its `texl` namespace has
-no `import`, so its templates cannot import documents.
+`template::render`, which returns a `template::Rendering`: the `text`, the
+`data` (a snapshot of the scope bindings) and the `tags`. Such a scope is not
+a document: its `texl` namespace has no `import`, so its templates cannot
+import documents.
 
 ```rust,ignore
 use swan_core::value::Value;
@@ -236,7 +239,9 @@ async fn main() {
 
         template::render("<% total = 6 * 7 %>", &scope).await;
         assert_eq!(scope.get("total"), Value::Numb(42.0));
-        assert_eq!(template::render("Total: <% total %>", &scope).await, "Total: 42");
+        let rendering = template::render("Total: <% total %>", &scope).await;
+        assert_eq!(rendering.text, "Total: 42");
+        assert_eq!(rendering.tags[0].value, Value::Numb(42.0));
     }).await;
 }
 ```
@@ -266,7 +271,7 @@ fn block_on<F: Future>(future: F) -> F::Output {
 fn main() {
     let engine = Engine::new(None);
     let Value::Namespace(doc) = block_on(engine.render("/doc.texl", "<% 6 * 7 %>")) else { unreachable!() };
-    assert_eq!(doc.get("rendering"), Value::Text("42".into()));
+    assert_eq!(doc.get("text"), Value::Text("42".into()));
 }
 ```
 
@@ -298,6 +303,46 @@ Evaluation never fails and never panics: errors are `Value::Undefined` values.
 See the `swan_core` rustdoc for the pipeline and the value model, and
 [Architecture](../architecture.md) for an overview.
 
+## Finding errors
+
+An undefined value carries an `Undef`, which explains itself:
+
+- `Undef::describe()` gives the error in plain words, such as
+  ``cannot add the text `"a"` and the number `1` ``;
+- `Undef::cause()` gives the first operand that is itself undefined, so
+  following it leads to the root cause;
+- `Undef::pos()` is a byte offset in `Undef::source()`, the
+  `swan_core::source::Source` (URI and text) of the code that made the value.
+  Both are `None` for errors of built-in functions;
+- `Undef::members()` lists the details that `undef.inspect` shows in Swan.
+
+The evaluator takes the source from the *current source*, which the host
+sets with `swan_core::source::with_source` around an evaluation;
+`template::render` and `Engine::render` do it for you, with positions in the
+whole template. A function keeps the source it was defined in, so an error
+inside a function imported from another document points into that
+document.
+
+Each item of a document's `tags` (and of `Rendering::tags`) is a tag: its
+byte span in the source (`start`, `end`), the byte span of its text in the
+output (`out_start`, `out_end`), and its `value`, so a host can find an
+undefined value even when its tag renders nothing.
+
+```rust,ignore
+let source = r#"Total: <% total = price * "4" %><% total %>"#;
+let Value::Namespace(doc) = engine.render("/cart.texl", source).await else { unreachable!() };
+let Value::Namespace(data) = doc.get("data") else { unreachable!() };
+let Value::Undefined(err) = data.get("total") else { unreachable!() };
+assert_eq!(err.describe(), "cannot multiply nothing by the text `\"4\"`");
+assert_eq!(&source[err.pos().unwrap()..][..1], "*");
+assert_eq!(err.source().unwrap().uri.as_deref(), Some("/cart.texl"));
+```
+
+The bindings convert positions to their own unit with
+`Source::utf16_offset` (JavaScript) and `Source::char_offset` (Python);
+`texl_core::engine::convert_tag_positions` does it for the tags of a
+document.
+
 ## Memory
 
 Swan values are reference-counted. A function holds the scope it was defined
@@ -319,6 +364,8 @@ cycle through it is never freed. See
 
 The rustdoc of the two crates (`cargo doc`, see above):
 
-- `texl_core`: `Engine`, `template::render`, loaders and the async helpers.
-- `swan_core`: `Value`, `Namespace`, `Scope`, `Promise`, `BuiltinFn`, the
-  lexer, the parser, the evaluator and the cycle collector.
+- `texl_core`: `Engine`, `template::render` and `Rendering`, loaders and the
+  async helpers.
+- `swan_core`: `Value`, `Undef`, `Namespace`, `Scope`, `Promise`,
+  `BuiltinFn`, `source`, the lexer, the parser, the evaluator and the cycle
+  collector.

@@ -36,7 +36,7 @@
 <pre id="expected" hidden></pre>
 
 <script type="module">
-import init, { TexlEngine, collect } from "../../pkg/texl_wasm.js";
+import init, { TexlEngine, collect, isUndefined } from "../../pkg/texl_wasm.js";
 
 const checks = document.getElementById("checks");
 let failures = 0;
@@ -70,7 +70,7 @@ async function testSample() {
         engine.load("fixtures/sample.texl"),
         fetch("fixtures/sample.expected.txt").then((r) => r.text()),
     ]);
-    const rendering = doc ? doc.rendering : "(the document could not be loaded)";
+    const rendering = doc ? doc.text : "(the document could not be loaded)";
     document.getElementById("rendering").textContent = rendering;
     check("sample.texl renders as sample.expected.txt", rendering, expected);
     if (rendering !== expected) {
@@ -89,34 +89,34 @@ async function testEngine() {
     const engine = new TexlEngine({ a: 10 }, "http://127.0.0.1:1/some/doc.texl");
     check("an explicit base URL is used", engine.baseUrl, "http://127.0.0.1:1/some/doc.texl");
     const draft = await engine.render("draft.texl", "a = <% a %>");
-    check("render uses the engine globals", draft.rendering, "a = 10");
+    check("render uses the engine globals", draft.text, "a = 10");
     check("render resolves its URI against the base URL", draft.uri, "http://127.0.0.1:1/some/draft.texl");
     check("render gives the source", draft.source, "a = <% a %>");
 
     engine.set("b", 32);
-    check("set adds a global", (await engine.render("doc.texl", "<% a + b %>")).rendering, "42");
+    check("set adds a global", (await engine.render("doc.texl", "<% a + b %>")).text, "42");
     const first = await engine.render("doc.texl", "<% x = 1 %><% x %>|");
     const second = await engine.render("doc.texl", "[<% x %>]");
-    check("render starts from a fresh scope", first.rendering + second.rendering, "1|[]");
+    check("render starts from a fresh scope", first.text + second.text, "1|[]");
     check("render gives the data", first.data.x, 1);
 
     const page = new TexlEngine();
     const counted = "fixtures/partials/counted.texl";
     check(
         "render resolves imports against its URI",
-        (await page.render("fixtures/partials/new.texl", '<% texl.import("signature.texl") ~> (doc -> doc.uri) %>')).rendering,
+        (await page.render("fixtures/partials/new.texl", '<% texl.import("signature.texl") ~> (doc -> doc.uri) %>')).text,
         new URL("fixtures/partials/signature.texl", location.href).href);
     check(
         "render fetches absolute paths from the root of its URI",
-        (await page.render("fixtures/new.texl", '<% texl.import("/tests/web/fixtures/partials/counted.texl") ~> (doc -> doc.rendering) %>')).rendering,
+        (await page.render("fixtures/new.texl", '<% texl.import("/tests/web/fixtures/partials/counted.texl") ~> (doc -> doc.text) %>')).text,
         "counted.texl has been evaluated 1 time(s)\n");
     check(
         "a self-import gives Undefined",
-        (await page.render("fixtures/self.texl", '[<% texl.import("self.texl#top") %>]')).rendering,
+        (await page.render("fixtures/self.texl", '[<% texl.import("self.texl#top") %>]')).text,
         "[[[Undefined]]]");
     check(
         "unreachable documents give Nothing",
-        (await page.render("fixtures/new.texl", '[<% texl.import("/nowhere.texl") %>]')).rendering,
+        (await page.render("fixtures/new.texl", '[<% texl.import("/nowhere.texl") %>]')).text,
         "[]");
 
     const source = await page.fetch(counted);
@@ -124,8 +124,8 @@ async function testEngine() {
     check("fetch of a missing document gives null", await page.fetch("fixtures/missing.texl"), null);
     check(
         "load is fetch followed by render",
-        (await page.load(counted)).rendering,
-        (await page.render(counted, source)).rendering);
+        (await page.load(counted)).text,
+        (await page.render(counted, source)).text);
 
     for (const method of ["fetch", "load"]) {
         let rejected = false;
@@ -156,22 +156,22 @@ async function testContext() {
     context.set("c", 30);
     check("set adds a binding", context.get("c"), 30);
 
-    check("render interpolates", await context.render("Hello <% name %>!"), "Hello World!");
-    check("render sees the engine globals", await context.render("<% g %>"), "global");
-    check("render evaluates arithmetic", await context.render("Sum: <% a + b + c %>"), "Sum: 60");
-    check("render calls JS functions", await context.render("<% double(a) %>"), "20");
-    check("render awaits async JS functions", await context.render("<% asyncDouble(a) %>"), "20");
+    check("render interpolates", (await context.render("Hello <% name %>!")).text, "Hello World!");
+    check("render sees the engine globals", (await context.render("<% g %>")).text, "global");
+    check("render evaluates arithmetic", (await context.render("Sum: <% a + b + c %>")).text, "Sum: 60");
+    check("render calls JS functions", (await context.render("<% double(a) %>")).text, "20");
+    check("render awaits async JS functions", (await context.render("<% asyncDouble(a) %>")).text, "20");
 
     await context.render("<% x = a * 5 %><% y : b + 10 %>");
     check("assignments persist in the context", context.get("x"), 50);
     check("labels persist in the context", context.get("y"), 30);
 
     context.set("later", new Promise((r) => setTimeout(() => r(42), 10)));
-    check("JS promises are awaited", await context.render("<% later %>"), "42");
+    check("JS promises are awaited", (await context.render("<% later %>")).text, "42");
     context.set("bad", Promise.reject(new Error("boom")));
-    check("rejected promises give Nothing", await context.render("[<% bad %>]"), "[]");
+    check("rejected promises give Nothing", (await context.render("[<% bad %>]")).text, "[]");
     context.set("badFn", async () => { throw new Error("boom"); });
-    check("throwing async functions give Nothing", await context.render("[<% badFn(1) %>]"), "[]");
+    check("throwing async functions give Nothing", (await context.render("[<% badFn(1) %>]")).text, "[]");
 
     await context.render("<% r = asyncDouble(a) %>");
     const r = context.get("r");
@@ -193,8 +193,44 @@ async function testCollect() {
     dropped.free();
 
     check("collect frees the scopes of freed contexts", collect() > 0, true);
-    check("collect keeps the contexts in use", await kept.render("<% convert 10 %>"), "20");
+    check("collect keeps the contexts in use", (await kept.render("<% convert 10 %>")).text, "20");
     check("collect has nothing left to free", collect(), 0);
+}
+
+async function testDebug() {
+    const engine = new TexlEngine();
+    const source = 'µ° è <% y = "a" - 1 %>😀 <% y %>!';
+    const doc = await engine.render("debug.texl", source);
+    check("tags has one entry per tag", doc.tags.length, 2);
+    const [assign, show] = doc.tags;
+    check("a tag that renders nothing is in tags", source.slice(assign.start, assign.end), '<% y = "a" - 1 %>');
+    check("tag spans are UTF-16 indices of the source", source.slice(show.start, show.end), "<% y %>");
+    check("tag output spans are UTF-16 indices of the text", doc.text.slice(show.out_start, show.out_end), "[[Undefined]]");
+    const u = show.value;
+    check("undefined values reach JS", isUndefined(u), true);
+    check("undefined values have a type", u.type, "BinaryOperation");
+    check("undefined values have a description", u.description, 'cannot subtract the number `1` from the text `"a"`');
+    check("undefined values have their operands", [u.op, u.lhv, u.rhv].join("|"), "subtraction|a|1");
+    check("pos is a UTF-16 index of the source", source[u.pos], "-");
+    check("uri is the document URL", u.uri, new URL("debug.texl", location.href).href);
+    check("data has the same value", doc.data.y.pos, u.pos);
+    check("undefined values are frozen", Object.isFrozen(u), true);
+    check("plain objects are not undefined values", isUndefined({ ...u }), false);
+
+    const nested = (await engine.render("debug.texl", '<% 2 * ("a" - 1) %>')).tags[0].value;
+    check("cause leads to the root cause", nested.cause.description, 'cannot subtract the number `1` from the text `"a"`');
+    check("cause is the undefined operand", nested.cause, nested.rhv);
+    check("a root cause has no cause", nested.cause.cause, null);
+    check("built-in errors have no position", (await engine.render("d.texl", "<% math.sqrt(-1) %>")).tags[0].value.pos, null);
+
+    const context = engine.createContext();
+    context.set("back", u);
+    check("undefined values go back to Swan", (await context.render("<% type back %>|<% back %>")).text, "Undefined|[[Undefined]]");
+    check("they keep their details", (await context.render("<% (undef.inspect back).op %>")).text, "subtraction");
+    const rendering = await context.render("° <% b = 1 %><% b + 1 %>");
+    check("context renderings have text", rendering.text, "° 2");
+    check("context renderings have data", rendering.data.b, 1);
+    check("context renderings have tags", [rendering.tags[1].start, rendering.tags[1].value].join(), "13,2");
 }
 
 const status = document.getElementById("status");
@@ -204,6 +240,7 @@ try {
     await testEngine();
     await testContext();
     await testCollect();
+    await testDebug();
 } catch (err) {
     failures++;
     check(`unexpected error: ${err}`, false, true);

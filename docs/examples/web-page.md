@@ -27,7 +27,7 @@ docs/
 <meta charset="utf-8">
 <title>Texl preview</title>
 <textarea id="source" rows="8" cols="60">Hello <% user.name %>!
-<% texl.import("signature.texl") ~> (doc -> doc.rendering) %></textarea>
+<% texl.import("signature.texl") ~> (doc -> doc.text) %></textarea>
 <pre id="output"></pre>
 
 <script type="module">
@@ -44,7 +44,7 @@ async function preview() {
     const run = ++latest;
     const doc = await engine.render("docs/draft.texl", source.value);
     if (run === latest) {                      // drop the results of older runs
-        output.textContent = doc.rendering;
+        output.textContent = doc.text;
     }
 }
 

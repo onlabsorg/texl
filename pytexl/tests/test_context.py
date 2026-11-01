@@ -26,24 +26,24 @@ class ContextTest(unittest.IsolatedAsyncioTestCase):
         self.context.set("c", 30)
         self.context.set("a", 1)
         self.assertEqual(self.context.get("c"), 30)
-        self.assertEqual(await self.context.render("<% a + c %>"), "31")
+        self.assertEqual((await self.context.render("<% a + c %>")).text, "31")
         self.assertIn("c", self.context.names())
 
     async def test_set_shadows_globals(self):
         self.context.set("g", "local")
-        self.assertEqual(await self.context.render("<% g %>"), "local")
-        self.assertEqual((await self.engine.render("doc.texl", "<% g %>")).rendering, "global")
+        self.assertEqual((await self.context.render("<% g %>")).text, "local")
+        self.assertEqual((await self.engine.render("doc.texl", "<% g %>")).text, "global")
 
     async def test_render_interpolates(self):
-        self.assertEqual(await self.context.render("Hello <% name %>!"), "Hello World!")
-        self.assertEqual(await self.context.render("Sum: <% a + b %>"), "Sum: 30")
-        self.assertEqual(await self.context.render("<% g %>"), "global")
+        self.assertEqual((await self.context.render("Hello <% name %>!")).text, "Hello World!")
+        self.assertEqual((await self.context.render("Sum: <% a + b %>")).text, "Sum: 30")
+        self.assertEqual((await self.context.render("<% g %>")).text, "global")
 
     async def test_assignments_persist_in_the_context(self):
-        self.assertEqual(await self.context.render("<% x = a * 5 %><% y : b + 10 %>"), "30")
+        self.assertEqual((await self.context.render("<% x = a * 5 %><% y : b + 10 %>")).text, "30")
         self.assertEqual(self.context.get("x"), 50)
         self.assertEqual(self.context.get("y"), 30)
-        self.assertEqual(await self.context.render("<% x + y %>"), "80")
+        self.assertEqual((await self.context.render("<% x + y %>")).text, "80")
         self.assertEqual(self.context.names(), ["a", "b", "name", "texl", "x", "y"])
 
     async def test_contexts_are_independent(self):
@@ -65,7 +65,7 @@ class PythonFunctionTest(unittest.IsolatedAsyncioTestCase):
     async def render(self, template, **names):
         for name, value in names.items():
             self.context.set(name, value)
-        return await self.context.render(template)
+        return (await self.context.render(template)).text
 
     async def test_functions_are_called_with_one_argument(self):
         self.assertEqual(await self.render("<% double 21 %>", double=lambda x: 2 * x), "42")
@@ -118,7 +118,7 @@ class AwaitableTest(unittest.IsolatedAsyncioTestCase):
         future = self.loop.create_future()
         self.loop.call_later(0.01, future.set_result, 42)
         self.context.set("later", future)
-        self.assertEqual(await self.context.render("<% later %>"), "42")
+        self.assertEqual((await self.context.render("<% later %>")).text, "42")
 
     async def test_coroutines_are_awaited_once(self):
         calls = []
@@ -128,7 +128,7 @@ class AwaitableTest(unittest.IsolatedAsyncioTestCase):
             return "computed"
 
         self.context.set("value", compute())
-        self.assertEqual(await self.context.render("<% value %> <% value %>"), "computed computed")
+        self.assertEqual((await self.context.render("<% value %> <% value %>")).text, "computed computed")
         self.assertEqual(calls, [1])
 
     async def test_tasks_are_awaited(self):
@@ -137,7 +137,7 @@ class AwaitableTest(unittest.IsolatedAsyncioTestCase):
             return [1, 2]
 
         self.context.set("task", asyncio.create_task(compute()))
-        self.assertEqual(await self.context.render("<% task ~> list.enum %>"), "1, 2")
+        self.assertEqual((await self.context.render("<% task ~> list.enum %>")).text, "1, 2")
 
     async def test_awaitables_resolving_to_awaitables_are_awaited(self):
         async def inner():
@@ -147,7 +147,7 @@ class AwaitableTest(unittest.IsolatedAsyncioTestCase):
             return inner()
 
         self.context.set("nested", outer())
-        self.assertEqual(await self.context.render("<% nested %>"), "inner")
+        self.assertEqual((await self.context.render("<% nested %>")).text, "inner")
 
     async def test_failed_and_cancelled_futures_give_nothing(self):
         failed = self.loop.create_future()
@@ -156,7 +156,7 @@ class AwaitableTest(unittest.IsolatedAsyncioTestCase):
         cancelled.cancel()
         self.context.set("failed", failed)
         self.context.set("cancelled", cancelled)
-        self.assertEqual(await self.context.render("[<% failed %>][<% cancelled %>]"), "[][]")
+        self.assertEqual((await self.context.render("[<% failed %>][<% cancelled %>]")).text, "[][]")
 
 
 class AwaitableOutsideLoopTest(unittest.TestCase):
@@ -165,7 +165,7 @@ class AwaitableOutsideLoopTest(unittest.TestCase):
             return "late"
 
         engine = pytexl.Engine({"value": compute()})
-        self.assertEqual(asyncio.run(engine.render("doc.texl", "<% value %>")).rendering, "late")
+        self.assertEqual(asyncio.run(engine.render("doc.texl", "<% value %>")).text, "late")
 
 
 class PromiseTest(unittest.IsolatedAsyncioTestCase):

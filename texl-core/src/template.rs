@@ -50,7 +50,9 @@
 //! let scope = root_scope();
 //! scope.set("name", Value::Text("World".into()));
 //! let out = block_on(render("Hello <% name %>!", &scope));
-//! assert_eq!(out, "Hello World!");
+//! assert_eq!(out.text, "Hello World!");
+//! assert_eq!((out.tags[0].start, out.tags[0].end), (6, 16));
+//! assert_eq!((out.tags[0].out_start, out.tags[0].out_end), (6, 11));
 //! # use std::{future::Future, pin::pin, task::{Context, Poll, Waker}};
 //! # fn block_on<F: Future>(fut: F) -> F::Output {
 //! #     let mut cx = Context::from_waker(Waker::noop());
@@ -65,7 +67,8 @@
 use swan_core::evaluator::eval;
 use swan_core::lexer::Lexer;
 use swan_core::parser::Parser;
-use swan_core::value::{Scope, Value};
+use swan_core::source::Source;
+use swan_core::value::{Namespace, Scope, Value};
 use std::cell::RefCell;
 use std::future::Future;
 use std::pin::Pin;
@@ -140,24 +143,102 @@ async fn resolve_promises(mut val: Value) -> Value {
 }
 
 
-/// Renders `template`, evaluating every `<% ... %>` expression against `scope`.
+/// One tag of a rendered template.
+///
+/// Positions are byte offsets: `start` and `end` in the source of the
+/// template, `out_start` and `out_end` in the rendered text.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Tag {
+    /// Where the tag starts in the source (at `<%`).
+    pub start: usize,
+    /// Where the tag ends in the source (after `%>`).
+    pub end: usize,
+    /// Where the text of the tag starts in the rendered text.
+    pub out_start: usize,
+    /// Where the text of the tag ends in the rendered text.
+    pub out_end: usize,
+    /// The value of the tag, the one that was rendered: if the expression
+    /// returned a promise, its resolved value. Promises nested in the value
+    /// (for example tuple items) are not awaited, as in the rendered text.
+    pub value: Value,
+}
+
+impl Tag {
+    /// The tag as a Swan namespace `{start, end, out_start, out_end, value}`.
+    pub fn to_namespace(&self) -> Namespace {
+        [
+            ("start", Value::Numb(self.start as f64)),
+            ("end", Value::Numb(self.end as f64)),
+            ("out_start", Value::Numb(self.out_start as f64)),
+            ("out_end", Value::Numb(self.out_end as f64)),
+            ("value", self.value.clone()),
+        ].into_iter().collect()
+    }
+}
+
+/// The result of [`render`].
+#[derive(Debug, Clone)]
+pub struct Rendering {
+    /// The source that was rendered. Undefined values made by the template
+    /// refer to it (see [`swan_core::source`]).
+    pub source: Rc<Source>,
+    /// The rendered text.
+    pub text: String,
+    /// The bindings of the scope when the rendering ended: a snapshot,
+    /// [`Scope::namespace`]. It holds the names bound by the template and any
+    /// names the scope had before.
+    pub data: Namespace,
+    /// The tags of the template, in source order, including the tags that
+    /// render nothing (such as assignments).
+    pub tags: Vec<Tag>,
+}
+
+impl Rendering {
+    /// The rendering as a Swan namespace `{text, data, tags}`, with tag
+    /// positions converted by `convert(text, byte_offset)` (see
+    /// [`crate::engine::convert_tag_positions`]); pass `|_, b| b` to keep
+    /// byte offsets.
+    pub fn to_namespace(&self, convert: impl Fn(&str, usize) -> usize) -> Namespace {
+        let tags = self.tags.iter().map(|tag| {
+            let tag = Tag {
+                start: convert(&self.source.text, tag.start),
+                end: convert(&self.source.text, tag.end),
+                out_start: convert(&self.text, tag.out_start),
+                out_end: convert(&self.text, tag.out_end),
+                value: tag.value.clone(),
+            };
+            Value::Namespace(tag.to_namespace())
+        }).collect();
+        [
+            ("text", Value::Text(self.text.as_str().into())),
+            ("data", Value::Namespace(self.data.clone())),
+            ("tags", Value::list(tags)),
+        ].into_iter().collect()
+    }
+}
+
+/// Renders `source`, evaluating every `<% ... %>` expression against `scope`.
+///
+/// `source` is the template text (`&str` or `String`, with no URI) or a
+/// [`Source`] (with the URI of the document, if it has one).
 ///
 /// For each tag, the expression text is lexed, parsed and evaluated with
-/// [`swan_core::evaluator::eval`]. If the result is a promise, it is awaited.
-/// The final value is converted to text (see the [module documentation](self))
-/// and appended to the output. Text outside tags is copied verbatim.
+/// [`swan_core::evaluator::eval`], with `source` as the current source, so
+/// positions in undefined values are byte offsets in the whole template. If
+/// the result is a promise, it is awaited. The final value is converted to
+/// text (see the [module documentation](self)) and appended to the output.
+/// Text outside tags is copied verbatim.
 ///
 /// Evaluation mutates `scope`, so assignments persist across tags and after the call returns.
 /// An unclosed `<%` ends processing, and the remaining text is appended literally.
 ///
-/// # Arguments
-/// * `template` - the template source text.
-/// * `scope` - the scope used to evaluate all expressions.
-///
-/// # Returns
-/// The fully interpolated string.
-pub async fn render(template: &str, scope: &Scope) -> String {
-    let mut result = String::with_capacity(template.len());
+/// Returns the [`Rendering`]: the text, the data (a snapshot of the scope
+/// bindings when the rendering ends) and the tags.
+pub async fn render(source: impl Into<Source>, scope: &Scope) -> Rendering {
+    let source = Rc::new(source.into());
+    let template: &str = &source.text;
+    let mut text = String::with_capacity(template.len());
+    let mut tags = Vec::new();
     let mut cursor = 0;
 
     while let Some(start_idx) = template[cursor..].find("<%") {
@@ -169,23 +250,22 @@ pub async fn render(template: &str, scope: &Scope) -> String {
             let tag_end = expr_end + 2; // skip "%>"
 
             // Append literal text prior to the opening tag
-            result.push_str(&template[cursor..tag_start]);
+            text.push_str(&template[cursor..tag_start]);
 
-            // Extract expression snippet between delimiters
+            // Parse and evaluate the expression; positions are offsets in the template
             let expr_src = &template[expr_start..expr_end];
-
-            // Parse and evaluate expression
-            let evaluated_val = {
-                let mut parser = Parser::new(Lexer::new(expr_src));
-                let ast = parser.parse();
+            let value = swan_core::source::with_source(Some(source.clone()), || {
+                let ast = Parser::new(Lexer::with_offset(expr_src, expr_start)).parse();
                 eval(&ast, scope)
-            };
+            });
 
             // If the expression yielded a promise, wait for it to resolve
-            let evaluated_val = resolve_promises(evaluated_val).await;
+            let value = resolve_promises(value).await;
 
             // Convert evaluated Value into its text representation
-            result.push_str(&value_to_string(evaluated_val));
+            let out_start = text.len();
+            text.push_str(&value_to_string(value.clone()));
+            tags.push(Tag { start: tag_start, end: tag_end, out_start, out_end: text.len(), value });
 
             // Move cursor past the closing delimiter tag
             cursor = tag_end;
@@ -196,8 +276,8 @@ pub async fn render(template: &str, scope: &Scope) -> String {
     }
 
     // Append any trailing string fragment after the final tag
-    result.push_str(&template[cursor..]);
-    result
+    text.push_str(&template[cursor..]);
+    Rendering { text, data: scope.namespace(), tags, source }
 }
 
 
@@ -297,7 +377,7 @@ mod tests {
     fn test_plain_text_without_expressions() {
         let scope = create_test_scope();
         let input = "Hello, world! No template tags here.";
-        assert_eq!(block_on(render(input, &scope)), "Hello, world! No template tags here.");
+        assert_eq!(block_on(render(input, &scope)).text, "Hello, world! No template tags here.");
     }
 
     #[test]
@@ -305,7 +385,7 @@ mod tests {
     fn test_single_expression_interpolation() {
         let scope = create_test_scope();
         let input = "Hello <% name %>!";
-        assert_eq!(block_on(render(input, &scope)), "Hello World!");
+        assert_eq!(block_on(render(input, &scope)).text, "Hello World!");
     }
 
     #[test]
@@ -313,7 +393,7 @@ mod tests {
     fn test_multiple_expressions_and_arithmetic() {
         let scope = create_test_scope();
         let input = "Sum: <% a + b %>, Product: <% a * b %>";
-        assert_eq!(block_on(render(input, &scope)), "Sum: 30, Product: 200");
+        assert_eq!(block_on(render(input, &scope)).text, "Sum: 30, Product: 200");
     }
 
     #[test]
@@ -321,7 +401,7 @@ mod tests {
     fn test_boolean_and_nothing_formatting() {
         let scope = create_test_scope();
         let input = "Valid: <% is_valid %>, Empty: <% () %>";
-        assert_eq!(block_on(render(input, &scope)), "Valid: TRUE, Empty: ");
+        assert_eq!(block_on(render(input, &scope)).text, "Valid: TRUE, Empty: ");
     }
 
     #[test]
@@ -329,7 +409,7 @@ mod tests {
     fn test_structured_types_formatting() {
         let scope = create_test_scope();
         let input = "List: <% items %>, Namespace: <% { x: 1, y: 2 } %>";
-        assert_eq!(block_on(render(input, &scope)), "List: [[List of 2]], Namespace: [[Namespace of 2]]");
+        assert_eq!(block_on(render(input, &scope)).text, "List: [[List of 2]], Namespace: [[Namespace of 2]]");
     }
 
     #[test]
@@ -337,7 +417,7 @@ mod tests {
     fn test_tuple_formatting() {
         let scope = create_test_scope();
         let input = "Tuple: <% (a, b, name) %>";
-        assert_eq!(block_on(render(input, &scope)), "Tuple: 10, 20, World");
+        assert_eq!(block_on(render(input, &scope)).text, "Tuple: 10, 20, World");
     }
 
     #[test]
@@ -346,7 +426,7 @@ mod tests {
         let scope = create_test_scope();
         let input = "Hello <% name %, remaining text without closing tag <% a";
         assert_eq!(
-            block_on(render(input, &scope)),
+            block_on(render(input, &scope)).text,
             "Hello <% name %, remaining text without closing tag <% a"
         );
     }
@@ -356,7 +436,7 @@ mod tests {
     fn test_state_mutation_across_tags() {
         let scope = create_test_scope();
         let input = "<% count = 1 %>Count is <% count %>, next is <% count = count + 1, count %>";
-        assert_eq!(block_on(render(input, &scope)), "Count is 1, next is 2");
+        assert_eq!(block_on(render(input, &scope)).text, "Count is 1, next is 2");
     }
 
     #[test]
@@ -366,7 +446,7 @@ mod tests {
         let p = Promise::new();
         p.resolve(Value::Text("done".into()));
         scope.set("p", Value::Promise(p));
-        assert_eq!(block_on(render("Result: <% p %>", &scope)), "Result: done");
+        assert_eq!(block_on(render("Result: <% p %>", &scope)).text, "Result: done");
     }
 
     #[test]
@@ -387,7 +467,7 @@ mod tests {
         p.resolve(Value::Numb(42.0));
 
         // 3. Poll again until it's ready. The `block_on` utility is perfect for this.
-        let result = block_on(fut);
+        let result = block_on(fut).text;
         assert_eq!(result, "Value: 42!");
     }
 }

@@ -39,9 +39,10 @@ Consequences:
   next tag starts clean.
 - **An `Undefined` value records what went wrong.** Its payload (the Rust type
   `Undef`) has a kind (`UnaryOperation`, `BinaryOperation`, `Termination`,
-  `Token`, `Name`, `Value`), the operation, the operands and the position in
-  the tag's source, in bytes. `undef.inspect` returns it as a namespace; the
-  Python host exposes it as `pytexl.Undefined`.
+  `Token`, `Name`, `Value`), the operation, the operands, a description in
+  plain words, and where it was made. `undef.inspect` returns it as a
+  namespace; the hosts expose it as `pytexl.Undefined` and `TexlUndefined`.
+  See [Finding errors](#finding-errors).
 - **Errors are values.** `Undefined` is falsy, so `x | fallback` and
   `x ? a ; b` deal with it like with any other value. It renders as
   `[[Undefined]]`.
@@ -241,8 +242,10 @@ So within one rendering:
 ## Documents, imports and caching
 
 A *document* is a template rendered at a URL by `Engine::render(url, source)`
-or `Engine::load(url)`. The result is a namespace `{uri, source, data,
-rendering}`. Every document gets its own document scope, with a `texl`
+or `Engine::load(url)`. The result is a namespace `{uri, source, data, text,
+tags}`: `text` is the rendered text, and `tags` describes each tag (see
+[Finding errors](#finding-errors)). Imported documents have the same shape.
+Every document gets its own document scope, with a `texl`
 namespace whose `import` resolves URLs against the document's URL.
 
 ### URLs
@@ -305,6 +308,84 @@ A *context* (`createContext` in JavaScript, `create_context` in Python,
 `Engine::create_scope` in Rust) is a document scope without a document: the
 host renders several templates in it and reads and writes its names. Its
 `texl` namespace has no `import`, so its templates cannot import documents.
+
+## Finding errors
+
+An error does not stop the rendering, so a host needs another way to show
+which tag failed, where and why. Two things give it.
+
+### Undefined values explain themselves
+
+`Undef::describe` writes the error in plain words, from one table of
+operations: ``cannot add the text `"a"` and the number `1` ``, ``missing
+closing `)` ``, ``unexpected `@` ``, `` `math.sqrt` is not defined for the
+number `-1` ``. A value is named by its literal when it is short (a number, a
+text up to 24 characters, a short tuple), otherwise by its type ("a list").
+An undefined value made on purpose by `undef.from` says so ("undefined on
+purpose, from …"): it is not an error.
+
+The description covers one level. An operand that is itself undefined is
+"an undefined value", and `Undef::cause` returns it (the first undefined
+operand, or the first undefined item of a tuple operand), so a host can
+walk from the outer value to the root cause:
+
+```texl
+<% e = 2 * ("a" - 1) %><% (undef.inspect e).description %>
+<% (undef.inspect e).rhv.description %>
+```
+
+```text
+cannot multiply the number `2` by an undefined value
+cannot subtract the number `1` from the text `"a"`
+```
+
+`undef.inspect` returns `type`, `description`, the members of the kind
+(`op`, `val`, `lhv`, `rhv`, `expected`, `token`), `pos` and `uri`; `pos` and
+`uri` are absent when unknown.
+
+### Positions and sources
+
+An undefined value records a byte offset (`pos`) and the `Source` it refers
+to: the URI and the text of the code that made it (`swan_core::source`). The
+evaluator keeps the source of the code it runs in a thread-local *current
+source*:
+
+- `template::render` sets it to the template around each tag, and lexes the
+  tag with its offset in the template (`Lexer::with_offset`), so positions are
+  offsets in the whole document, not in the tag;
+- a function keeps the current source of the place it was defined, and its
+  body runs with it, so an error inside a function imported from another
+  document points into that document, with that document's URI;
+- a built-in function runs with no source: its errors have no position;
+- code parsed with `parse` runs with its own text as the source, without a
+  URI.
+
+Hosts convert positions to their own unit when a value reaches them: UTF-16
+code units in JavaScript, code points in Python. Since every undefined value
+carries its source, the conversion is right whichever way the value arrives
+(a tag, `data`, a function result).
+
+### Tags
+
+The rendering of a template records every tag: the byte span of the tag in
+the source (`start`, `end`, from `<%` to after `%>`), the byte span of its
+text in the output (`out_start`, `out_end`) and the value that was rendered
+(`value`). Tags that render nothing, such as assignments, are included. The
+value is the one the tag rendered: a promise returned by the tag is awaited,
+but promises inside the value (tuple items) are not, as in the text. A
+document holds the values of all its tags as long as it lives; the cycle
+collector traces them like any other value.
+
+Known limits:
+
+- **Promises drop errors.** A promise never holds an `Undefined` value: `~>`
+  resolves to `Nothing` when its function returns one, and so does a failed
+  import. The error is not visible after it went through a promise.
+- **Unknown names are not errors.** A name that is not bound is `Nothing`,
+  not `Undefined`, so a typo in a name renders as an empty text.
+- **Built-in errors have no position.** An error raised inside a built-in
+  (`math.sqrt(-1)`, `texl.import` of an invalid URI) has no `pos`; the tag
+  that contains it is the place to look.
 
 ## Memory management
 
@@ -458,8 +539,9 @@ separate process with its own limits.
 ## Limits and performance
 
 - **Numbers** are 64-bit floats: integers are exact up to 2<sup>53</sup>.
-- **Positions** in `Undefined` values are byte offsets in the source of the
-  tag. Built-in functions report position 0.
+- **Positions** in `Undefined` values are byte offsets in the source that
+  made them (see [Positions and sources](#positions-and-sources)); the hosts
+  convert them. Built-in functions report no position.
 - **Recursion** uses the native stack, with no depth limit: a recursion that
   never ends stops the host program with a stack overflow instead of producing
   `Undefined`. This is a known issue.

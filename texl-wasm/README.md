@@ -13,7 +13,7 @@ import init, { TexlEngine } from "@onlabsorg/texl";
 await init();
 const engine = new TexlEngine({ user: "Ada" });
 const doc = await engine.render("hi.texl", "Hi <% user %>!");
-doc.rendering;                            // "Hi Ada!"
+doc.text;                            // "Hi Ada!"
 ```
 
 See the [JavaScript guide and API reference](https://github.com/onlabsorg/texl/blob/main/docs/api/javascript.md).

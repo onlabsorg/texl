@@ -29,7 +29,7 @@ class PythonToSwanTest(unittest.IsolatedAsyncioTestCase):
     async def swan_type(self, value):
         """Returns the Swan type of `value` and its rendering, or "Nothing|" for Nothing."""
         self.context.set("v", value)
-        return await self.context.render('<% type v ; "Nothing" %>|<% v %>')
+        return (await self.context.render('<% type v ; "Nothing" %>|<% v %>')).text
 
     async def test_scalars(self):
         cases = [
@@ -48,9 +48,9 @@ class PythonToSwanTest(unittest.IsolatedAsyncioTestCase):
 
     async def test_lists(self):
         self.assertEqual(await self.swan_type([1, "a"]), "List|[[List of 2]]")
-        self.assertEqual(await self.context.render("<% list.enum v %>"), "1, a")
+        self.assertEqual((await self.context.render("<% list.enum v %>")).text, "1, a")
         self.context.set("v", [[1, 2], [3]])
-        self.assertEqual(await self.context.render("<% list.size (v 0) %>"), "2")
+        self.assertEqual((await self.context.render("<% list.size (v 0) %>")).text, "2")
 
     async def test_tuples(self):
         self.assertEqual(await self.swan_type((1, "a")), "Numb, Text|1, a")
@@ -60,16 +60,16 @@ class PythonToSwanTest(unittest.IsolatedAsyncioTestCase):
 
     async def test_mappings(self):
         self.assertEqual(await self.swan_type({"x": 3, "y": 4}), "Namespace|[[Namespace of 2]]")
-        self.assertEqual(await self.context.render("<% v.x * v.y %>"), "12")
+        self.assertEqual((await self.context.render("<% v.x * v.y %>")).text, "12")
         self.assertEqual(await self.swan_type(Settings(a=1)), "Namespace|[[Namespace of 1]]")
-        self.assertEqual(await self.context.render("<% v.a %>"), "1")
+        self.assertEqual((await self.context.render("<% v.a %>")).text, "1")
 
     async def test_non_string_keys_are_skipped(self):
         self.assertEqual(await self.swan_type({"a": 1, 2: "b", (3,): "c"}), "Namespace|[[Namespace of 1]]")
 
     async def test_nested_values(self):
         self.context.set("v", {"user": {"name": "Ada", "tags": ["a", "b"]}})
-        self.assertEqual(await self.context.render("<% v.user.name %>: <% list.enum v.user.tags %>"), "Ada: a, b")
+        self.assertEqual((await self.context.render("<% v.user.name %>: <% list.enum v.user.tags %>")).text, "Ada: a, b")
 
     async def test_callables(self):
         class Doubler:
@@ -78,7 +78,7 @@ class PythonToSwanTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(await self.swan_type(len), "Func|[[Func]]")
         self.assertEqual(await self.swan_type(Doubler()), "Func|[[Func]]")
-        self.assertEqual(await self.context.render("<% v 21 %>"), "42")
+        self.assertEqual((await self.context.render("<% v 21 %>")).text, "42")
 
     async def test_unsupported_values_give_nothing(self):
         for value in (object(), b"bytes", {1, 2}, 3j):
@@ -164,29 +164,48 @@ class UndefinedTest(unittest.IsolatedAsyncioTestCase):
         u = await self.undefined('"hello" - 1')
         self.assertEqual(u.type, "BinaryOperation")
         self.assertEqual((u.op, u.lhv, u.rhv), ("subtraction", "hello", 1))
-        self.assertEqual(u.pos, 14)  # the position of "-" in ' u = ("hello" - 1)'
-        self.assertEqual(u.inspect(), {"type": "BinaryOperation", "op": "subtraction", "lhv": "hello", "rhv": 1, "pos": 14})
+        self.assertEqual(u.pos, 16)  # the position of "-" in '<% u = ("hello" - 1) %>'
+        self.assertIsNone(u.uri)  # a context has no URI
+        self.assertEqual(u.description, 'cannot subtract the number `1` from the text `"hello"`')
+        self.assertEqual(u.inspect(), {
+            "type": "BinaryOperation", "description": u.description,
+            "op": "subtraction", "lhv": "hello", "rhv": 1, "pos": 16,
+        })
 
     async def test_unary_operation(self):
         u = await self.undefined("text.size 1")
-        self.assertEqual(u.inspect(), {"type": "UnaryOperation", "op": "text.size", "val": 1, "pos": 0})
+        # Built-in functions report no position
+        self.assertEqual(u.inspect(), {
+            "type": "UnaryOperation", "description": "`text.size` is not defined for the number `1`",
+            "op": "text.size", "val": 1,
+        })
+        self.assertIsNone(u.pos)
         u = await self.undefined('-"a"')
         self.assertEqual((u.type, u.val), ("UnaryOperation", "a"))
 
     async def test_value(self):
         u = await self.undefined('undef.from ("not found", 404)')
-        self.assertEqual(u.inspect(), {"type": "Value", "val": ("not found", 404)})
+        self.assertEqual(u.inspect(), {
+            "type": "Value", "description": 'undefined on purpose, from the tuple `("not found", 404)`',
+            "val": ("not found", 404),
+        })
+        self.assertIsNone(u.cause)
 
     async def test_syntax_errors(self):
         termination = await self.undefined('(parse "(1 + 2") {}')
-        self.assertEqual(termination.inspect(), {"type": "Termination", "expected": ")", "pos": 6})
+        # Positions of parsed code are offsets in the parsed text
+        self.assertEqual(termination.inspect(), {
+            "type": "Termination", "description": "missing closing `)`", "expected": ")", "pos": 6,
+        })
         assignment = await self.undefined('(parse "1 = 2") {}')
         self.assertEqual((assignment.type, assignment.op), ("BinaryOperation", "assignment"))
-        self.assertEqual(assignment.lhv.inspect(), {"type": "Name", "pos": 0})
+        self.assertEqual(assignment.lhv.inspect(), {"type": "Name", "description": "expected a name", "pos": 0})
+        token = (await self.undefined("1 + )")).cause
+        self.assertEqual((token.type, token.token, token.description), ("Token", ")", "unexpected `)`"))
 
     async def test_attributes_that_do_not_apply_are_none(self):
         u = await self.undefined("undef.from 1")
-        for name in ("op", "lhv", "rhv", "pos", "expected", "token"):
+        for name in ("op", "lhv", "rhv", "pos", "uri", "expected", "token", "cause"):
             with self.subTest(name=name):
                 self.assertIsNone(getattr(u, name))
 
@@ -196,6 +215,10 @@ class UndefinedTest(unittest.IsolatedAsyncioTestCase):
         self.assertIsInstance(u.lhv, pytexl.Undefined)
         self.assertEqual((u.lhv.op, u.lhv.lhv, u.lhv.rhv), ("subtraction", "a", 1))
         self.assertIsInstance(u.inspect()["lhv"], pytexl.Undefined)
+        self.assertEqual(u.description, "cannot add an undefined value and the number `5`")
+        self.assertEqual(u.cause, u.lhv)
+        self.assertEqual(u.cause.description, 'cannot subtract the number `1` from the text `"a"`')
+        self.assertIsNone(u.cause.cause)
 
     async def test_undefined_is_falsy(self):
         self.assertFalse(await self.undefined('"a" - 1'))
@@ -214,21 +237,24 @@ class UndefinedTest(unittest.IsolatedAsyncioTestCase):
     async def test_repr(self):
         self.assertEqual(
             repr(await self.undefined('"hello" - 1')),
-            "<pytexl.Undefined BinaryOperation op='subtraction' lhv='hello' rhv=1 pos=14>",
+            '<pytexl.Undefined BinaryOperation pos=16: cannot subtract the number `1` from the text `"hello"`>',
         )
-        self.assertEqual(repr(await self.undefined('undef.from "x"')), "<pytexl.Undefined Value val='x'>")
+        self.assertEqual(
+            repr(await self.undefined('undef.from "x"')),
+            '<pytexl.Undefined Value: undefined on purpose, from the text `"x"`>',
+        )
 
     async def test_undefined_goes_back_to_swan_unchanged(self):
         u = await self.undefined('"hello" - 1')
         self.context.set("back", u)
-        self.assertEqual(await self.context.render("<% type back %>"), "Undefined")
-        self.assertEqual(await self.context.render("<% (undef.inspect back).(op, pos) %>"), "subtraction, 14")
-        self.assertEqual(await self.context.render("<% back %>"), "[[Undefined]]")
+        self.assertEqual((await self.context.render("<% type back %>")).text, "Undefined")
+        self.assertEqual((await self.context.render("<% (undef.inspect back).(op, pos) %>")).text, "subtraction, 16")
+        self.assertEqual((await self.context.render("<% back %>")).text, "[[Undefined]]")
 
     async def test_python_functions_receive_and_return_undefined(self):
         received = []
         self.context.set("spy", lambda x: received.append(x) or x)
-        self.assertEqual(await self.context.render('<% type (spy ("a" - 1)) %>'), "Undefined")
+        self.assertEqual((await self.context.render('<% type (spy ("a" - 1)) %>')).text, "Undefined")
         self.assertIsInstance(received[0], pytexl.Undefined)
         self.assertEqual(received[0].op, "subtraction")
 

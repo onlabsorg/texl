@@ -232,11 +232,15 @@ pub struct Parser<'a> {
     /// token is fetched.
     current_token: Token<'a>,
     current_pos:   usize,
+    /// Position just past the current token.
+    current_end:   usize,
 
     /// The NEXT token (one step ahead) and its position.
     /// Pre-filled by `new` so every call to peek is O(1).
     peek_token: Token<'a>,
     peek_pos:   usize,
+    /// Position just past the look-ahead token.
+    peek_end:   usize,
 }
 
 impl<'a> Parser<'a> {
@@ -251,12 +255,15 @@ impl<'a> Parser<'a> {
         // `current_token` starts as a dummy; it will be replaced on the first
         // call to `advance`.
         let (peek_pos, peek_token) = lexer.next_token();
+        let peek_end = lexer.token_end();
         Self {
             lexer,
             current_token: Token::EndOfExpression,
             current_pos:   0,
+            current_end:   0,
             peek_token,
             peek_pos,
+            peek_end,
         }
     }
 
@@ -278,7 +285,17 @@ impl<'a> Parser<'a> {
 
         self.current_token = std::mem::replace(&mut self.peek_token, new_peek_token);
         self.current_pos   = self.peek_pos;
+        self.current_end   = self.peek_end;
         self.peek_pos      = new_peek_pos;
+        self.peek_end      = self.lexer.token_end();
+    }
+
+    /// The source text of the current token.
+    fn current_text(&self) -> String {
+        match self.current_token {
+            Token::EndOfExpression => "end of expression".to_string(),
+            _ => self.lexer.slice(self.current_pos, self.current_end).to_string(),
+        }
     }
 
     /// Skips any `Comment` tokens from the look-ahead.
@@ -528,8 +545,8 @@ impl<'a> Parser<'a> {
             // -----------------------------------------------------------------
             // Anything else is unexpected at the start of an expression.
             // -----------------------------------------------------------------
-            _ => { 
-                let val = format!("{:?}", self.current_token);
+            _ => {
+                let val = self.current_text();
                 Node::UnexpectedToken( Leaf {pos, val})
             }
         }

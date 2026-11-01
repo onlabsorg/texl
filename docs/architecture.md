@@ -41,12 +41,17 @@ loop, loaders.
    as a document: it creates a document scope (`Engine::create_scope`), binds
    a `texl` namespace with an `import` function bound to the document's URL,
    and calls `template::render`.
-2. **`template::render(template, &scope)`** (`texl-core/src/template.rs`)
+2. **`template::render(source, &scope)`** (`texl-core/src/template.rs`)
    copies the text outside tags, and evaluates each tag in order in the same
-   scope. When a tag's value is a promise, it awaits it. It then appends the
-   text form of the value.
+   scope, with the document's `Source` (URL and text) as the current source
+   (`swan_core::source`). When a tag's value is a promise, it awaits it. It
+   then appends the text form of the value, and records the tag (its spans
+   in the source and in the output, and its value). It returns a `Rendering`
+   `{source, text, data, tags}`.
 3. **The `Lexer`** (`swan-core/src/lexer.rs`) turns the tag's source into
-   tokens, without copying it.
+   tokens, without copying it. It is created with the offset of the
+   expression in the document (`Lexer::with_offset`), so every position is a
+   byte offset in the whole document.
 4. **The `Parser`** (`swan-core/src/parser.rs`), a Pratt parser, builds an
    `ast::Node`. Operator binding powers are in its `lbp` table; the precedence
    levels are documented in `swan-core/src/token.rs`. Syntax errors become
@@ -76,7 +81,7 @@ The runtime values are in `swan-core/src/value.rs` and `value/`:
 | `Scope`     | A lexical environment: bindings plus a parent; a shared handle |
 | `Promise`   | A single-assignment value that never rejects; a shared handle |
 | `BuiltinFn` | A function implemented in Rust                               |
-| `Undef`     | The description of an error, carried by `Value::Undefined`   |
+| `Undef`     | The description of an error, carried by `Value::Undefined`: its kind, operands, position and source; `describe()` explains it in words |
 
 Everything is `Rc`-based and single-threaded. See
 [Swan and Texl in depth](language.md#scopes-and-names) for the scope layers.
@@ -111,13 +116,19 @@ Everything is `Rc`-based and single-threaded. See
 ### `texl-wasm`
 
 - `src/lib.rs`: `TexlEngine` (wraps an `Engine` that spawns with
-  `wasm_bindgen_futures::spawn_local`), `TexlContext`, `collect`. Its doc
-  comments are copied into the generated `texl_wasm.d.ts`.
+  `wasm_bindgen_futures::spawn_local`), `TexlContext`, `collect`,
+  `isUndefined`. Its doc comments are copied into the generated
+  `texl_wasm.d.ts`.
 - `src/loader.rs`: the `http`/`https` loader, which uses the global `fetch`,
   and the resolution of URIs against the base URL (`location.href` by
   default). Every document has a full URL.
 - `src/convert.rs`: JavaScript ↔ Swan value conversion. JavaScript functions
-  become built-ins, JavaScript promises become Swan promises.
+  become built-ins, JavaScript promises become Swan promises. Positions
+  (undefined values, document tags) are converted to UTF-16 code units.
+- `src/undefined.rs`: undefined values as frozen plain objects
+  (`TexlUndefined`). A private `WeakMap` gives the Swan value back when the
+  object returns to Swan; a `FinalizationRegistry` frees it when JavaScript
+  collects the object.
 
 ### `pytexl`
 
@@ -126,10 +137,12 @@ Everything is `Rc`-based and single-threaded. See
   current thread. `spawn` stores a task in a thread-local executor and
   schedules a drain with `loop.call_soon`; wakers mark tasks ready again.
   `AwaitPy` awaits a Python awaitable from Rust.
-- `src/convert.rs`: Python ↔ Swan value conversion.
+- `src/convert.rs`: Python ↔ Swan value conversion, including
+  `pytexl.Undefined`. Positions (undefined values, document tags) are
+  converted to code points.
 - `python/pytexl/`: the Python package around the native module: `Engine`,
-  `Context`, `Document`, and `loaders` (file and HTTP loaders, run in worker
-  threads).
+  `Context`, `Document`, `Rendering`, `Tag`, and `loaders` (file and HTTP
+  loaders, run in worker threads).
 
 ## Tests
 

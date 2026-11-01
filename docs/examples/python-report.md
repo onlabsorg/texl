@@ -64,8 +64,8 @@ async def main():
         {"name": "South", "sales": 980},
     ])
     doc = await engine.load(Path("templates/report.texl"))
-    Path("report.md").write_text(doc.rendering)
-    print(doc.rendering)
+    Path("report.md").write_text(doc.text)
+    print(doc.text)
 
 asyncio.run(main())
 ```

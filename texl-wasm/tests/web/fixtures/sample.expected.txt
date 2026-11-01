@@ -192,7 +192,7 @@ A tag that returns a promise makes the rendering wait until it resolves.
 -----------
 
 `texl.import(uri)` returns a promise of the document namespace
-{uri, source, data, rendering}. Relative URIs resolve against the folder of
+{uri, source, data, text, tags}. Relative URIs resolve against the folder of
 the importing document. The imported document sees the built-ins and the
 globals of the host, but not the names of its importer.
 
@@ -211,7 +211,7 @@ bound to the global name `fmt`:
 
 Fields of an imported document:
 
-  nspace.enum doc                -> data, rendering, source, uri
+  nspace.enum doc                -> data, source, tags, text, uri
   fmt.basename doc.uri           -> format.texl
   text.size doc.source > 0       -> TRUE
 

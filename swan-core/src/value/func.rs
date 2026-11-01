@@ -100,12 +100,14 @@ impl BuiltinFn {
     }
 
     /// Invoke the built-in with the given argument.
-    #[inline]
+    ///
+    /// The built-in runs with no current source (see [`crate::source`]), so
+    /// the undefined values it makes have no position.
     pub fn call(&self, arg: Value) -> Value {
-        match &self.body {
+        crate::source::with_source(None, || match &self.body {
             BuiltinBody::Plain(f) => f(arg),
             BuiltinBody::Capturing(f, captured) => f(captured, arg),
-        }
+        })
     }
 
     /// The values captured with [`BuiltinFn::capturing`], if any.

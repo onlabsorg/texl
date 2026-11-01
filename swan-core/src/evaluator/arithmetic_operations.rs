@@ -152,7 +152,7 @@ mod tests {
     /// Asserts that `src` evaluates to `Undefined(BinaryOperation)` with the given parts.
     fn assert_undefined(src: &str, op: &str, lhv: Value, rhv: Value, pos: usize) {
         match evaluate(src) {
-            Value::Undefined(Undef::BinaryOperation { op: o, lhv: l, rhv: r, pos: p }) => {
+            Value::Undefined(Undef::BinaryOperation { op: o, lhv: l, rhv: r, pos: p, .. }) => {
                 assert_eq!(o, op);
                 assert_eq!(*l, lhv);
                 assert_eq!(*r, rhv);

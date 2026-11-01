@@ -39,8 +39,9 @@ document and a little program that produces it.
   registers a loader for). The host can load a document from its location, or
   render text it already has (such as the content of an editor) as the
   document at a given location. `texl.import(uri)` loads, renders and returns
-  another document as `{uri, source, data, rendering}`: its source text, the
-  names it defined, and its rendered output. Documents can thus act as
+  another document as `{uri, source, data, text, tags}`: its source text, the
+  names it defined, its rendered output, and a description of each of its
+  expressions (see "Finding errors"). Documents can thus act as
   *partials* (reusable text), *libraries* (reusable functions) or *data
   sources*. Relative imports resolve against the importing document's
   location, so a set of documents forms a linked web of content.
@@ -58,6 +59,16 @@ document and a little program that produces it.
   immutable: a namespace (a set of named values) cannot change once it is
   created, so a document's data cannot be changed by the documents that use
   it.
+- **Finding errors.** Because errors do not stop the rendering, a rendered
+  document also lists every expression it contains, in order, including
+  those that output nothing: where it is in the source, where its output is
+  in the rendered text, and the value it produced. An `Undefined` value
+  explains itself in plain words (for example "cannot subtract the number 1
+  from the text "a""), points to the value that caused it, and records the
+  document and the position where it was made, also when the error happens
+  inside a function imported from another document. An editor can thus
+  highlight each broken expression and say what is wrong with it. The
+  default output, `[[Undefined]]`, is unchanged.
 - **Asynchronous by design.** Loading a document or fetching data may take
   time. Swan has a built-in `Promise` value (chained with `~>`) and rendering
   waits for promises before continuing. Within one rendering, each document
@@ -91,8 +102,8 @@ document and a little program that produces it.
 |-------------|----------------------------------------------------------------------|--------------|
 | `swan-core` | The Swan language: lexer, Pratt parser, evaluator, standard library (`bool`, `numb`, `text`, `list`, `nspace`, `promise`, `undef`, `math`, `time`), and a memory cleaner (cycle collector). No dependencies. | Rust crate |
 | `texl-core` | Template rendering and the `Engine`: pluggable loaders per URL scheme, and `fetch` (get a document's source), `render` (render a source as the document at a location) and `load` (both), with `texl.import` and an import cache per rendering. | Rust crate |
-| `texl-wasm` | JavaScript library for the browser via WebAssembly: `TexlEngine` (`fetch`, `load`, `render`, `set`, `createContext`) with HTTP loading, and `collect` (the memory cleaner); JS functions and promises cross into Swan and back. | npm: `@onlabsorg/texl` |
-| `pytexl`    | Python library (PyO3): async `Engine` (`fetch`, `load`, `render`), `Context`, `collect` (the memory cleaner), file and HTTP loaders; Python callables, mappings and awaitables cross into Swan and back. | PyPI: `pytexl` |
+| `texl-wasm` | JavaScript library for the browser via WebAssembly: `TexlEngine` (`fetch`, `load`, `render`, `set`, `createContext`) with HTTP loading, `collect` (the memory cleaner) and `isUndefined`; JS functions and promises cross into Swan and back, and errors arrive as objects with their details. | npm: `@onlabsorg/texl` |
+| `pytexl`    | Python library (PyO3): async `Engine` (`fetch`, `load`, `render`), `Context`, `collect` (the memory cleaner), file and HTTP loaders; Python callables, mappings and awaitables cross into Swan and back, and errors arrive as `Undefined` objects with their details. | PyPI: `pytexl` |
 
 Hosts can inject their own values and functions into the template scope, and
 register loaders for their own URL schemes. A host application can thus give
@@ -112,6 +123,14 @@ available to hosts too, but it cannot import documents.
   immutable and no longer inherit names from where they were created,
   names a document binds with `bind` are now part of its data, and memory
   is now cleaned up after each rendering (see "Memory" below).
+- Not yet released (in the repository since 2026-11-01): the error details
+  and expression list described in "Finding errors". They change the host
+  interface: a document's rendered output is now called `text` instead of
+  `rendering`, rendering in a context returns the text together with the
+  context's names and the expression list, errors reach JavaScript as
+  objects with their details instead of `undefined`, and error positions
+  count from the start of the document and use each host's own string
+  indices.
 - Available: browser/JavaScript, Python, Rust.
 - The `texl` command-line tool (`texl-cli`) has been removed from the
   repository; its last release was 0.2.0 (2026-10-25), and its binaries
@@ -147,6 +166,9 @@ with it.
 
 ## Known limitations
 
+- An error that passes through a promise is lost: the promise holds
+  "nothing" instead. Errors raised inside built-in functions have no
+  position, and a misspelled name gives "nothing", not an error.
 - The memory cleaner only sees Swan's own memory. Swan values kept inside
   a host's own functions, and loops of references that pass through both
   Swan and JavaScript or Python objects, are not cleaned up.

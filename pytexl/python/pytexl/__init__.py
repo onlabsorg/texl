@@ -6,7 +6,7 @@ in Swan, and rendering replaces the tag with the value of its expression.
 Example:
     >>> import asyncio, pytexl
     >>> engine = pytexl.Engine({"user": {"name": "Ada"}})
-    >>> asyncio.run(engine.render("hello.texl", "Hello <% user.name %>!")).rendering
+    >>> asyncio.run(engine.render("hello.texl", "Hello <% user.name %>!")).text
     'Hello Ada!'
 
 The engine is asynchronous: rendering waits for the promises that tags return,
@@ -33,7 +33,11 @@ callable                         ``Func``
 Swan values come back as ``None`` (``Nothing``), ``bool``, ``int`` (integral
 numbers) or ``float``, ``str``, ``list``, ``tuple``, ``dict`` (namespaces),
 :class:`Promise`, :class:`Function` and :class:`Undefined`. An
-:class:`Undefined` keeps the details of the error that produced it.
+:class:`Undefined` keeps the details of the error that produced it: a
+description in plain words, its cause, and where it is (``uri``, ``pos``).
+
+Positions are in code points, so they index Python strings directly: the
+``pos`` of an :class:`Undefined` and the spans of a :class:`Tag`.
 
 See the Python guide: https://github.com/onlabsorg/texl/blob/main/docs/api/python.md
 """
@@ -51,10 +55,39 @@ from . import loaders
 from . import _pytexl
 from ._pytexl import Function, NativeContext, NativeEngine, Promise, Undefined
 
-__all__ = ["Context", "Document", "Engine", "Function", "Loader", "Promise", "Undefined", "collect", "loaders"]
+__all__ = [
+    "Context", "Document", "Engine", "Function", "Loader", "Promise", "Rendering", "Tag", "Undefined",
+    "collect", "loaders",
+]
 
 #: A document loader: takes a URI and returns the source, or an awaitable of it.
 Loader = Callable[[str], Union[str, Awaitable[str]]]
+
+
+@dataclass(frozen=True)
+class Tag:
+    """A ``<% ... %>`` tag of a rendered template.
+
+    Positions are in code points: ``source[tag.start:tag.end]`` is the tag
+    and ``text[tag.out_start:tag.out_end]`` is what it rendered.
+
+    Attributes:
+        start: Where the tag starts in the source (at ``<%``).
+        end: Where the tag ends in the source (after ``%>``).
+        out_start: Where the text of the tag starts in the rendered text.
+        out_end: Where the text of the tag ends in the rendered text.
+        value: The value that was rendered, converted to a Python value. If
+            the expression returned a promise, it is the resolved value;
+            promises nested in the value are not awaited. An error is an
+            :class:`Undefined`, also when the tag renders nothing (an
+            assignment).
+    """
+
+    start: int
+    end: int
+    out_start: int
+    out_end: int
+    value: Any
 
 
 @dataclass(frozen=True)
@@ -68,13 +101,33 @@ class Document:
         data: The names that the document's tags bound, converted to Python
             values. Functions defined by the document are :class:`Function`
             objects that you can call.
-        rendering: The rendered text.
+        text: The rendered text.
+        tags: The tags of the source, in order, including the tags that
+            render nothing.
     """
 
     uri: str
     source: str
     data: dict[str, Any]
-    rendering: str
+    text: str
+    tags: list[Tag]
+
+
+@dataclass(frozen=True)
+class Rendering:
+    """A template rendered in a context, as returned by :meth:`Context.render`.
+
+    Attributes:
+        text: The rendered text.
+        data: The names bound in the context when the rendering ended
+            (including those bound before it), converted to Python values.
+        tags: The tags of the template, in order, including the tags that
+            render nothing.
+    """
+
+    text: str
+    data: dict[str, Any]
+    tags: list[Tag]
 
 
 class _ThreadBound:
@@ -255,8 +308,10 @@ class Engine(_ThreadBound):
 
         Example:
             >>> doc = await engine.render(Path("templates/draft.texl"), "2 + 2 = <% 2 + 2 %>")
-            >>> doc.rendering
+            >>> doc.text
             '2 + 2 = 4'
+            >>> doc.tags[0]
+            Tag(start=8, end=19, out_start=8, out_end=9, value=4)
         """
         return _document(await self._native.render(_uri(uri), source))
 
@@ -275,7 +330,7 @@ class Engine(_ThreadBound):
 
         Example:
             >>> doc = await engine.load("templates/report.texl")
-            >>> print(doc.rendering if doc else "not found")
+            >>> print(doc.text if doc else "not found")
         """
         doc = await self._native.load(_uri(uri))
         return None if doc is None else _document(doc)
@@ -295,7 +350,7 @@ class Engine(_ThreadBound):
 
         Example:
             >>> context = engine.create_context({"user": "Ada"})
-            >>> await context.render("Hello <% user %>!")
+            >>> (await context.render("Hello <% user %>!")).text
             'Hello Ada!'
         """
         return Context(self._native.create_context(vars))
@@ -310,8 +365,7 @@ class Context(_ThreadBound):
 
     Example:
         >>> context = engine.create_context({"price": 12.5})
-        >>> await context.render("<% total = price * 4 %>")
-        ''
+        >>> _ = await context.render("<% total = price * 4 %>")
         >>> context.get("total")
         50
     """
@@ -332,8 +386,7 @@ class Context(_ThreadBound):
             The value, or ``None`` if the name is not bound.
 
         Example:
-            >>> await context.render("<% x = (1, 2) %>")
-            ''
+            >>> _ = await context.render("<% x = (1, 2) %>")
             >>> context.get("x")
             (1, 2)
         """
@@ -367,7 +420,7 @@ class Context(_ThreadBound):
         """
         return self._native.names()
 
-    async def render(self, template: str) -> str:
+    async def render(self, template: str) -> Rendering:
         """Renders a template in the context.
 
         The names that the template binds stay in the context.
@@ -376,15 +429,18 @@ class Context(_ThreadBound):
             template: The template source.
 
         Returns:
-            The rendered text.
+            The rendering: the text, the names of the context and the tags.
 
         Example:
-            >>> await context.render("<% count = 1 %>")
-            ''
-            >>> await context.render("Count: <% count %>")
+            >>> _ = await context.render("<% count = 1 %>")
+            >>> rendering = await context.render("Count: <% count %>")
+            >>> rendering.text
             'Count: 1'
+            >>> rendering.tags
+            [Tag(start=7, end=18, out_start=7, out_end=8, value=1)]
         """
-        return await self._native.render(template)
+        r = await self._native.render(template)
+        return Rendering(r["text"], r["data"], _tags(r["tags"]))
 
 
 def collect() -> int:
@@ -414,9 +470,14 @@ def _uri(uri: str | os.PathLike[str]) -> str:
     return uri
 
 
+def _tags(tags: list[dict[str, Any]]) -> list[Tag]:
+    """Converts the tag dicts of a document or rendering into :class:`Tag` objects."""
+    return [Tag(t["start"], t["end"], t["out_start"], t["out_end"], t["value"]) for t in tags]
+
+
 def _document(doc: dict[str, Any]) -> Document:
     """Converts a document namespace into a :class:`Document`."""
-    return Document(doc["uri"], doc["source"], doc["data"], doc["rendering"])
+    return Document(doc["uri"], doc["source"], doc["data"], doc["text"], _tags(doc["tags"]))
 
 
 def _base_url(base_url: str | os.PathLike[str] | None) -> str:

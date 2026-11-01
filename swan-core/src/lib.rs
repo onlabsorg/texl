@@ -86,6 +86,8 @@ pub mod lexer;
 pub mod ast;
 pub mod parser;
 
+pub mod source;
+
 pub mod value;
 pub mod evaluator;
 

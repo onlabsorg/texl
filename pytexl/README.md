@@ -14,7 +14,7 @@ import pytexl
 
 engine = pytexl.Engine({"user": {"name": "Ada"}})
 doc = asyncio.run(engine.render("hello.texl", "Hello <% user.name %>!"))
-print(doc.rendering)                           # Hello Ada!
+print(doc.text)                           # Hello Ada!
 ```
 
 See the [Python guide and API reference](https://github.com/onlabsorg/texl/blob/main/docs/api/python.md).

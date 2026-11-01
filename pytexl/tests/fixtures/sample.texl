@@ -208,11 +208,11 @@ A tag that returns a promise makes the rendering wait until it resolves.
 -----------
 
 `texl.import(uri)` returns a promise of the document namespace
-{uri, source, data, rendering}. Relative URIs resolve against the folder of
+{uri, source, data, text, tags}. Relative URIs resolve against the folder of
 the importing document. The imported document sees the built-ins and the
 globals of the host, but not the names of its importer.
 
-<% texl.import("partials/greeting.texl") ~> (doc -> doc.rendering) %>
+<% texl.import("partials/greeting.texl") ~> (doc -> doc.text) %>
 The definitions of an imported document are in its `data`. Here they are
 bound to the global name `fmt`:<% texl.import("lib/format.texl") ~> (doc -> bind "fmt" doc.data) %>
 
@@ -233,7 +233,7 @@ different relative path, return the same promise.
   first = texl.import("partials/counted.texl"),
   again = texl.import("./partials/../partials/counted.texl"),
   first == again                 -> <% first = texl.import("partials/counted.texl"), again = texl.import("./partials/../partials/counted.texl"), first == again %>
-  <% first ~> (doc -> text.trim_tail doc.rendering) %>
+  <% first ~> (doc -> text.trim_tail doc.text) %>
 
 A document that cannot be loaded gives Nothing:
 
@@ -269,8 +269,8 @@ become promises, which the rendering waits for.
 Documents are read from local files. An absolute path is read from the root
 folder of the importing document:
 
-  <% texl.import(fixtures + "/partials/rooted.texl") ~> (doc -> text.trim_tail doc.rendering) %>
+  <% texl.import(fixtures + "/partials/rooted.texl") ~> (doc -> text.trim_tail doc.text) %>
 
 A full URL is fetched over HTTP:
 
-  <% texl.import(origin + "/partials/remote.texl") ~> (doc -> text.trim_tail doc.rendering) %>
+  <% texl.import(origin + "/partials/remote.texl") ~> (doc -> text.trim_tail doc.text) %>

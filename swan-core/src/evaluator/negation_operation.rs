@@ -79,7 +79,7 @@ mod tests {
             ("-[]",      Value::list(vec![])),
         ] {
             match evaluate(src) {
-                Value::Undefined(Undef::UnaryOperation { op, val, pos }) => {
+                Value::Undefined(Undef::UnaryOperation { op, val, pos, .. }) => {
                     assert_eq!(op, "negation");
                     assert_eq!(*val, operand);
                     assert_eq!(pos, 0);

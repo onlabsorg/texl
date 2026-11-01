@@ -18,6 +18,7 @@ mod runtime;
 
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
+use swan_core::source::char_offset;
 use swan_core::value::{Scope, Value};
 use texl_core::helpers::spawner_fn;
 use texl_core::{Engine, LoaderFn, loader_fn, template};
@@ -150,10 +151,14 @@ impl NativeContext {
         self.scope.namespace().names()
     }
 
-    /// Returns a promise of the rendering of `template`, in this context.
+    /// Returns a promise of the rendering of `template` in this context, as a dict
+    /// `{text, data, tags}` with tag positions in code points.
     fn render(&self, template: String) -> Promise {
         let scope = self.scope.clone();
-        Promise { inner: runtime::promise_of(async move { Value::Text(template::render(&template, &scope).await.into()) }) }
+        Promise { inner: runtime::promise_of(async move {
+            let rendering = template::render(template, &scope).await;
+            Value::Namespace(rendering.to_namespace(char_offset))
+        }) }
     }
 }
 

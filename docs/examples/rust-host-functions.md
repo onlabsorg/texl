@@ -51,7 +51,7 @@ fn main() {
     let before = Scope::live_count();
     let source = r#"<% texl.import("lib/math.texl") ~> (lib -> lib.data.add2 40) %>"#;
     let Value::Namespace(doc) = block_on(engine.render("mem://app/main.texl", source)) else { unreachable!() };
-    println!("{:?}", doc.get("rendering"));
+    println!("{:?}", doc.get("text"));
     drop(doc);
     gc::collect();
     println!("leaked scopes: {}", Scope::live_count() - before);

@@ -32,12 +32,19 @@ class Undefined:
     """A Swan undefined value: the result of an invalid operation, such as ``"a" - 1``.
 
     Its attributes are the members of ``undef.inspect`` in Swan; those that do
-    not apply to its ``type`` are ``None``. An ``Undefined`` is falsy, and
-    passing it back to Swan gives the original undefined value.
+    not apply to its ``type`` are ``None``. ``pos`` is in code points. An
+    ``Undefined`` is falsy, and passing it back to Swan gives the original
+    undefined value.
     """
 
     @property
     def type(self) -> str: ...
+    @property
+    def description(self) -> str: ...
+    @property
+    def uri(self) -> str | None: ...
+    @property
+    def cause(self) -> Undefined | None: ...
     @property
     def op(self) -> str | None: ...
     @property

@@ -12,7 +12,7 @@ awaitable of it. To fail, it raises an exception.
 
 ```python
 templates = {
-    "mem://docs/greeting.texl": 'Hello <% reader %>! <% texl.import("footer.texl") ~> (doc -> doc.rendering) %>',
+    "mem://docs/greeting.texl": 'Hello <% reader %>! <% texl.import("footer.texl") ~> (doc -> doc.text) %>',
     "mem://docs/footer.texl": "Bye.",
 }
 
@@ -61,7 +61,7 @@ memory = Cached(load_memory)
 engine.add_loader("mem", memory)
 for _ in range(3):
     doc = await engine.load("mem://docs/greeting.texl")
-print(doc.rendering)       # Hello Ada! Bye.
+print(doc.text)       # Hello Ada! Bye.
 print(memory.calls)        # 2
 ```
 
@@ -102,9 +102,9 @@ With `site/parts/welcome.texl` containing `Welcome, <% reader %>!` and a line
 break, and a file `secret.txt` next to `site`:
 
 ```python
-source = '<% texl.import("parts/welcome.texl") ~> (d -> d.rendering) %><% texl.import("../secret.txt") ~> (d -> d.source ; "(refused)") %>'
+source = '<% texl.import("parts/welcome.texl") ~> (d -> d.text) %><% texl.import("../secret.txt") ~> (d -> d.source ; "(refused)") %>'
 doc = await safe.render("page.texl", source)
-print(doc.rendering)
+print(doc.text)
 ```
 
 ```text

@@ -37,7 +37,7 @@ class SampleTest(unittest.IsolatedAsyncioTestCase):
         expected = (FIXTURES / "sample.expected.txt").read_text(encoding="utf-8")
         self.maxDiff = None
         self.assertIsNotNone(doc)
-        self.assertEqual(doc.rendering, expected)
+        self.assertEqual(doc.text, expected)
 
     async def test_sample_document_fields(self):
         doc = await self.create_engine().load(FIXTURES / "sample.texl")
@@ -53,8 +53,8 @@ class SampleTest(unittest.IsolatedAsyncioTestCase):
         doc = await self.create_engine().load(self.server.origin + "/sample.texl")
         self.assertIsNotNone(doc)
         self.assertEqual(doc.uri, self.server.origin + "/sample.texl")
-        self.assertIn("(not visible). It imports \"signature.texl\" from its own", doc.rendering)
-        self.assertIn("fmt.plural(3, \"apple\")         -> 3 apples", doc.rendering)
+        self.assertIn("(not visible). It imports \"signature.texl\" from its own", doc.text)
+        self.assertIn("fmt.plural(3, \"apple\")         -> 3 apples", doc.text)
 
 
 if __name__ == "__main__":

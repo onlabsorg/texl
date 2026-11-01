@@ -16,14 +16,25 @@
 //!
 //! # Documents
 //!
-//! Rendering a document produces a namespace with four fields:
+//! Rendering a document produces a namespace with five fields:
 //!
 //! | Field       | Type        | Content                                          |
 //! |-------------|-------------|--------------------------------------------------|
 //! | `uri`       | `Text`      | The normalized URL of the document               |
 //! | `source`    | `Text`      | The template source                              |
 //! | `data`      | `Namespace` | The names bound by the template                  |
-//! | `rendering` | `Text`      | The rendered text                                |
+//! | `text`      | `Text`      | The rendered text                                |
+//! | `tags`      | `List`      | One namespace per tag, in source order           |
+//!
+//! Each item of `tags` is a namespace `{start, end, out_start, out_end,
+//! value}` (see [`template::Tag`]): the byte span of the tag in `source`
+//! (from `<%` to after `%>`), the byte span of its text in `text`, and the
+//! value that was rendered. Tags that render nothing, such as assignments,
+//! are included, so a host can find an undefined value whatever its tag
+//! renders. Undefined values made by the document carry its URL and
+//! source, with positions as byte offsets in `source`
+//! ([`swan_core::source`]). A document holds every tag value as long as it
+//! lives; the values are freed with it.
 //!
 //! The `data` field holds every name the template bound, with `=`, `:`,
 //! `bind` or `label`, so a document can act as a library of values and
@@ -72,9 +83,9 @@
 //!     }
 //! }));
 //!
-//! let source = r#"<% texl.import("greeting.texl") ~> (doc -> doc.rendering) %>"#;
+//! let source = r#"<% texl.import("greeting.texl") ~> (doc -> doc.text) %>"#;
 //! let Value::Namespace(doc) = block_on(engine.render("/main.texl", source)) else { panic!() };
-//! assert_eq!(doc.get("rendering"), Value::Text("Hello Ada!".into()));
+//! assert_eq!(doc.get("text"), Value::Text("Hello Ada!".into()));
 //! # use std::{future::Future, pin::pin, task::{Context, Poll, Waker}};
 //! # fn block_on<F: Future>(fut: F) -> F::Output {
 //! #     let mut cx = Context::from_waker(Waker::noop());
@@ -95,6 +106,7 @@ use url::Url;
 
 use swan_core::builtins::root_scope;
 use swan_core::gc;
+use swan_core::source::Source;
 use swan_core::value::{BuiltinFn, Namespace, Promise, Scope, Value};
 
 use crate::helpers::{spawn, SpawnFn};
@@ -277,7 +289,7 @@ impl Engine {
     /// passes a URL of its choice, such as the path of a file in the working
     /// directory.
     ///
-    /// Returns the document namespace `{uri, source, data, rendering}` (see the
+    /// Returns the document namespace `{uri, source, data, text, tags}` (see the
     /// [module documentation](self)).
     ///
     /// # Examples
@@ -294,10 +306,10 @@ impl Engine {
     ///     }
     /// }));
     ///
-    /// let source = r#"Hello <% texl.import("name.texl") ~> (doc -> doc.rendering) %>!"#;
+    /// let source = r#"Hello <% texl.import("name.texl") ~> (doc -> doc.text) %>!"#;
     /// let Value::Namespace(doc) = block_on(engine.render("docs/main.texl", source)) else { panic!() };
     /// assert_eq!(doc.get("uri"), Value::Text("/docs/main.texl".into()));
-    /// assert_eq!(doc.get("rendering"), Value::Text("Hello Ada!".into()));
+    /// assert_eq!(doc.get("text"), Value::Text("Hello Ada!".into()));
     /// # use std::{future::Future, pin::pin, task::{Context, Poll, Waker}};
     /// # fn block_on<F: Future>(fut: F) -> F::Output {
     /// #     let mut cx = Context::from_waker(Waker::noop());
@@ -330,7 +342,7 @@ impl Engine {
     ///
     /// # Returns
     ///
-    /// - The document namespace `{uri, source, data, rendering}` (see the
+    /// - The document namespace `{uri, source, data, text, tags}` (see the
     ///   [module documentation](self)).
     /// - `Nothing` if no loader matches the URL or the loader fails. The
     ///   document is not rendered.
@@ -345,7 +357,7 @@ impl Engine {
     /// engine.add_loader("mem", loader_fn(|_uri| async { Ok("<% x = 1 %>x is <% x %>".to_string()) }));
     ///
     /// let Value::Namespace(doc) = block_on(engine.load("mem://doc")) else { panic!() };
-    /// assert_eq!(doc.get("rendering"), Value::Text("x is 1".into()));
+    /// assert_eq!(doc.get("text"), Value::Text("x is 1".into()));
     /// assert_eq!(doc.get("uri"), Value::Text("mem://doc".into()));
     /// # use std::{future::Future, pin::pin, task::{Context, Poll, Waker}};
     /// # fn block_on<F: Future>(fut: F) -> F::Output {
@@ -387,7 +399,7 @@ impl Engine {
     /// let engine = Engine::new(None);
     /// let scope = engine.create_scope();
     /// block_on(template::render("<% x = 20 %>", &scope));
-    /// assert_eq!(block_on(template::render("x + 1 = <% x + 1 %>", &scope)), "x + 1 = 21");
+    /// assert_eq!(block_on(template::render("x + 1 = <% x + 1 %>", &scope)).text, "x + 1 = 21");
     /// # use std::{future::Future, pin::pin, task::{Context, Poll, Waker}};
     /// # fn block_on<F: Future>(fut: F) -> F::Output {
     /// #     let mut cx = Context::from_waker(Waker::noop());
@@ -421,13 +433,15 @@ impl Engine {
             .into_iter().collect();
         scope.set("texl", Value::Namespace(texl));
 
-        let rendering = template::render(source, &scope).await;
+        let rendering = template::render(Source::new(Some(url), source), &scope).await;
+        let tags = rendering.tags.iter().map(|tag| Value::Namespace(tag.to_namespace())).collect();
 
         let doc: Namespace = [
             ("uri", Value::Text(url.into())),
             ("source", Value::Text(source.into())),
-            ("data", Value::Namespace(scope.namespace())),
-            ("rendering", Value::Text(rendering.into())),
+            ("data", Value::Namespace(rendering.data)),
+            ("text", Value::Text(rendering.text.into())),
+            ("tags", Value::list(tags)),
         ].into_iter().collect();
         Value::Namespace(doc)
     }
@@ -492,6 +506,45 @@ impl Engine {
 
         Value::Promise(doc)
     }
+}
+
+/// The members of a document namespace (see the [module documentation](self)).
+const DOCUMENT_MEMBERS: [&str; 5] = ["data", "source", "tags", "text", "uri"];
+
+/// True if `ns` has exactly the members of a document: `uri`, `source`,
+/// `data`, `text` and `tags`.
+pub fn is_document(ns: &Namespace) -> bool {
+    ns.names() == DOCUMENT_MEMBERS
+}
+
+/// Returns a copy of the document `doc` whose tag positions are converted
+/// with `convert(text, byte_offset)`: `start` and `end` against `source`,
+/// `out_start` and `out_end` against `text`. Bindings use it to give hosts
+/// positions in their own unit, with [`swan_core::source::utf16_offset`] or
+/// [`swan_core::source::char_offset`]. Returns `None` if `doc` is not a
+/// document.
+pub fn convert_tag_positions(doc: &Namespace, convert: impl Fn(&str, usize) -> usize) -> Option<Namespace> {
+    if !is_document(doc) { return None; }
+    let (Value::Text(source), Value::Text(text), Value::List(tags)) =
+        (doc.get("source"), doc.get("text"), doc.get("tags")) else { return None };
+    let conv = |ns: &Namespace, name: &str, against: &str| match ns.get(name) {
+        Value::Numb(n) => Value::Numb(convert(against, n as usize) as f64),
+        other => other,
+    };
+    let tags: Vec<Value> = tags.iter().map(|tag| match tag {
+        Value::Namespace(t) => {
+            let mut t = t.clone();
+            t.insert("start", conv(&t, "start", &source));
+            t.insert("end", conv(&t, "end", &source));
+            t.insert("out_start", conv(&t, "out_start", &text));
+            t.insert("out_end", conv(&t, "out_end", &text));
+            Value::Namespace(t)
+        }
+        other => other.clone(),
+    }).collect();
+    let mut doc = doc.clone();
+    doc.insert("tags", Value::list(tags));
+    Some(doc)
 }
 
 /// Resolves `uri` against `base_url` (the URL of the importing document) and normalizes it.
@@ -586,7 +639,7 @@ mod tests {
 
     /// The rendering of a document namespace
     fn rendering(doc: Value) -> String {
-        match unwrap_namespace(doc).get("rendering") {
+        match unwrap_namespace(doc).get("text") {
             Value::Text(text) => text.to_string(),
             other => panic!("Expected Text, got {:?}", other),
         }
@@ -620,7 +673,7 @@ mod tests {
         (engine, requested)
     }
 
-    const RENDERING: &str = "~> (ns -> ns.rendering)";
+    const RENDERING: &str = "~> (ns -> ns.text)";
 
     // --- Tests ---
 
@@ -638,7 +691,7 @@ mod tests {
 
         assert_eq!(ns.get("uri"), Value::Text("/docs/main.texl".into()));
         assert_eq!(ns.get("source"), Value::Text("<% x = 1 %>x is <% x %>".into()));
-        assert_eq!(ns.get("rendering"), Value::Text("x is 1".into()));
+        assert_eq!(ns.get("text"), Value::Text("x is 1".into()));
         assert_eq!(unwrap_namespace(ns.get("data")).get("x"), Value::Numb(1.0));
     }
 
@@ -700,7 +753,7 @@ mod tests {
         let ns = unwrap_namespace(load_result);
 
         assert_eq!(ns.get("uri"), Value::Text("/math.texl".into()));
-        assert_eq!(ns.get("rendering"), Value::Text("Result is 50".into()));
+        assert_eq!(ns.get("text"), Value::Text("Result is 50".into()));
 
         // Ensure the document data contains the assignments
         let doc_data = unwrap_namespace(ns.get("data"));
@@ -716,10 +769,10 @@ mod tests {
         let source = block_on(engine.fetch("/a/main.texl")).unwrap();
         let rendered = unwrap_namespace(block_on(engine.render("/a/main.texl", &source)));
 
-        for field in ["uri", "source", "rendering"] {
+        for field in ["uri", "source", "text"] {
             assert_eq!(loaded.get(field), rendered.get(field));
         }
-        assert_eq!(rendered.get("rendering"), Value::Text("main lib".into()));
+        assert_eq!(rendered.get("text"), Value::Text("main lib".into()));
         assert_eq!(unwrap_namespace(rendered.get("data")).get("x"), Value::Numb(2.0));
     }
 
@@ -772,7 +825,7 @@ mod tests {
         let d_of = |name: &str| unwrap_namespace(data(a_data.get(name)).get("d"));
 
         assert!(d_of("b").ptr_eq(&d_of("c")));
-        assert_eq!(d_of("b").get("rendering"), Value::Text("D".into()));
+        assert_eq!(d_of("b").get("text"), Value::Text("D".into()));
         assert_eq!(requested.borrow().iter().filter(|url| *url == "/d.texl").count(), 1);
     }
 
@@ -811,7 +864,7 @@ mod tests {
         let mut renderings = vec![rendering(a_data.get("b")), rendering(a_data.get("c"))];
         renderings.sort();
 
-        assert_eq!(renderings, vec!["[[Namespace of 4]]", "[[Undefined]]"]);
+        assert_eq!(renderings, vec!["[[Namespace of 5]]", "[[Undefined]]"]);
     }
 
     #[test]
@@ -902,11 +955,11 @@ mod tests {
         let get = data(doc).get("get");
         let call = || block_on(async {
             let Value::Promise(p) = swan_core::evaluator::eval_apply(get.clone(), Value::Nothing, 0) else { panic!() };
-            crate::template::render("<% p %>", &{ let s = Scope::new(); s.set("p", Value::Promise(p)); s }).await
+            crate::template::render("<% p %>", &{ let s = Scope::new(); s.set("p", Value::Promise(p)); s }).await.text
         });
 
-        assert_eq!(call(), "[[Namespace of 4]]");
-        assert_eq!(call(), "[[Namespace of 4]]");
+        assert_eq!(call(), "[[Namespace of 5]]");
+        assert_eq!(call(), "[[Namespace of 5]]");
         assert_eq!(*requested.borrow(), vec!["/lib.texl", "/lib.texl"]);
     }
 
@@ -1056,4 +1109,95 @@ mod tests {
         assert_eq!(rendering(block_on(engine.render("/main.texl", &main))), "[][]");
         assert_eq!(*requested.borrow(), vec!["/missing.texl", "/missing.texl"]);
     }
+
+    // --- Tags and undefined values ---
+
+    /// The `tags` field of a document namespace, as namespaces
+    fn tags(doc: &Value) -> Vec<Namespace> {
+        let Value::Namespace(ns) = doc else { panic!() };
+        let Value::List(items) = ns.get("tags") else { panic!("no tags") };
+        items.iter().map(|t| unwrap_namespace(t.clone())).collect()
+    }
+
+    fn numb(ns: &Namespace, name: &str) -> usize {
+        match ns.get(name) { Value::Numb(n) => n as usize, other => panic!("{name}: {other:?}") }
+    }
+
+    #[test]
+    fn test_engine_tags_spans() {
+        let source = "a<% x = 1 %>b<% x + 1 %>c<%%>";
+        let engine = Engine::new(None);
+        let doc = block_on(engine.render("/main.texl", source));
+        assert_eq!(rendering(doc.clone()), "ab2c");
+        let tags = tags(&doc);
+        assert_eq!(tags.len(), 3);
+        let spans: Vec<_> = tags.iter()
+            .map(|t| (numb(t, "start"), numb(t, "end"), numb(t, "out_start"), numb(t, "out_end")))
+            .collect();
+        assert_eq!(spans, vec![(1, 12, 1, 1), (13, 24, 2, 3), (25, 29, 4, 4)]);
+        assert_eq!(&source[1..12], "<% x = 1 %>");
+        assert_eq!(tags[0].get("value"), Value::Nothing);
+        assert_eq!(tags[1].get("value"), Value::Numb(2.0));
+    }
+
+    #[test]
+    fn test_engine_tag_rendering_nothing_keeps_its_undefined_value() {
+        let source = r#"<% y = "a" - 1 %>x"#;
+        let engine = Engine::new(None);
+        let doc = block_on(engine.render("/main.texl", source));
+        assert_eq!(rendering(doc.clone()), "x");
+        // The assignment renders nothing, but `y` holds the undefined value
+        let Value::Undefined(u) = data(doc.clone()).get("y") else { panic!() };
+        assert_eq!(u.pos(), Some(11));
+        assert_eq!(&source[11..12], "-");
+        assert_eq!(u.source().unwrap().uri.as_deref(), Some("/main.texl"));
+        assert_eq!(&*u.source().unwrap().text, source);
+        // A tag whose value is undefined renders `[[Undefined]]` and keeps the value
+        let doc = block_on(engine.render("/main.texl", r#"<% (1 %>"#));
+        assert_eq!(rendering(doc.clone()), "[[Undefined]]");
+        let Value::Undefined(u) = tags(&doc)[0].get("value") else { panic!() };
+        assert_eq!(u.describe(), "missing closing `)`");
+    }
+
+    #[test]
+    fn test_engine_positions_after_non_ascii_text() {
+        let source = r#"µ° è <% 2 * ("a" - 1) %>"#;
+        let engine = Engine::new(None);
+        let doc = block_on(engine.render("/main.texl", source));
+        let tags = tags(&doc);
+        assert_eq!(numb(&tags[0], "start"), source.find("<%").unwrap());
+        let Value::Undefined(u) = tags[0].get("value") else { panic!() };
+        let pos = u.cause().unwrap().pos().unwrap();
+        assert_eq!(&source[pos..pos + 1], "-");
+        let src = u.source().unwrap();
+        assert_eq!(src.char_offset(pos), source.chars().position(|c| c == '-').unwrap());
+    }
+
+    #[test]
+    fn test_engine_promise_tag_value_is_resolved() {
+        let (engine, _) = engine_with_docs(&[("/lib.texl", "<% z = 1 %>lib")]);
+        let doc = block_on(engine.render("/main.texl", r#"<% texl.import "lib.texl" %>"#));
+        let Value::Namespace(lib) = tags(&doc)[0].get("value") else { panic!("not resolved") };
+        assert_eq!(lib.get("text"), Value::Text("lib".into()));
+    }
+
+    #[test]
+    fn test_engine_imported_documents_have_tags_and_their_own_source() {
+        let lib = r#"è <% f = x -> x - 1 %><% "b" * 2 %>"#;
+        let (engine, _) = engine_with_docs(&[("/lib.texl", lib)]);
+        let main = r#"<% texl.import "lib.texl" ~> (l -> (bind "f" (l.data.f), l)) %><% f "z" %>"#;
+        let doc = block_on(engine.render("/main.texl", main));
+        let lib_doc = tags(&doc)[0].get("value");
+        let lib_tags = tags(&lib_doc);
+        assert_eq!(lib_tags.len(), 2);
+        assert_eq!(numb(&lib_tags[1], "start"), lib.rfind("<%").unwrap());
+        let Value::Undefined(u) = lib_tags[1].get("value") else { panic!() };
+        assert_eq!(u.source().unwrap().uri.as_deref(), Some("/lib.texl"));
+        // An error inside a function of the library points into the library
+        let v = tags(&doc)[1].get("value"); let Value::Undefined(u) = v else { panic!("{v:?}") };
+        assert_eq!(u.source().unwrap().uri.as_deref(), Some("/lib.texl"));
+        let pos = u.pos().unwrap();
+        assert_eq!(&lib[pos..pos + 1], "-");
+    }
+
 }

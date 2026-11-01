@@ -9,19 +9,22 @@
 //! import init, { TexlEngine } from "./pkg/texl_wasm.js";
 //! await init();
 //! const engine = new TexlEngine({ reader: "Ada" });          // globals, optional base URL
-//! const doc = await engine.load("docs/main.texl");           // {uri, source, data, rendering} or null
+//! const doc = await engine.load("docs/main.texl");           // {uri, source, data, text, tags} or null
 //! const draft = await engine.render("docs/draft.texl", "Hello <% reader %>!");
 //! ```
 //!
-//! The module also exports `collect()`, the cycle collector (see [`collect`]).
+//! The module also exports `collect()`, the cycle collector (see [`collect`]),
+//! and `isUndefined(value)` (see [`is_undefined`]).
 //!
 //! See the [JavaScript guide and API reference](https://github.com/onlabsorg/texl/blob/main/docs/api/javascript.md).
 
 mod convert;
 mod loader;
+mod undefined;
 
 use js_sys::{Array, Object, Reflect};
 use swan_core::builtins::set_builtin;
+use swan_core::source::utf16_offset;
 use swan_core::value::{BuiltinFn, Scope, Value};
 use texl_core::helpers::spawner_fn;
 use texl_core::{Engine, loader_fn, template};
@@ -33,6 +36,29 @@ use convert::{for_each_entry, js_to_swan_value, swan_value_to_js};
 #[wasm_bindgen(typescript_custom_section)]
 const TS_TYPES: &'static str = r#"
 /**
+ * A `<% ... %>` tag of a rendered template. Positions are UTF-16 code units
+ * (JavaScript string indices): `source.slice(tag.start, tag.end)` is the tag
+ * and `text.slice(tag.out_start, tag.out_end)` what it rendered.
+ */
+export interface TexlTag {
+    /** Where the tag starts in the source (at `<%`). */
+    start: number;
+    /** Where the tag ends in the source (after `%>`). */
+    end: number;
+    /** Where the text of the tag starts in the rendered text. */
+    out_start: number;
+    /** Where the text of the tag ends in the rendered text. */
+    out_end: number;
+    /**
+     * The value that was rendered, converted to JavaScript. If the expression
+     * returned a promise, it is the resolved value; promises nested in the
+     * value are not awaited. An error is a `TexlUndefined`, also when the tag
+     * renders nothing (an assignment).
+     */
+    value: any;
+}
+
+/**
  * A rendered document, as returned by `TexlEngine.load` and `TexlEngine.render`.
  */
 export interface TexlDocument {
@@ -43,7 +69,52 @@ export interface TexlDocument {
     /** The names the template assigned, converted to JavaScript values. */
     data: Record<string, any>;
     /** The rendered text. */
-    rendering: string;
+    text: string;
+    /** The tags of the source, in order, including the tags that render nothing. */
+    tags: TexlTag[];
+}
+
+/**
+ * A template rendered in a context, as returned by `TexlContext.render`.
+ */
+export interface TexlRendering {
+    /** The rendered text. */
+    text: string;
+    /** The names bound in the context when the rendering ended, including those bound before it. */
+    data: Record<string, any>;
+    /** The tags of the template, in order, including the tags that render nothing. */
+    tags: TexlTag[];
+}
+
+/**
+ * A Swan undefined value: the result of an invalid operation, such as
+ * `"a" - 1`. A frozen plain object; members that do not apply are `null`.
+ * Passing it back to Swan (`context.set`, the result of a JS function) gives
+ * the original undefined value.
+ */
+export interface TexlUndefined {
+    /** The kind of error: `"UnaryOperation"`, `"BinaryOperation"`, `"Termination"`, `"Token"`, `"Name"` or `"Value"` (made on purpose by `undef.from`). */
+    readonly type: string;
+    /** The error in plain words. */
+    readonly description: string;
+    /** The name of the failed operation. */
+    readonly op: string | null;
+    /** The operand of a failed unary operation, or the value of `undef.from`. */
+    readonly val: any;
+    /** The left operand of a failed binary operation. */
+    readonly lhv: any;
+    /** The right operand of a failed binary operation. */
+    readonly rhv: any;
+    /** The missing closing bracket of a `"Termination"` error. */
+    readonly expected: string | null;
+    /** The misplaced token of a `"Token"` error. */
+    readonly token: string | null;
+    /** Where the error is in the source of the code that made it, in UTF-16 code units; `null` for errors of built-in functions. */
+    readonly pos: number | null;
+    /** The URL of the document the error is in; `null` for built-in functions and contexts. */
+    readonly uri: string | null;
+    /** The first operand that is itself undefined: following `cause` leads to the root cause. */
+    readonly cause: TexlUndefined | null;
 }
 "#;
 
@@ -140,7 +211,7 @@ impl TexlEngine {
     /// Renders `source` as the document at `uri`, without fetching it.
     ///
     /// Imports in `source` resolve against the URL of `uri`, and an import of that URL
-    /// itself gives `undefined` (a cycle). A source with no real location, such as an
+    /// itself gives an undefined value (a cycle). A source with no real location, such as an
     /// unsaved buffer, can use any URL, for example one next to the documents it imports.
     ///
     /// The promise rejects only if `uri` cannot be resolved to a URL.
@@ -242,7 +313,10 @@ impl TexlContext {
     }
 
     /// Renders a template in this context. The names it assigns stay in the context.
-    #[wasm_bindgen(unchecked_return_type = "Promise<string>", return_description = "The rendered text.")]
+    #[wasm_bindgen(
+        unchecked_return_type = "Promise<TexlRendering>",
+        return_description = "The rendering: the text, the names of the context and the tags."
+    )]
     pub fn render(
         &self,
         #[wasm_bindgen(param_description = "The template source.")]
@@ -250,7 +324,8 @@ impl TexlContext {
     ) -> js_sys::Promise {
         let scope = self.scope.clone();
         wasm_bindgen_futures::future_to_promise(async move {
-            Ok(JsValue::from_str(&template::render(&template, &scope).await))
+            let rendering = template::render(template, &scope).await;
+            Ok(swan_value_to_js(&Value::Namespace(rendering.to_namespace(utf16_offset))))
         })
     }
 }
@@ -268,6 +343,15 @@ impl TexlContext {
 #[wasm_bindgen(return_description = "The number of scopes and promises it cleared.")]
 pub fn collect() -> usize {
     swan_core::gc::collect()
+}
+
+/// Tells whether `value` is a `TexlUndefined`: an undefined value that came from Swan.
+#[wasm_bindgen(js_name = isUndefined, unchecked_return_type = "value is TexlUndefined")]
+pub fn is_undefined(
+    #[wasm_bindgen(param_description = "Any value.")]
+    value: JsValue,
+) -> bool {
+    undefined::js_to_undefined(&value).is_some()
 }
 
 /// `location.href` of the current page or worker, if any.

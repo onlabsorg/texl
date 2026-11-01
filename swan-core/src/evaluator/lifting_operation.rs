@@ -80,7 +80,7 @@ mod tests {
         // Invalid operand: not a name, so the result is an Undefined lifting operation
         // that wraps the Undefined name reported by `eval_names`.
         match evaluate("$12") {
-            Value::Undefined(Undef::UnaryOperation { op, val, pos }) => {
+            Value::Undefined(Undef::UnaryOperation { op, val, pos, .. }) => {
                 assert_eq!(op, "lifting");
                 assert!(matches!(*val, Value::Undefined(Undef::Name { .. })));
                 assert_eq!(pos, 0);

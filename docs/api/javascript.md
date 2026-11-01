@@ -48,7 +48,7 @@ await init();                                  // load the WebAssembly module
 
 const engine = new TexlEngine({ user: { name: "Ada" } });
 const doc = await engine.render("hello.texl", "Hello <% user.name %>!");
-console.log(doc.rendering);                    // Hello Ada!
+console.log(doc.text);                    // Hello Ada!
 </script>
 ```
 
@@ -63,7 +63,7 @@ rendering, source and data:
 ```js
 const doc = await engine.load("templates/report.texl");
 if (doc) {
-    document.querySelector("#report").textContent = doc.rendering;
+    document.querySelector("#report").textContent = doc.text;
 }
 ```
 
@@ -123,6 +123,7 @@ The objects you pass to the engine and to contexts become Swan values:
 | array                               | `List`                                         |
 | Promise, or any object with a `then` method | `Promise`; a rejection resolves to `Nothing` |
 | function                            | `Func` (see below)                             |
+| a [`TexlUndefined`](#texlundefined) | the original `Undefined`                       |
 | other object                        | `Namespace` of its own enumerable properties   |
 
 Values that come back to JavaScript, from `context.get`, from document data
@@ -135,7 +136,8 @@ and as function arguments, are converted the other way:
 | `List`, `Tuple`          | array                                                  |
 | `Namespace`              | plain object with its members                          |
 | `Promise`                | `Promise`                                              |
-| `Func`, `Undefined`      | `undefined`                                            |
+| `Func`                   | `undefined`                                            |
+| `Undefined`              | a [`TexlUndefined`](#texlundefined) object             |
 
 ### Functions
 
@@ -147,7 +149,7 @@ const engine = new TexlEngine({
     shout: (s) => s.toUpperCase() + "!",
     add: ([a, b]) => a + b,
 });
-(await engine.render("doc.texl", '<% shout "hi" %> <% add (2, 3) %>')).rendering;   // "HI! 5"
+(await engine.render("doc.texl", '<% shout "hi" %> <% add (2, 3) %>')).text;   // "HI! 5"
 ```
 
 The return value is converted to a Swan value. If the function throws, the
@@ -171,13 +173,46 @@ write from JavaScript.
 ```js
 const context = engine.createContext({ price: 12.5 });
 await context.render("<% total = price * 4 %>");
-context.get("total");                          // 50
-await context.render("Total: <% total %>");    // "Total: 50"
+context.get("total");                              // 50
+(await context.render("Total: <% total %>")).text; // "Total: 50"
 ```
 
 A context is not a document: its templates cannot import documents, and
 `texl.import` is not defined in it. To render a source with imports, use
 [`engine.render`](#rendering-a-source).
+
+## Finding errors
+
+An invalid operation does not stop the rendering: it gives an undefined
+value, which renders as `[[Undefined]]`. The document tells you where each
+one is. Its `tags` list has one [`TexlTag`](#texltag) per `<% ... %>` tag, in
+order, including the tags that render nothing, such as assignments. Each tag
+has its span in the source (`start`, `end`), the span of its text in the
+output (`out_start`, `out_end`), and its `value`. An undefined value is a
+[`TexlUndefined`](#texlundefined): it says what went wrong (`description`),
+where (`uri`, `pos`) and why (`cause`, the operand that was already
+undefined).
+
+```js
+import init, { TexlEngine, isUndefined } from "@onlabsorg/texl";
+await init();
+const engine = new TexlEngine({ price: 12.5 });
+const source = 'Total: <% total = price * "4" %><% total %>';
+const doc = await engine.render("cart.texl", source);
+doc.text;                                      // "Total: [[Undefined]]"
+for (const tag of doc.tags) {
+    if (isUndefined(tag.value)) {
+        console.log(source.slice(tag.start, tag.end), tag.value.description);
+    }
+}
+// <% total %> cannot multiply the number `12.5` by the text `"4"`
+const err = doc.data.total;
+source.slice(err.pos, err.pos + 1);            // "*"
+```
+
+Positions are UTF-16 code units, so they index JavaScript strings directly.
+`pos` is in the source of the code that made the value: for an error in a
+function imported from another document, `uri` is that document's URL.
 
 ## Memory
 
@@ -319,7 +354,7 @@ a string message, only if `uri` cannot be resolved to a URL.
 
 ```js
 const doc = await engine.render("draft.texl", "2 + 2 = <% 2 + 2 %>");
-doc.rendering;                                 // "2 + 2 = 4"
+doc.text;                                 // "2 + 2 = 4"
 ```
 
 #### `engine.load(uri)`
@@ -341,7 +376,7 @@ resolved to a URL.
 
 ```js
 const doc = await engine.load("templates/report.texl");
-console.log(doc?.rendering ?? "not found");
+console.log(doc?.text ?? "not found");
 ```
 
 #### `engine.createContext(vars)`
@@ -430,10 +465,11 @@ engine.createContext({ b: 1, a: 2 }).names();  // ["a", "b", "texl"]
 #### `context.render(template)`
 
 ```ts
-render(template: string): Promise<string>
+render(template: string): Promise<TexlRendering>
 ```
 
-Renders a template in the context, and returns a promise of the rendered text.
+Renders a template in the context, and returns a promise of the
+[rendering](#texlrendering): the text, the names of the context and the tags.
 The names the template binds stay in the context.
 
 | Argument   | Description            |
@@ -442,7 +478,9 @@ The names the template binds stay in the context.
 
 ```js
 await context.render("<% count = 1 %>");
-await context.render("Count: <% count %>");    // "Count: 1"
+const rendering = await context.render("Count: <% count %>");
+rendering.text;                                // "Count: 1"
+rendering.tags;                                // [{start: 7, end: 18, out_start: 7, out_end: 8, value: 1}]
 ```
 
 #### `context.free()`
@@ -470,6 +508,20 @@ import { collect } from "@onlabsorg/texl";
 collect();    // 0 when there is nothing to free
 ```
 
+### `isUndefined`
+
+```ts
+function isUndefined(value: any): value is TexlUndefined
+```
+
+Tells whether a value is a [`TexlUndefined`](#texlundefined) that came from
+Swan. A copy of one (`{...u}`) is not.
+
+```js
+import { isUndefined } from "@onlabsorg/texl";
+isUndefined(doc.tags[0].value);    // true if the first tag gave an error
+```
+
 ### `TexlDocument`
 
 ```ts
@@ -477,7 +529,8 @@ interface TexlDocument {
     uri: string;
     source: string;
     data: Record<string, any>;
-    rendering: string;
+    text: string;
+    tags: TexlTag[];
 }
 ```
 
@@ -488,9 +541,110 @@ A rendered document, as returned by `engine.load` and `engine.render`.
 | `uri`       | The URL of the document.                                           |
 | `source`    | The template source.                                               |
 | `data`      | The names the document's tags bound, [converted](#globals-and-context-values) to JavaScript values. Functions are `undefined`. |
-| `rendering` | The rendered text.                                                 |
+| `text`      | The rendered text.                                                 |
+| `tags`      | The [tags](#texltag) of the source, in order, including the tags that render nothing. |
 
 ```js
 const doc = await engine.load("settings.texl");
-console.log(doc.data.title, doc.rendering);
+console.log(doc.data.title, doc.text);
+```
+
+An imported document, in `data` or in a tag value, has the same members.
+
+### `TexlRendering`
+
+```ts
+interface TexlRendering {
+    text: string;
+    data: Record<string, any>;
+    tags: TexlTag[];
+}
+```
+
+A template rendered in a context, as returned by
+[`context.render`](#contextrendertemplate).
+
+| Property | Description                                                          |
+|----------|----------------------------------------------------------------------|
+| `text`   | The rendered text.                                                   |
+| `data`   | The names bound in the context when the rendering ended, including those bound before it. |
+| `tags`   | The [tags](#texltag) of the template, in order, including the tags that render nothing. |
+
+### `TexlTag`
+
+```ts
+interface TexlTag {
+    start: number;
+    end: number;
+    out_start: number;
+    out_end: number;
+    value: any;
+}
+```
+
+A `<% ... %>` tag of a rendered template. Positions are UTF-16 code units:
+`source.slice(tag.start, tag.end)` is the tag, and
+`text.slice(tag.out_start, tag.out_end)` is what it rendered.
+
+| Property    | Description                                                    |
+|-------------|----------------------------------------------------------------|
+| `start`     | Where the tag starts in the source (at `<%`).                  |
+| `end`       | Where the tag ends in the source (after `%>`).                 |
+| `out_start` | Where the text of the tag starts in the rendered text.         |
+| `out_end`   | Where the text of the tag ends in the rendered text.           |
+| `value`     | The value that was rendered. If the expression returned a promise, it is the resolved value; promises nested in the value, such as tuple items, are not awaited. An error is a [`TexlUndefined`](#texlundefined), also when the tag renders nothing. |
+
+A document keeps the values of all its tags as long as it lives.
+
+### `TexlUndefined`
+
+```ts
+interface TexlUndefined {
+    readonly type: string;
+    readonly description: string;
+    readonly op: string | null;
+    readonly val: any;
+    readonly lhv: any;
+    readonly rhv: any;
+    readonly expected: string | null;
+    readonly token: string | null;
+    readonly pos: number | null;
+    readonly uri: string | null;
+    readonly cause: TexlUndefined | null;
+}
+```
+
+A Swan undefined value: the result of an invalid operation, such as
+`"a" - 1`. It is a frozen plain object, with the members of `undef.inspect`
+in Swan; those that do not apply are `null`. Passing it back to Swan (with
+`context.set`, or as the result of a JavaScript function) gives the original
+undefined value.
+
+| Property      | Description                                                  |
+|---------------|--------------------------------------------------------------|
+| `type`        | The kind of error (see the table below).                     |
+| `description` | The error in plain words, such as ``cannot add the text `"a"` and the number `1` ``. |
+| `op`          | The name of the failed operation, such as `"subtraction"`.   |
+| `val`         | The operand of a unary operation, or the value of `undef.from`. |
+| `lhv`, `rhv`  | The operands of a binary operation.                          |
+| `expected`    | The missing closing bracket of a `"Termination"` error.      |
+| `token`       | The misplaced token of a `"Token"` error.                    |
+| `pos`         | Where the error is in the source of the code that made it, in UTF-16 code units. `null` for errors of built-in functions. |
+| `uri`         | The URL of the document the error is in. `null` for built-in functions and for templates rendered in a context. |
+| `cause`       | The first operand (or tuple item) that is itself undefined: following `cause` leads to the root cause. |
+
+| `type`              | Meaning                                          |
+|---------------------|--------------------------------------------------|
+| `"UnaryOperation"`  | operation `op` failed on the operand `val`       |
+| `"BinaryOperation"` | operation `op` failed on `lhv` and `rhv`         |
+| `"Termination"`     | the closing bracket `expected` is missing        |
+| `"Token"`           | a token is in the wrong place                    |
+| `"Name"`            | a name was expected                              |
+| `"Value"`           | made on purpose, by `undef.from`                 |
+
+```js
+const doc = await engine.render("doc.texl", '<% 2 * ("a" - 1) %>');
+const err = doc.tags[0].value;
+err.description;          // "cannot multiply the number `2` by an undefined value"
+err.cause.description;    // "cannot subtract the number `1` from the text `\"a\"`"
 ```

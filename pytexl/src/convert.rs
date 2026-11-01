@@ -17,7 +17,9 @@
 //! In the other direction, `Nothing` becomes `None`, integral numbers become `int` and the
 //! others `float`, lists become `list`, tuples become `tuple`, namespaces become `dict` (own
 //! bindings only), promises become [`Promise`], functions become [`Function`] and undefined
-//! values become [`Undefined`], which keeps the details of the error.
+//! values become [`Undefined`], which keeps the details of the error. Positions are converted
+//! to code points (Python string indices): the `pos` of an [`Undefined`], and the tag spans of
+//! a document namespace (see [`texl_core::engine::convert_tag_positions`]).
 
 
 use pyo3::prelude::*;
@@ -25,6 +27,7 @@ use pyo3::sync::PyOnceLock;
 use pyo3::types::{PyBool, PyDict, PyFloat, PyInt, PyList, PyString, PyTuple};
 use swan_core::evaluator::eval_apply;
 use pyo3::basic::CompareOp;
+use swan_core::source::char_offset;
 use swan_core::value::{BuiltinFn, Namespace, Undef, Value};
 
 use crate::runtime::{self, AwaitPy};
@@ -113,8 +116,9 @@ impl Function {
 ///
 /// Swan does not raise exceptions: an operation that fails produces an
 /// undefined value, which records what went wrong. Its attributes are the
-/// members of `undef.inspect` in Swan. `type` names the kind of error, and the
-/// other attributes depend on it; those that do not apply are `None`:
+/// members of `undef.inspect` in Swan. `description` explains the error in
+/// plain words, `type` names its kind, and the other attributes depend on it;
+/// those that do not apply are `None`:
 ///
 /// ===================  ================================  ==========================================
 /// `type`               Attributes                        Meaning
@@ -124,31 +128,38 @@ impl Function {
 /// `"Termination"`      `expected`, `pos`                 the closing bracket `expected` is missing
 /// `"Token"`            `token`, `pos`                    a token is in the wrong place
 /// `"Name"`             `pos`                             a name was expected
-/// `"Value"`            `val`                             created by `undef.from`
+/// `"Value"`            `val`                             made on purpose, by `undef.from`
 /// ===================  ================================  ==========================================
 ///
 /// Operands are converted to Python values; an operand that is itself
-/// undefined is an `Undefined`. `pos` is the byte offset of the error in the
-/// source expression (0 for built-in functions). An `Undefined` is falsy, and
-/// passing it back to Swan gives the original undefined value.
+/// undefined is an `Undefined`, and `cause` is the first of them, so
+/// following `cause` leads to the root cause. `pos` is the position of the
+/// error in the source of the code that made it, in code points (a Python
+/// string index); `uri` is the URL of that document. Both are `None` for
+/// errors raised by built-in functions, and `uri` is `None` for a template
+/// rendered in a context. An `Undefined` is falsy, and passing it back to
+/// Swan gives the original undefined value.
 ///
 /// Attributes:
 ///     type (str): The kind of error.
+///     description (str): The error in plain words.
 ///     op (str | None): The name of the failed operation.
 ///     val (Any): The operand of a unary operation, or the value of `undef.from`.
 ///     lhv (Any): The left operand of a binary operation.
 ///     rhv (Any): The right operand of a binary operation.
-///     pos (int | None): The position of the error in the source.
+///     pos (int | None): The position of the error in the source, in code points.
+///     uri (str | None): The URL of the document the error is in.
 ///     expected (str | None): The missing closing bracket.
 ///     token (str | None): The misplaced token.
+///     cause (Undefined | None): The first operand that is itself undefined.
 ///
 /// Example:
 ///     >>> context = pytexl.Engine().create_context()
 ///     >>> await context.render('<% err = "hello" - 1 %>')
-///     ''
+///     Rendering(text='', data={...}, tags=[...])
 ///     >>> err = context.get("err")
 ///     >>> err
-///     <pytexl.Undefined BinaryOperation op='subtraction' lhv='hello' rhv=1 pos=15>
+///     <pytexl.Undefined BinaryOperation pos=17: cannot subtract the number `1` from the text `"hello"`>
 ///     >>> err.op, err.lhv, err.rhv
 ///     ('subtraction', 'hello', 1)
 #[pyclass(unsendable, module = "pytexl", name = "Undefined")]
@@ -156,32 +167,27 @@ pub struct Undefined {
     pub inner: Undef,
 }
 
+/// The position of `undef` in code points, if it has one.
+fn char_pos(undef: &Undef) -> Option<usize> {
+    let pos = undef.pos()?;
+    Some(undef.source().map_or(pos, |src| src.char_offset(pos)))
+}
+
 impl Undefined {
-    /// The name of the kind of error and its members, in the order of `undef.inspect`.
-    fn members(&self, py: Python<'_>) -> (&'static str, Vec<(&'static str, Py<PyAny>)>) {
-        let text = |s: &str| PyString::new(py, s).into_any().unbind();
-        let pos = |p: usize| p.into_pyobject(py).unwrap().into_any().unbind();
-        match &self.inner {
-            Undef::UnaryOperation { op, val, pos: p } => {
-                ("UnaryOperation", vec![("op", text(op)), ("val", swan_to_py(py, val)), ("pos", pos(*p))])
-            }
-            Undef::BinaryOperation { op, lhv, rhv, pos: p } => (
-                "BinaryOperation",
-                vec![("op", text(op)), ("lhv", swan_to_py(py, lhv)), ("rhv", swan_to_py(py, rhv)), ("pos", pos(*p))],
-            ),
-            Undef::Termination { expected, pos: p } => {
-                ("Termination", vec![("expected", text(&expected.to_string())), ("pos", pos(*p))])
-            }
-            Undef::Token { token, pos: p } => ("Token", vec![("token", text(token)), ("pos", pos(*p))]),
-            Undef::Name { pos: p } => ("Name", vec![("pos", pos(*p))]),
-            Undef::Value(val) => ("Value", vec![("val", swan_to_py(py, val))]),
-        }
+    /// The members of `undef.inspect`, converted to Python values, with `pos` in code points.
+    fn members(&self, py: Python<'_>) -> Vec<(&'static str, Py<PyAny>)> {
+        self.inner.members().into_iter().map(|(name, value)| {
+            let value = match (name, char_pos(&self.inner)) {
+                ("pos", Some(pos)) => pos.into_pyobject(py).unwrap().into_any().unbind(),
+                _ => swan_to_py(py, &value),
+            };
+            (name, value)
+        }).collect()
     }
 
     /// The member `name`, or `None` if this kind of error has no such member.
     fn member(&self, py: Python<'_>, name: &str) -> Py<PyAny> {
-        let (_, members) = self.members(py);
-        members.into_iter().find(|(n, _)| *n == name).map(|(_, v)| v).unwrap_or_else(|| py.None())
+        self.members(py).into_iter().find(|(n, _)| *n == name).map(|(_, v)| v).unwrap_or_else(|| py.None())
     }
 }
 
@@ -189,8 +195,14 @@ impl Undefined {
 impl Undefined {
     /// str: The kind of error, such as ``"BinaryOperation"``.
     #[getter(r#type)]
-    fn kind(&self, py: Python<'_>) -> &'static str {
-        self.members(py).0
+    fn kind(&self) -> &'static str {
+        self.inner.kind()
+    }
+
+    /// str: The error in plain words, such as ``"cannot add the text `"a"` and the number `1`"``.
+    #[getter]
+    fn description(&self) -> String {
+        self.inner.describe()
     }
 
     /// str | None: The name of the failed operation, such as ``"subtraction"``.
@@ -217,10 +229,16 @@ impl Undefined {
         self.member(py, "rhv")
     }
 
-    /// int | None: The byte offset of the error in the source expression.
+    /// int | None: The position of the error in the source, in code points.
     #[getter]
-    fn pos(&self, py: Python<'_>) -> Py<PyAny> {
-        self.member(py, "pos")
+    fn pos(&self) -> Option<usize> {
+        char_pos(&self.inner)
+    }
+
+    /// str | None: The URL of the document the error is in.
+    #[getter]
+    fn uri(&self) -> Option<String> {
+        self.inner.source().and_then(|s| s.uri.as_ref()).map(|u| u.to_string())
     }
 
     /// str | None: The missing closing bracket of a ``"Termination"`` error.
@@ -235,19 +253,24 @@ impl Undefined {
         self.member(py, "token")
     }
 
+    /// Undefined | None: The first operand that is itself undefined, the cause of this error.
+    #[getter]
+    fn cause(&self) -> Option<Undefined> {
+        self.inner.cause().map(|u| Undefined { inner: u.clone() })
+    }
+
     /// Returns the details of the error as a dict, like ``undef.inspect`` in Swan.
     ///
     /// Returns:
-    ///     dict[str, Any]: The ``type`` of the error and the members that apply to it.
+    ///     dict[str, Any]: The ``type`` and ``description`` of the error and the
+    ///     members that apply to it; ``pos`` is in code points.
     ///
     /// Example:
     ///     >>> err.inspect()
-    ///     {'type': 'BinaryOperation', 'op': 'subtraction', 'lhv': 'hello', 'rhv': 1, 'pos': 15}
+    ///     {'type': 'BinaryOperation', 'description': 'cannot subtract the number `1` from the text `"hello"`', 'op': 'subtraction', 'lhv': 'hello', 'rhv': 1, 'pos': 17}
     fn inspect<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
-        let (kind, members) = self.members(py);
         let dict = PyDict::new(py);
-        dict.set_item("type", kind)?;
-        for (name, value) in members {
+        for (name, value) in self.members(py) {
             dict.set_item(name, value)?;
         }
         Ok(dict)
@@ -269,14 +292,9 @@ impl Undefined {
         }
     }
 
-    fn __repr__(&self, py: Python<'_>) -> PyResult<String> {
-        let (kind, members) = self.members(py);
-        let mut repr = format!("<pytexl.Undefined {kind}");
-        for (name, value) in members {
-            repr.push_str(&format!(" {name}={}", value.bind(py).repr()?));
-        }
-        repr.push('>');
-        Ok(repr)
+    fn __repr__(&self) -> String {
+        let pos = char_pos(&self.inner).map(|p| format!(" pos={p}")).unwrap_or_default();
+        format!("<pytexl.Undefined {}{pos}: {}>", self.inner.kind(), self.inner.describe())
     }
 }
 
@@ -394,6 +412,9 @@ pub fn swan_to_py(py: Python<'_>, value: &Value) -> Py<PyAny> {
             PyTuple::new(py, items).map(Bound::into_any)
         }
         Value::Namespace(ns) => {
+            // A document gets its tag positions in code points
+            let converted = texl_core::engine::convert_tag_positions(ns, char_offset);
+            let ns = converted.as_ref().unwrap_or(ns);
             // Namespaces are immutable values built from their members, so they cannot contain themselves
             let dict = PyDict::new(py);
             let mut result = Ok(());

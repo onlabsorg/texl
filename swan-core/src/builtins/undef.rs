@@ -46,45 +46,13 @@ fn undef_inspect(val: Value) -> Value {
     }
 }
 
-/// Helper function to convert an `Undef` enum into a `Value::Namespace`,
-/// recursively processing any nested `Value` operands.
+/// Converts an `Undef` into a namespace of its members (see
+/// [`Undef::members`]), inspecting nested undefined operands recursively.
 fn inspect_undef(undef: &Undef) -> Value {
     let mut ns = Namespace::new();
-
-    match undef {
-        Undef::UnaryOperation { op, val, pos } => {
-            ns.insert("type", Value::Text("UnaryOperation".into()));
-            ns.insert("op", Value::Text((*op).into()));
-            ns.insert("val", inspect_value(val));
-            ns.insert("pos", Value::Numb(*pos as f64));
-        }
-        Undef::BinaryOperation { op, lhv, rhv, pos } => {
-            ns.insert("type", Value::Text("BinaryOperation".into()));
-            ns.insert("op", Value::Text((*op).into()));
-            ns.insert("lhv", inspect_value(lhv));
-            ns.insert("rhv", inspect_value(rhv));
-            ns.insert("pos", Value::Numb(*pos as f64));
-        }
-        Undef::Termination { expected, pos } => {
-            ns.insert("type", Value::Text("Termination".into()));
-            ns.insert("expected", Value::Text(expected.to_string().into()));
-            ns.insert("pos", Value::Numb(*pos as f64));
-        }
-        Undef::Token { token, pos } => {
-            ns.insert("type", Value::Text("Token".into()));
-            ns.insert("token", Value::Text(token.as_str().into()));
-            ns.insert("pos", Value::Numb(*pos as f64));
-        }
-        Undef::Name { pos } => {
-            ns.insert("type", Value::Text("Name".into()));
-            ns.insert("pos", Value::Numb(*pos as f64));
-        }
-        Undef::Value(val) => {
-            ns.insert("type", Value::Text("Value".into()));
-            ns.insert("val", inspect_value(val));
-        }
+    for (name, val) in undef.members() {
+        ns.insert(name, inspect_value(&val));
     }
-
     Value::Namespace(ns)
 }
 

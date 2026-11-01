@@ -10,7 +10,7 @@ from pathlib import Path
 import pytexl
 from support import FIXTURES, FileServer
 
-RENDERING = "~> (doc -> doc.rendering)"
+RENDERING = "~> (doc -> doc.text)"
 
 
 def memory_engine(docs, scheme="mem"):
@@ -29,7 +29,7 @@ def memory_engine(docs, scheme="mem"):
 
 async def render(engine, source, uri="mem://host/main.texl"):
     """Renders `source` as the document at `uri` and returns the rendered text."""
-    return (await engine.render(uri, source)).rendering
+    return (await engine.render(uri, source)).text
 
 
 class BaseUrlTest(unittest.TestCase):
@@ -60,7 +60,7 @@ class RenderTest(unittest.IsolatedAsyncioTestCase):
         self.assertIsInstance(doc, pytexl.Document)
         self.assertEqual(doc.uri, "mem://host/docs/main.texl")
         self.assertEqual(doc.source, "<% x = 10 %>Hello <% x + 20 %>!")
-        self.assertEqual(doc.rendering, "Hello 30!")
+        self.assertEqual(doc.text, "Hello 30!")
         self.assertEqual(doc.data["x"], 10)
 
     async def test_render_accepts_paths(self):
@@ -70,7 +70,7 @@ class RenderTest(unittest.IsolatedAsyncioTestCase):
         engine = pytexl.Engine(base_url="http://127.0.0.1:1/")
         doc = await engine.render(Path("partials/new.texl"), '<% texl.import("signature.texl") ~> (doc -> doc.uri) %>')
         self.assertEqual(doc.uri, (FIXTURES / "partials" / "new.texl").as_uri())
-        self.assertEqual(doc.rendering, (FIXTURES / "partials" / "signature.texl").as_uri())
+        self.assertEqual(doc.text, (FIXTURES / "partials" / "signature.texl").as_uri())
 
     async def test_render_of_an_invalid_uri_raises(self):
         with self.assertRaises(ValueError):
@@ -91,8 +91,8 @@ class RenderTest(unittest.IsolatedAsyncioTestCase):
         engine = pytexl.Engine()
         context = engine.create_context()
         engine.set("late", "here")
-        self.assertEqual(await context.render("[<% late %>]"), "[]")
-        self.assertEqual(await engine.create_context().render("<% late %>"), "here")
+        self.assertEqual((await context.render("[<% late %>]")).text, "[]")
+        self.assertEqual((await engine.create_context().render("<% late %>")).text, "here")
 
     async def test_render_starts_from_a_fresh_scope(self):
         engine = pytexl.Engine()
@@ -103,7 +103,7 @@ class RenderTest(unittest.IsolatedAsyncioTestCase):
     async def test_bind_is_global_to_the_document(self):
         engine = pytexl.Engine()
         doc = await engine.render("mem://a", '<% (() -> bind "shared" 7)() %><% shared %>')
-        self.assertEqual(doc.rendering, "7")
+        self.assertEqual(doc.text, "7")
         self.assertEqual(doc.data["shared"], 7)  # bound in the document scope, like a top-level `=`
         self.assertEqual(await render(engine, "[<% shared %>]"), "[]")
 
@@ -205,7 +205,7 @@ class LoadTest(unittest.IsolatedAsyncioTestCase):
         self.assertIsInstance(doc, pytexl.Document)
         self.assertEqual(doc.uri, "mem://doc")
         self.assertEqual(doc.source, "<% x = 6 %>x * 7 = <% x * 7 %>")
-        self.assertEqual(doc.rendering, "x * 7 = 42")
+        self.assertEqual(doc.text, "x * 7 = 42")
         self.assertEqual(doc.data["x"], 6)
         self.assertIn("texl", doc.data)
 
@@ -236,8 +236,8 @@ class LoadTest(unittest.IsolatedAsyncioTestCase):
         engine, _ = memory_engine({"mem://host/main.texl": f'main <% texl.import("lib.texl") {RENDERING} %>', "mem://host/lib.texl": "lib"})
         loaded = await engine.load("mem://host/main.texl")
         rendered = await engine.render("mem://host/main.texl", await engine.fetch("mem://host/main.texl"))
-        self.assertEqual((loaded.uri, loaded.source, loaded.rendering), (rendered.uri, rendered.source, rendered.rendering))
-        self.assertEqual(loaded.rendering, "main lib")
+        self.assertEqual((loaded.uri, loaded.source, loaded.text), (rendered.uri, rendered.source, rendered.text))
+        self.assertEqual(loaded.text, "main lib")
 
     async def test_documents_are_not_cached_across_renders(self):
         docs = {"mem://host/lib.texl": "first"}
@@ -246,7 +246,7 @@ class LoadTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(await render(engine, source), "first")
         docs["mem://host/lib.texl"] = "second"
         self.assertEqual(await render(engine, source), "second")
-        self.assertEqual((await engine.load("mem://host/lib.texl")).rendering, "second")
+        self.assertEqual((await engine.load("mem://host/lib.texl")).text, "second")
         self.assertEqual(requested, ["mem://host/lib.texl"] * 3)
 
     async def test_load_reads_local_files(self):
@@ -254,14 +254,14 @@ class LoadTest(unittest.IsolatedAsyncioTestCase):
             path = Path(folder) / "my doc.texl"
             path.write_text("<% 1 + 2 %> é", encoding="utf-8")
             doc = await pytexl.Engine().load(path)
-        self.assertEqual(doc.rendering, "3 é")
+        self.assertEqual(doc.text, "3 é")
         self.assertTrue(doc.uri.endswith("/my%20doc.texl"))
 
     async def test_load_fetches_http_documents(self):
         with FileServer() as server:
             doc = await pytexl.Engine().load(server.origin + "/partials/counted.texl")
             missing = await pytexl.Engine().load(server.origin + "/missing.texl")
-        self.assertEqual(doc.rendering, "counted.texl has been evaluated 1 time(s)\n")
+        self.assertEqual(doc.text, "counted.texl has been evaluated 1 time(s)\n")
         self.assertIsNone(missing)
 
     async def test_document_data_functions_can_be_called(self):
@@ -276,19 +276,19 @@ class LoaderTest(unittest.IsolatedAsyncioTestCase):
         engine = pytexl.Engine()
         engine.add_loader("one", lambda uri: f"one: {uri}")
         engine.add_loader("two", lambda uri: f"two: {uri}")
-        self.assertEqual((await engine.load("one://a")).rendering, "one: one://a")
-        self.assertEqual((await engine.load("two://b")).rendering, "two: two://b")
+        self.assertEqual((await engine.load("one://a")).text, "one: one://a")
+        self.assertEqual((await engine.load("two://b")).text, "two: two://b")
         self.assertEqual(await render(engine, f'<% texl.import("two://c/d.texl") {RENDERING} %>'), "two: two://c/d.texl")
 
     async def test_schemes_are_case_insensitive(self):
         engine = pytexl.Engine()
         engine.add_loader("MEM", lambda uri: "found")
-        self.assertEqual((await engine.load("mem://a")).rendering, "found")
+        self.assertEqual((await engine.load("mem://a")).text, "found")
 
     async def test_add_loader_replaces_the_loader_of_a_scheme(self):
         engine = pytexl.Engine()
         engine.add_loader("file", lambda uri: "replaced")
-        self.assertEqual((await engine.load(FIXTURES / "sample.texl")).rendering, "replaced")
+        self.assertEqual((await engine.load(FIXTURES / "sample.texl")).text, "replaced")
 
     async def test_async_loaders(self):
         async def loader(uri):
@@ -297,7 +297,7 @@ class LoaderTest(unittest.IsolatedAsyncioTestCase):
 
         engine = pytexl.Engine()
         engine.add_loader("mem", loader)
-        self.assertEqual((await engine.load("mem://a")).rendering, "async source")
+        self.assertEqual((await engine.load("mem://a")).text, "async source")
 
     async def test_loaders_returning_a_future(self):
         engine = pytexl.Engine()
@@ -309,7 +309,7 @@ class LoaderTest(unittest.IsolatedAsyncioTestCase):
             return future
 
         engine.add_loader("mem", loader)
-        self.assertEqual((await engine.load("mem://a")).rendering, "from a future")
+        self.assertEqual((await engine.load("mem://a")).text, "from a future")
 
     async def test_failing_loaders_give_none(self):
         async def async_failure(uri):
@@ -340,7 +340,7 @@ class LoaderTest(unittest.IsolatedAsyncioTestCase):
         engine = pytexl.Engine()
         engine.add_loader("mem", flaky)
         self.assertIsNone(await engine.load("mem://a"))
-        self.assertEqual((await engine.load("mem://a")).rendering, "second attempt")
+        self.assertEqual((await engine.load("mem://a")).text, "second attempt")
 
 
 class ImportTest(unittest.IsolatedAsyncioTestCase):
@@ -354,7 +354,7 @@ class ImportTest(unittest.IsolatedAsyncioTestCase):
             }
         )
         doc = await engine.load("mem://host/docs/main.texl")
-        self.assertEqual(doc.rendering, "[main [header [footer top]]]")
+        self.assertEqual(doc.text, "[main [header [footer top]]]")
         self.assertEqual(
             requested,
             [
@@ -385,13 +385,13 @@ class ImportTest(unittest.IsolatedAsyncioTestCase):
         engine, requested = memory_engine({})
         doc = await engine.render("mem://host/main.texl", '<% me = texl.import("main.texl") %>done')
         self.assertIsInstance(doc.data["me"], pytexl.Undefined)
-        self.assertEqual(doc.rendering, "done")
+        self.assertEqual(doc.text, "done")
         self.assertEqual(requested, [])
 
     async def test_import_cycles_give_undefined(self):
         engine, _ = memory_engine({"mem://host/b.texl": '<% back = texl.import("main.texl") %>b'})
         doc = await engine.render("mem://host/main.texl", f'<% texl.import("b.texl") {RENDERING} %>')
-        self.assertEqual(doc.rendering, "b")
+        self.assertEqual(doc.text, "b")
 
     async def test_concurrent_imports_share_one_load(self):
         async def slow(uri):
@@ -412,8 +412,8 @@ class ImportTest(unittest.IsolatedAsyncioTestCase):
         engine, _ = memory_engine({"mem://lib": "<% double = x -> x * 2 %>lib"})
         main = await engine.render("mem://main", '<% doc = texl.import("mem://lib") %>')
         doc = await main.data["doc"]
-        self.assertEqual(sorted(doc), ["data", "rendering", "source", "uri"])
-        self.assertEqual(doc["rendering"], "lib")
+        self.assertEqual(sorted(doc), ["data", "source", "tags", "text", "uri"])
+        self.assertEqual(doc["text"], "lib")
         self.assertEqual(doc["data"]["double"](21), 42)
 
     async def test_import_of_a_missing_document_gives_nothing(self):
@@ -423,6 +423,51 @@ class ImportTest(unittest.IsolatedAsyncioTestCase):
     async def test_contexts_cannot_import(self):
         context = pytexl.Engine().create_context()
         self.assertEqual(context.get("texl"), {})
+
+
+class TagsTest(unittest.IsolatedAsyncioTestCase):
+    async def test_document_tags(self):
+        source = "a<% x = 1 %>b<% x + 1 %>c"
+        doc = await pytexl.Engine().render("mem://host/main.texl", source)
+        self.assertEqual(doc.text, "ab2c")
+        self.assertEqual(doc.tags, [
+            pytexl.Tag(1, 12, 1, 1, None),
+            pytexl.Tag(13, 24, 2, 3, 2),
+        ])
+        self.assertEqual(source[doc.tags[1].start:doc.tags[1].end], "<% x + 1 %>")
+
+    async def test_positions_are_code_points(self):
+        source = 'µ° è <% y = "a" - 1 %>😀 <% y %>!'
+        doc = await pytexl.Engine().render("mem://host/main.texl", source)
+        tag = doc.tags[1]
+        self.assertEqual(source[tag.start:tag.end], "<% y %>")
+        self.assertEqual(doc.text[tag.out_start:tag.out_end], "[[Undefined]]")
+        # The assignment renders nothing; the error is in `data`, with its place in the source
+        u = doc.data["y"]
+        self.assertEqual(source[u.pos], "-")
+        self.assertEqual(u.uri, "mem://host/main.texl")
+        # The same value through the second tag has the same position
+        self.assertEqual(tag.value.pos, u.pos)
+
+    async def test_imported_documents_have_their_own_tags_and_positions(self):
+        lib = 'è <% f = x -> x - 1 %>'
+        engine, _ = memory_engine({"mem://host/lib.texl": lib})
+        main = '<% texl.import "lib.texl" ~> (l -> (bind "f" (l.data.f), l)) %><% f "z" %>'
+        doc = await engine.render("mem://host/main.texl", main)
+        lib_doc = doc.tags[0].value
+        self.assertEqual(lib_doc["tags"][0]["start"], 2)
+        u = doc.tags[1].value
+        self.assertEqual(u.uri, "mem://host/lib.texl")
+        self.assertEqual(lib[u.pos], "-")
+
+    async def test_context_rendering(self):
+        context = pytexl.Engine().create_context({"a": 1})
+        rendering = await context.render("° <% b = a + 1 %><% b %>")
+        self.assertIsInstance(rendering, pytexl.Rendering)
+        self.assertEqual(rendering.text, "° 2")
+        self.assertEqual(rendering.data["b"], 2)
+        self.assertEqual(rendering.data["a"], 1)
+        self.assertEqual(rendering.tags[1], pytexl.Tag(17, 24, 2, 3, 2))
 
 
 if __name__ == "__main__":

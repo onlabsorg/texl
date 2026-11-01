@@ -9,14 +9,22 @@
 //! | array                          | `List`                                   |
 //! | Promise or other thenable      | `Promise` (a rejection gives `Nothing`)  |
 //! | function                       | `Func` taking one argument               |
+//! | `TexlUndefined` (from Swan)    | the original `Undefined`                 |
 //! | other object                   | `Namespace` of its own enumerable keys   |
 //!
 //! In the other direction, `Nothing` becomes `null`, lists and tuples become
 //! arrays, namespaces become plain objects (own bindings only), promises
-//! become JS Promises, and functions and undefined values become `undefined`.
+//! become JS Promises, functions become `undefined`, and undefined values
+//! become `TexlUndefined` objects (see [`crate::undefined`]). Positions are
+//! converted to UTF-16 code units (JS string indices): the `pos` of an
+//! undefined value, and the tag spans of a document namespace (see
+//! [`texl_core::engine::convert_tag_positions`]).
 
 use js_sys::{Array, Function, Object, Reflect};
+use swan_core::source::utf16_offset;
 use swan_core::value::{BuiltinFn, Namespace, Promise, Value};
+
+use crate::undefined::{js_to_undefined, undefined_to_js};
 use wasm_bindgen::prelude::*;
 
 /// True for native Promises and any other "thenable" (object with a callable `then`).
@@ -58,6 +66,8 @@ pub fn js_to_swan_value(val: JsValue) -> Result<Value, JsValue> {
         Ok(Value::Numb(n))
     } else if let Some(s) = val.as_string() {
         Ok(Value::Text(s.into()))
+    } else if let Some(undef) = js_to_undefined(&val) {
+        Ok(Value::Undefined(undef))
     } else if Array::is_array(&val) {
         let arr = Array::from(&val);
         let mut items = Vec::with_capacity(arr.length() as usize);
@@ -130,6 +140,9 @@ pub fn swan_value_to_js(val: &Value) -> JsValue {
             arr.into()
         }
         Value::Namespace(ns) => {
+            // A document gets its tag positions in UTF-16 code units
+            let converted = texl_core::engine::convert_tag_positions(ns, utf16_offset);
+            let ns = converted.as_ref().unwrap_or(ns);
             let obj = Object::new();
             for (k, v) in ns.iter() {
                 let _ = Reflect::set(&obj, &JsValue::from_str(k), &swan_value_to_js(v));
@@ -147,6 +160,7 @@ pub fn swan_value_to_js(val: &Value) -> JsValue {
             });
             js_promise.into()
         }
+        Value::Undefined(undef) => undefined_to_js(undef),
         _ => JsValue::UNDEFINED,
     }
 }

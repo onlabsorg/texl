@@ -110,6 +110,9 @@ pub enum Value {
         body:    Box<Node>,
         /// Scope captured at definition time.
         closure: Scope,
+        /// The source the function was defined in: its body runs with it as
+        /// the current source (see [`crate::source`]).
+        source: Option<Rc<crate::source::Source>>,
     },
 
     /// A native Rust function callable from Swan.
@@ -138,27 +141,6 @@ pub enum Value {
 
 
 impl Value {
-
-    /// Builds `Undefined` for unary operation `op` applied to `val`; `pos` is the source byte offset.
-    #[inline]
-    pub fn undef_unary(op: &'static str, val: Value, pos: usize) -> Value {
-        Value::Undefined(Undef::UnaryOperation {
-            op,
-            val: Box::new(val),
-            pos
-        })
-    }
-
-    /// Builds `Undefined` for binary operation `op` applied to `lhv` and `rhv`; `pos` is the source byte offset.
-    #[inline]
-    pub fn undef_binary(op: &'static str, lhv: Value, rhv: Value, pos: usize) -> Value {
-        Value::Undefined(Undef::BinaryOperation {
-            op,
-            lhv: Box::new(lhv),
-            rhv: Box::new(rhv),
-            pos
-        })
-    }
 
     /// Builds a `List` from `items`.
     #[inline]
