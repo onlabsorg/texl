@@ -174,12 +174,12 @@ class UndefinedTest(unittest.IsolatedAsyncioTestCase):
 
     async def test_unary_operation(self):
         u = await self.undefined("text.size 1")
-        # Built-in functions report no position
+        # A built-in's error has the position of the call: its argument
         self.assertEqual(u.inspect(), {
             "type": "UnaryOperation", "description": "`text.size` is not defined for the number `1`",
-            "op": "text.size", "val": 1,
+            "op": "text.size", "val": 1, "pos": 18,
         })
-        self.assertIsNone(u.pos)
+        self.assertEqual(u.pos, 18)  # the position of "1" in '<% u = (text.size 1) %>'
         u = await self.undefined('-"a"')
         self.assertEqual((u.type, u.val), ("UnaryOperation", "a"))
 

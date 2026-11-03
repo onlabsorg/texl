@@ -135,8 +135,9 @@ impl Function {
 /// undefined is an `Undefined`, and `cause` is the first of them, so
 /// following `cause` leads to the root cause. `pos` is the position of the
 /// error in the source of the code that made it, in code points (a Python
-/// string index); `uri` is the URL of that document. Both are `None` for
-/// errors raised by built-in functions, and `uri` is `None` for a template
+/// string index); `uri` is the URL of that document. An error of a built-in
+/// or host function is at the call that returned it. Both are `None` for
+/// values made on purpose (`undef.from`), and `uri` is `None` for a template
 /// rendered in a context. An `Undefined` is falsy, and passing it back to
 /// Swan gives the original undefined value.
 ///

@@ -109,9 +109,9 @@ export interface TexlUndefined {
     readonly expected: string | null;
     /** The misplaced token of a `"Token"` error. */
     readonly token: string | null;
-    /** Where the error is in the source of the code that made it, in UTF-16 code units; `null` for errors of built-in functions. */
+    /** Where the error is in the source of the code that made it, in UTF-16 code units (for an error of a built-in or host function, the call that returned it); `null` for values made on purpose (`undef.from`). */
     readonly pos: number | null;
-    /** The URL of the document the error is in; `null` for built-in functions and contexts. */
+    /** The URL of the document the error is in; `null` when `pos` is, and for contexts. */
     readonly uri: string | null;
     /** The first operand that is itself undefined: following `cause` leads to the root cause. */
     readonly cause: TexlUndefined | null;

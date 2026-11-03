@@ -71,7 +71,7 @@
 //! let scope = root_scope();
 //! scope.set("shout", Value::Builtin(BuiltinFn::new("shout", |arg| match arg {
 //!     Value::Text(t) => Value::Text(t.to_uppercase().into()),
-//!     other => Value::undef_unary("shout", other, 0),
+//!     other => Value::undef_unary("shout", other),
 //! })));
 //!
 //! let ast = Parser::new(Lexer::new(r#"shout "hello""#)).parse();

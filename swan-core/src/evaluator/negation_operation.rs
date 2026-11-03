@@ -22,7 +22,7 @@ use crate::value::Value;
 pub fn eval(val: Value, pos: usize) -> Value {
     match val {
         Value::Numb(n) => Value::Numb(-n),
-        other => Value::undef_unary("negation", other, pos),
+        other => Value::undef_unary_at("negation", other, pos),
     }
 }
 
@@ -68,7 +68,7 @@ mod tests {
         // Tuple with a non-numeric item: only that item becomes Undefined
         assert_eq!(evaluate("-(1, \"a\")"), Value::tuple(vec![
             Value::Numb(-1.0),
-            Value::undef_unary("negation", Value::Text("a".into()), 0),
+            Value::undef_unary_at("negation", Value::Text("a".into()), 0),
         ]));
 
         // Other types: Undefined, carrying the operator, the operand and the position.
@@ -82,7 +82,7 @@ mod tests {
                 Value::Undefined(Undef::UnaryOperation { op, val, pos, .. }) => {
                     assert_eq!(op, "negation");
                     assert_eq!(*val, operand);
-                    assert_eq!(pos, 0);
+                    assert_eq!(pos, Some(0));
                 }
                 other => panic!("expected Undefined::UnaryOperation for {src:?}, got {other:?}"),
             }

@@ -334,7 +334,7 @@ pub fn eval(node: &Node, scope: &Scope) -> Value {
                 Value::Namespace(ns) => {
                     eval(&bin.rho, &scope.subcontext(ns))
                 }
-                lhv => Value::undef_binary("subcontexting", lhv, Value::Nothing, bin.pos),
+                lhv => Value::undef_binary_at("subcontexting", lhv, Value::Nothing, bin.pos),
             })
         }
 
@@ -494,7 +494,7 @@ pub fn eval(node: &Node, scope: &Scope) -> Value {
         Node::Unclosed(leaf) => {
             Value::Undefined(Undef::Termination{
                 expected: leaf.val,
-                pos: leaf.pos,
+                pos: Some(leaf.pos),
                 expression: expression::current(),
             })
         }
@@ -503,7 +503,7 @@ pub fn eval(node: &Node, scope: &Scope) -> Value {
         Node::UnexpectedToken(leaf) => {
             Value::Undefined(Undef::Token{
                 token: leaf.val.clone(),
-                pos: leaf.pos,
+                pos: Some(leaf.pos),
                 expression: expression::current(),
             })
         }
@@ -522,13 +522,13 @@ pub fn eval(node: &Node, scope: &Scope) -> Value {
 ///
 /// The result is `Undef::BinaryOperation { op, lhv: names, rhv: Nothing, pos, .. }`.
 fn invalid_names(op: &'static str, names: Value, pos: usize) -> Value {
-    Value::undef_binary(op, names, Value::Nothing, pos)
+    Value::undef_binary_at(op, names, Value::Nothing, pos)
 }
 
 /// The `Undefined` of an assignment or labelling (`op`) evaluated in a frozen scope.
 /// The right side is not evaluated, and the bindings of the frozen scope are the left value.
 fn frozen_scope(op: &'static str, scope: &Scope, pos: usize) -> Value {
-    Value::undef_binary(op, Value::Namespace(scope.namespace()), Value::Nothing, pos)
+    Value::undef_binary_at(op, Value::Namespace(scope.namespace()), Value::Nothing, pos)
 }
 
 /// Resolves an AST node into names, without evaluating it.
@@ -571,7 +571,7 @@ fn eval_names(node: &Node) -> Value {
 
 
         // Any other value will return and undefined value
-        node => Value::Undefined(Undef::Name{ pos: node.position(), expression: expression::current() }),
+        node => Value::Undefined(Undef::Name{ pos: Some(node.position()), expression: expression::current() }),
     }
 }
 
@@ -604,7 +604,9 @@ fn eval_names(node: &Node) -> Value {
 /// (`ApplicationOp`, `MappingOp`) do it with `map_values!`.
 pub fn eval_apply(func: Value, arg: Value, pos: usize) -> Value {
     match func {
-        Value::Builtin(ref f) => f.call(arg),
+        // A built-in cannot know where it is called from: the undefined values
+        // it returns with no position get the position of the call.
+        Value::Builtin(ref f) => f.call(arg).place_undefined(pos),
 
         Value::Func { params, body, closure, expression: func_expression } => {
             let local_scope = closure.new_child();
@@ -653,7 +655,7 @@ pub fn eval_apply(func: Value, arg: Value, pos: usize) -> Value {
             }
         }
 
-        other => Value::undef_binary("application", other, arg, pos),
+        other => Value::undef_binary_at("application", other, arg, pos),
     }
 }
 
@@ -674,7 +676,7 @@ fn eval_apply_list(list: &[Value], arg: Value, pos: usize) -> Value {
             Value::Nothing
         }
         // Argument is not a number
-        other => Value::undef_binary("application", Value::list(list.to_vec()), other, pos),
+        other => Value::undef_binary_at("application", Value::list(list.to_vec()), other, pos),
     }
 }
 
@@ -696,7 +698,7 @@ fn eval_apply_text(text: &Rc<str>, arg: Value, pos: usize) -> Value {
             Value::Nothing
         }
         // Argument is not a number
-        other => Value::undef_binary("application", Value::Text(text.clone()), other, pos),
+        other => Value::undef_binary_at("application", Value::Text(text.clone()), other, pos),
     }
 }
 
@@ -708,7 +710,7 @@ fn eval_apply_namespace(ns: &Namespace, arg: Value, pos: usize) -> Value {
     match arg {
         Value::Text(t) => ns.get(&t),
         // Argument is not a string
-        other => Value::undef_binary("application", Value::Namespace(ns.clone()), other, pos),
+        other => Value::undef_binary_at("application", Value::Namespace(ns.clone()), other, pos),
     }
 }
 
@@ -833,7 +835,7 @@ mod tests {
         assert_matches!(evaluate("(x, y) -> x+y"), Value::Func{params:_, body:_, closure:_, ..});
 
         // Invalid left-hand names.
-        assert_eq!(evaluate("(x, 12) -> 2*x"), invalid_names("function_definition", Value::Undefined(Undef::Name{pos:4, expression: None}), 8));
+        assert_eq!(evaluate("(x, 12) -> 2*x"), invalid_names("function_definition", Value::Undefined(Undef::Name{pos: Some(4), expression: None}), 8));
     }
 
     #[test]
@@ -954,7 +956,7 @@ mod tests {
         assert_eq!(evaluate("(a, b) = (1, 2), a + b"), Value::Numb(3.0));
 
         // Invalid left-hand names.
-        assert_eq!(evaluate("(x, 12) = (1, 2)"), invalid_names("assignment", Value::Undefined(Undef::Name{pos:4, expression: None}), 8));
+        assert_eq!(evaluate("(x, 12) = (1, 2)"), invalid_names("assignment", Value::Undefined(Undef::Name{pos: Some(4), expression: None}), 8));
     }
 
     #[test]
@@ -976,7 +978,7 @@ mod tests {
         );
 
         // Invalid left-hand names.
-        assert_eq!(evaluate("(x, 12) : (1, 2)"), invalid_names("labelling", Value::Undefined(Undef::Name{pos:4, expression: None}), 8));
+        assert_eq!(evaluate("(x, 12) : (1, 2)"), invalid_names("labelling", Value::Undefined(Undef::Name{pos: Some(4), expression: None}), 8));
     }
 
     #[test]
@@ -1012,7 +1014,7 @@ mod tests {
                 assert_eq!(op, "subcontexting");
                 assert_eq!(*lhv, Value::Numb(10.0));
                 assert_eq!(*rhv, Value::Nothing);
-                assert_eq!(pos, 7);
+                assert_eq!(pos, Some(7));
             }
             other => panic!("expected Undefined::BinaryOperation, got {:?}", other),
         }
@@ -1237,5 +1239,77 @@ mod tests {
             other => panic!("expected Undefined, got {other:?}"),
         }
         assert!(matches!(evaluate("(1 @ 2)"), Value::Undefined(Undef::Token { .. })));
+    }
+
+    // ----- Positions of built-in errors -----
+
+    /// Evaluates `src` as an expression with origin "doc", with the built-ins
+    /// and the extra `names` defined.
+    fn evaluate_with(src: &str, names: Vec<(&str, Value)>) -> Value {
+        let scope = crate::builtins::root_scope();
+        for (name, value) in names {
+            scope.set(name, value);
+        }
+        let ast = Parser::new(Lexer::new(src)).parse();
+        let origin: Rc<dyn crate::expression::Origin> = Rc::new("doc".to_string());
+        let expression = Rc::new(crate::expression::Expression::new(src, Some(origin)));
+        expression::with_expression(Some(expression), || eval(&ast, &scope))
+    }
+
+    fn undef(val: Value) -> Undef {
+        match val {
+            Value::Undefined(u) => u,
+            other => panic!("expected Undefined, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn builtin_errors_get_the_position_of_the_call() {
+        let u = undef(evaluate_with("x = 1, math.sqrt (-1)", vec![]));
+        assert_eq!(u.describe(), "`math.sqrt` is not defined for the number `-1`");
+        assert_eq!(u.pos(), Some(17)); // the argument, as for "cannot apply" errors
+        let origin = u.expression().and_then(|e| e.origin.as_ref()).map(|o| o.to_string());
+        assert_eq!(origin.as_deref(), Some("doc"));
+
+        // `x => f` places them at the `=>`
+        assert_eq!(undef(evaluate_with("-1 => math.sqrt", vec![])).pos(), Some(3));
+
+        // a curried built-in: the call that fails
+        assert_eq!(undef(evaluate_with("text.split \",\" 5", vec![])).pos(), Some(15));
+    }
+
+    #[test]
+    fn builtin_errors_in_a_tuple_get_the_position_of_the_call() {
+        match evaluate_with("math.sqrt (-1, 4)", vec![]) {
+            Value::Tuple(items) => {
+                assert_eq!(undef(items[0].clone()).pos(), Some(10));
+                assert_eq!(items[1], Value::Numb(2.0));
+            }
+            other => panic!("expected a tuple, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn builtin_errors_keep_a_position_they_have() {
+        // An undefined argument keeps its own position; only the built-in's
+        // wrapper takes the call's.
+        let u = undef(evaluate_with("math.sqrt (1 + \"a\")", vec![]));
+        assert_eq!(u.pos(), Some(10));
+        assert_eq!(u.cause().unwrap().pos(), Some(13));
+
+        // A value made at position 0 is not "no position": a function that
+        // returns it unchanged does not move it.
+        let at_zero = undef(evaluate_with("-\"a\"", vec![]));
+        assert_eq!(at_zero.pos(), Some(0));
+        let held = Value::Undefined(at_zero);
+        let give = Value::Builtin(crate::value::BuiltinFn::new("give", move |_| held.clone()));
+        assert_eq!(undef(evaluate_with("x = 1, give 1", vec![("give", give)])).pos(), Some(0));
+    }
+
+    #[test]
+    fn host_function_errors_get_the_position_of_the_call() {
+        let fail = Value::Builtin(crate::value::BuiltinFn::new("fail", |arg| Value::undef_unary("fail", arg)));
+        let u = undef(evaluate_with("1 + fail 2", vec![("fail", fail)]));
+        assert_eq!(u.cause().unwrap().pos(), Some(9));
     }
 }

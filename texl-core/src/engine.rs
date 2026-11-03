@@ -465,9 +465,9 @@ impl Engine {
                     let imports = Weak::upgrade(&imports).unwrap_or_default();
                     engine.import(&imports, &importer, url)
                 }
-                Err(err) => Value::undef_unary("import.invalid_uri", Value::Text(err.into()), 0),
+                Err(err) => Value::undef_unary("import.invalid_uri", Value::Text(err.into())),
             },
-            other => Value::undef_unary("texl.import", other, 0),
+            other => Value::undef_unary("texl.import", other),
         }))
     }
 
@@ -479,7 +479,7 @@ impl Engine {
             if doc.0.borrow().value.is_none() {
                 // Waiting for a document that waits for the importer would never end
                 if state.reaches(&url, importer) {
-                    return Value::undef_unary("import.cycle", Value::Text(url.into()), 0);
+                    return Value::undef_unary("import.cycle", Value::Text(url.into()));
                 }
                 state.waits.entry(importer.to_string()).or_default().insert(url);
             }
@@ -1240,4 +1240,33 @@ mod tests {
         assert_eq!(loc.tag_start, Some(lib.find("<%").unwrap()));
     }
 
+    #[test]
+    fn test_engine_builtin_errors_point_to_the_call() {
+        // In the tag that calls the built-in
+        let source = "x <% n = 1, text.size n %>";
+        let engine = Engine::new(None);
+        let doc = block_on(engine.render("/main.texl", source));
+        let Value::Undefined(u) = tags(&doc)[0].get("value") else { panic!() };
+        let loc = document::locate(&u).unwrap();
+        assert_eq!(loc.uri.as_deref(), Some("/main.texl"));
+        assert_eq!(&source[loc.pos..loc.pos + 1], "n"); // the argument
+        assert_eq!(loc.pos, source.rfind('n').unwrap());
+
+        // Inside a function imported from a library: in the library
+        let lib = r#"<% f = x -> math.sqrt x %>"#;
+        let (engine, _) = engine_with_docs(&[("/lib.texl", lib)]);
+        let main = r#"<% texl.import "lib.texl" ~> (l -> (bind "f" (l.data.f), l)) %><% f (-1) %>"#;
+        let doc = block_on(engine.render("/main.texl", main));
+        let v = tags(&doc)[1].get("value"); let Value::Undefined(u) = v else { panic!("{v:?}") };
+        assert_eq!(u.describe(), "`math.sqrt` is not defined for the number `-1`");
+        let loc = document::locate(&u).unwrap();
+        assert_eq!(loc.uri.as_deref(), Some("/lib.texl"));
+        assert_eq!(loc.pos, lib.rfind('x').unwrap());
+
+        // `texl.import` errors point to the import
+        let source = r#"<% texl.import 5 %>"#;
+        let doc = block_on(Engine::new(None).render("/main.texl", source));
+        let Value::Undefined(u) = tags(&doc)[0].get("value") else { panic!() };
+        assert_eq!(document::locate(&u).unwrap().pos, source.find('5').unwrap());
+    }
 }

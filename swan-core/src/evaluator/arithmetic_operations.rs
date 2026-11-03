@@ -50,7 +50,7 @@ pub fn eval_add(lhv: Value, rhv: Value, pos: usize) -> Value {
             Value::list(v)
         }
 
-        (lhv, rhv) => Value::undef_binary("sum", lhv, rhv, pos),
+        (lhv, rhv) => Value::undef_binary_at("sum", lhv, rhv, pos),
     }
 }
 
@@ -63,7 +63,7 @@ pub fn eval_subtraction(lhv: Value, rhv: Value, pos: usize) -> Value {
     match (lhv, rhv) {
         (Value::Numb(a), Value::Numb(b)) => Value::Numb(a - b),
 
-        (lhv, rhv) => Value::undef_binary("subtraction", lhv, rhv, pos),
+        (lhv, rhv) => Value::undef_binary_at("subtraction", lhv, rhv, pos),
     }
 }
 
@@ -80,7 +80,7 @@ pub fn eval_product(lhv: Value, rhv: Value, pos: usize) -> Value {
         // Logical AND
         (Value::Bool(a), Value::Bool(b)) => Value::Bool(a && b),
 
-        (lhv, rhv) => Value::undef_binary("product", lhv, rhv, pos),
+        (lhv, rhv) => Value::undef_binary_at("product", lhv, rhv, pos),
     }
 }
 
@@ -93,7 +93,7 @@ pub fn eval_division(lhv: Value, rhv: Value, pos: usize) -> Value {
     match (lhv, rhv) {
         (Value::Numb(a), Value::Numb(b)) => Value::Numb(a / b),
 
-        (lhv, rhv) => Value::undef_binary("division", lhv, rhv, pos),
+        (lhv, rhv) => Value::undef_binary_at("division", lhv, rhv, pos),
     }
 }
 
@@ -106,7 +106,7 @@ pub fn eval_modulo(lhv: Value, rhv: Value, pos: usize) -> Value {
     match (lhv, rhv) {
         (Value::Numb(a), Value::Numb(b)) => Value::Numb(a % b),
 
-        (lhv, rhv) => Value::undef_binary("modulo", lhv, rhv, pos),
+        (lhv, rhv) => Value::undef_binary_at("modulo", lhv, rhv, pos),
     }
 }
 
@@ -119,7 +119,7 @@ pub fn eval_power(lhv: Value, rhv: Value, pos: usize) -> Value {
     match (lhv, rhv) {
         (Value::Numb(a), Value::Numb(b)) => Value::Numb(a.powf(b)),
 
-        (lhv, rhv) => Value::undef_binary("power", lhv, rhv, pos),
+        (lhv, rhv) => Value::undef_binary_at("power", lhv, rhv, pos),
     }
 }
 
@@ -156,7 +156,7 @@ mod tests {
                 assert_eq!(o, op);
                 assert_eq!(*l, lhv);
                 assert_eq!(*r, rhv);
-                assert_eq!(p, pos);
+                assert_eq!(p, Some(pos));
             }
             other => panic!("expected Undefined::BinaryOperation for {src:?}, got {other:?}"),
         }

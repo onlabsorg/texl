@@ -96,7 +96,7 @@ pub struct Location {
 }
 
 /// Where `undef` was made, or `None` if it has no position (values made by
-/// built-in functions or by `undef.from`).
+/// `undef.from`, or by a built-in function and not returned through a call).
 pub fn locate(undef: &Undef) -> Option<Location> {
     let pos = undef.pos()?;
     let expr = undef.expression()?;
@@ -145,7 +145,7 @@ pub(crate) fn undef_namespace(swan_undef: Value) -> Value {
     };
     ns.insert("inspect", Value::Builtin(BuiltinFn::new("undef.inspect", |val| match val {
         Value::Undefined(undef) => inspect(&undef),
-        other => Value::undef_unary("undef.inspect", other, 0),
+        other => Value::undef_unary("undef.inspect", other),
     })));
     Value::Namespace(ns)
 }

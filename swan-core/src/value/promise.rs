@@ -24,6 +24,7 @@ use std::fmt;
 use std::rc::Rc;
 use crate::value::Value;
 use crate::evaluator::eval_apply;
+use crate::expression::{self, Expression};
 
 /// A callback queued on a pending promise.
 ///
@@ -34,16 +35,20 @@ pub enum PromiseCallback {
     /// A Rust closure, registered with [`Promise::then`]. The cycle collector
     /// ([`crate::gc`]) cannot see the values it captures.
     Native(Rc<dyn Fn(Value) -> Value>),
-    /// A Swan callable and a source position, registered with
-    /// [`Promise::then_apply`]. The cycle collector traces the callable.
-    Apply(Value, usize),
+    /// A Swan callable, and the source position and expression of the `~>`
+    /// that registered it with [`Promise::then_apply`]. The callable runs with
+    /// that expression as the current one, whenever the promise resolves. The
+    /// cycle collector traces the callable.
+    Apply(Value, usize, Option<Rc<Expression>>),
 }
 
 impl PromiseCallback {
     fn call(&self, v: Value) -> Value {
         match self {
             PromiseCallback::Native(f) => f(v),
-            PromiseCallback::Apply(f, pos) => eval_apply(f.clone(), v, *pos),
+            PromiseCallback::Apply(f, pos, expression) => {
+                expression::with_expression(expression.clone(), || eval_apply(f.clone(), v, *pos))
+            }
         }
     }
 }
@@ -139,11 +144,12 @@ impl Promise {
     /// Like [`Promise::then`], but takes a Swan callable instead of a Rust closure.
     ///
     /// The callable `f` is applied to the resolved value via
-    /// [`eval_apply`], with `pos` as the source position used in any resulting
-    /// `Undefined` (for example, when `f` is not callable). Such an `Undefined`
-    /// result resolves the child to `Value::Nothing`.
+    /// [`eval_apply`], with `pos` (in the current expression, captured now) as
+    /// the source position used in any resulting `Undefined` (for example,
+    /// when `f` is not callable). Such an `Undefined` result resolves the
+    /// child to `Value::Nothing`.
     pub fn then_apply(&self, f: Value, pos: usize) -> Value {
-        self.chain(PromiseCallback::Apply(f, pos))
+        self.chain(PromiseCallback::Apply(f, pos, expression::current()))
     }
 
     /// Runs `callback` now if resolved, or queues it; returns the child promise.

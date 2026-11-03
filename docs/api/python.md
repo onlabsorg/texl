@@ -754,8 +754,9 @@ so an operand that is itself undefined is an `Undefined` too; `cause` is the
 first of them (or the first undefined item of a tuple operand), so following
 `cause` leads to the root cause. `pos` is the position of the error in the
 source of the code that made it, in code points, and `uri` is the URL of
-that document. Both are `None` for errors of built-in functions, and `uri`
-is `None` for a template rendered in a context. `inspect()` returns `type`,
+that document. An error of a built-in or host function is at the call that
+returned it. Both are `None` for values made on purpose (`undef.from`), and
+`uri` is `None` for a template rendered in a context. `inspect()` returns `type`,
 `description` and the attributes that apply, as a dict. `repr` shows the
 type, the position and the description.
 

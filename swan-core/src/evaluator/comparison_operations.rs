@@ -39,7 +39,7 @@ pub fn eval_not_equal_to(lhv: Value, rhv: Value) -> Value {
 fn compare(lhv: Value, rhv: Value, pos: usize, test: fn(Ordering) -> bool) -> Value {
     match lhv.partial_cmp(&rhv) {
         Some(ordering) => Value::Bool(test(ordering)),
-        None => Value::undef_binary("order", lhv, rhv, pos),
+        None => Value::undef_binary_at("order", lhv, rhv, pos),
     }
 }
 
@@ -287,7 +287,7 @@ mod tests {
         // values of unrelated types have no order: Undefined(order) carrying both operands and the operator position (byte offset 5)
         assert_eq!(
             evaluate("TRUE > 1"), 
-            Value::undef_binary("order", Value::Bool(true), Value::Numb(1.0), 5),
+            Value::undef_binary_at("order", Value::Bool(true), Value::Numb(1.0), 5),
         );
     }
 
@@ -353,7 +353,7 @@ mod tests {
         // values of unrelated types have no order: Undefined(order) carrying both operands and the operator position (byte offset 5)
         assert_eq!(
             evaluate("TRUE < 1"), 
-            Value::undef_binary("order", Value::Bool(true), Value::Numb(1.0), 5), 
+            Value::undef_binary_at("order", Value::Bool(true), Value::Numb(1.0), 5), 
         );
     }
 
@@ -419,7 +419,7 @@ mod tests {
         // values of unrelated types have no order: Undefined(order) carrying both operands and the operator position (byte offset 5)
         assert_eq!(
             evaluate("TRUE >= 1"), 
-            Value::undef_binary("order", Value::Bool(true), Value::Numb(1.0), 5),
+            Value::undef_binary_at("order", Value::Bool(true), Value::Numb(1.0), 5),
         );
     }
 
@@ -485,7 +485,7 @@ mod tests {
         // values of unrelated types have no order: Undefined(order) carrying both operands and the operator position (byte offset 5)
         assert_eq!(
             evaluate("TRUE <= 1"), 
-            Value::undef_binary("order", Value::Bool(true), Value::Numb(1.0), 5), 
+            Value::undef_binary_at("order", Value::Bool(true), Value::Numb(1.0), 5), 
         );
     }
 }

@@ -42,7 +42,7 @@ fn undef_from(val: Value) -> Value {
 fn undef_inspect(val: Value) -> Value {
     match val {
         Value::Undefined(undef) => inspect_undef(&undef),
-        other => Value::undef_unary("undef.inspect", other, 0),
+        other => Value::undef_unary("undef.inspect", other),
     }
 }
 

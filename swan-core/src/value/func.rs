@@ -35,7 +35,7 @@ use super::*;
 ///
 /// let negate = BuiltinFn::new("negate", |arg| match arg {
 ///     Value::Numb(n) => Value::Numb(-n),
-///     other => Value::undef_unary("negate", other, 0),
+///     other => Value::undef_unary("negate", other),
 /// });
 /// assert_eq!(negate.call(Value::Numb(2.0)), Value::Numb(-2.0));
 /// ```
@@ -86,7 +86,7 @@ impl BuiltinFn {
     /// let add = BuiltinFn::capturing("add", vec![Value::Numb(1.0)], |captured, arg| {
     ///     match (&captured[0], arg) {
     ///         (Value::Numb(a), Value::Numb(b)) => Value::Numb(a + b),
-    ///         (_, other) => Value::undef_unary("add", other, 0),
+    ///         (_, other) => Value::undef_unary("add", other),
     ///     }
     /// });
     /// assert_eq!(add.call(Value::Numb(2.0)), Value::Numb(3.0));
@@ -102,7 +102,8 @@ impl BuiltinFn {
     /// Invoke the built-in with the given argument.
     ///
     /// The built-in runs with no current expression (see [`crate::expression`]), so
-    /// the undefined values it makes have no position.
+    /// the undefined values it makes have no position; the evaluator gives them
+    /// the position of the call ([`Value::place_undefined`]).
     pub fn call(&self, arg: Value) -> Value {
         crate::expression::with_expression(None, || match &self.body {
             BuiltinBody::Plain(f) => f(arg),

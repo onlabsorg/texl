@@ -39,7 +39,7 @@ fn list_size(val: Value) -> Value {
     match val {
         Value::List(l) => Value::Numb(l.len() as f64),
         other => 
-            Value::undef_unary("list.size", other, 0),
+            Value::undef_unary("list.size", other),
     }
 }
 
@@ -47,7 +47,7 @@ fn list_size(val: Value) -> Value {
 fn list_enum(val: Value) -> Value {
     match val {
         Value::List(l) => Value::tuple(l.as_ref().clone()),
-        other => Value::undef_unary("list.enum", other, 0),
+        other => Value::undef_unary("list.enum", other),
     }
 }
 
@@ -59,7 +59,7 @@ fn list_reverse(val: Value) -> Value {
             rev.reverse();
             Value::list(rev)
         }
-        other => Value::undef_unary("list.reverse", other, 0),
+        other => Value::undef_unary("list.reverse", other),
     }
 }
 
@@ -70,7 +70,7 @@ fn list_find(item: Value, list: Value) -> Value {
         Value::List(l) => Value::Numb(
             l.iter().position(|x| x == &item).map_or(-1.0, |i| i as f64)
         ),
-        other => Value::undef_unary("list.find", other, 0),
+        other => Value::undef_unary("list.find", other),
     }
 }
 
@@ -81,7 +81,7 @@ fn list_rfind(item: Value, list: Value) -> Value {
         Value::List(l) => Value::Numb(
             l.iter().rposition(|x| x == &item).map_or(-1.0, |i| i as f64)
         ),
-        other => Value::undef_unary("list.rfind", other, 0),
+        other => Value::undef_unary("list.rfind", other),
     }
 }
 
@@ -110,7 +110,7 @@ fn list_head(n: Value, list: Value) -> Value {
             let end = resolve_count(*n, l.len());
             Value::list(l[..end].to_vec())
         }
-        (_, other) => Value::undef_unary("list.head", other, 0),
+        (_, other) => Value::undef_unary("list.head", other),
     }
 }
 
@@ -123,7 +123,7 @@ fn list_tail(n: Value, list: Value) -> Value {
             let start = resolve_count(*n, l.len());
             Value::list(l[start..].to_vec())
         }
-        (_, other) => Value::undef_unary("list.tail", other, 0),
+        (_, other) => Value::undef_unary("list.tail", other),
     }
 }
 

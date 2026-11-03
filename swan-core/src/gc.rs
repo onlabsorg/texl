@@ -302,7 +302,7 @@ impl Graph {
                         self.value(value, &mut edges);
                     }
                     for (callback, child) in &data.children {
-                        if let PromiseCallback::Apply(f, _) = callback {
+                        if let PromiseCallback::Apply(f, ..) = callback {
                             self.value(f, &mut edges);
                         }
                         self.value(child, &mut edges);

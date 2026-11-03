@@ -368,7 +368,13 @@ only displays. The evaluator keeps the expression it runs in a thread-local
 - a function keeps the current expression of the place it was defined, and
   its body runs with it, so an error inside a function imported from another
   document points into that document;
-- a built-in function runs with no expression: its errors have no position;
+- a built-in function runs with no expression and does not know where it is
+  called from: it makes its errors with no position
+  (`Value::undef_unary(op, val)`), and the evaluator gives each error the
+  position of the call when the built-in returns it (the argument, or the
+  `=>` of `x => f`), in the expression the call is in. An error that already
+  has a position, such as an undefined argument passed on, keeps it;
+  position `0` is a real position, not "none";
 - code parsed with `parse` runs as an expression of its own, with no origin.
 
 Texl evaluates each tag as its own expression, whose origin
@@ -404,9 +410,12 @@ Known limits:
   import. The error is not visible after it went through a promise.
 - **Unknown names are not errors.** A name that is not bound is `Nothing`,
   not `Undefined`, so a typo in a name renders as an empty text.
-- **Built-in errors have no position.** An error raised inside a built-in
-  (`math.sqrt(-1)`, `texl.import` of an invalid URI) has no `pos`; the tag
-  that contains it is the place to look.
+- **Built-in errors point to the call, not further.** An error raised
+  inside a built-in (`math.sqrt(-1)`, `texl.import` of an invalid URI) is at
+  the call that returned it. Errors inside a list or namespace that a
+  built-in returns stay with no position, as does an error made by a
+  built-in called from another built-in's code until the outer call returns
+  it.
 
 ## Memory management
 
@@ -563,7 +572,7 @@ separate process with its own limits.
 - **Positions** in `Undefined` values are byte offsets in the expression
   that made them; Texl turns them into offsets in the document (see
   [Positions and origins](#positions-and-origins)) and the hosts convert
-  them. Built-in functions report no position.
+  them. Errors of built-in functions are at the call.
 - **Recursion** uses the native stack, with no depth limit: a recursion that
   never ends stops the host program with a stack overflow instead of producing
   `Undefined`. This is a known issue.

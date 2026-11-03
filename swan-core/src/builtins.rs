@@ -250,11 +250,11 @@ fn parse_function(arg: Value) -> Value {
                     Value::Namespace(ns) => expression::with_expression(expr.clone(), || {
                         BUILTINS.with(|builtins| eval(&ast, &builtins.subcontext(ns)))
                     }),
-                    other => Value::undef_unary("eval", other, 0),
+                    other => Value::undef_unary("eval", other),
                 }
             }))
         }
-        other => Value::undef_unary("parse", other, 0),
+        other => Value::undef_unary("parse", other),
     }
 }
 
@@ -276,7 +276,7 @@ fn set_global(op: &'static str, name_arg: Value, target_scope: WeakScope, retval
     // Convert Text / tuple of Text into Name / tuple of Name
     let names = wrap_names(&name_arg);
     if matches!(names, Value::Undefined(_)) {
-        return Value::undef_unary(op, name_arg, 0);
+        return Value::undef_unary(op, name_arg);
     }
 
     Value::Builtin(BuiltinFn::new(op, move |val| {
@@ -297,12 +297,12 @@ fn wrap_names(val: &Value) -> Value {
         Value::Tuple(items) => {
             let mapped: Vec<Value> = items.iter().map(wrap_names).collect();
             if mapped.iter().any(|v| matches!(v, Value::Undefined(_))) {
-                Value::Undefined(Undef::Name { pos: 0, expression: None })
+                Value::Undefined(Undef::Name { pos: None, expression: None })
             } else {
                 Value::tuple(mapped)
             }
         }
-        _ => Value::Undefined(Undef::Name { pos: 0, expression: None }),
+        _ => Value::Undefined(Undef::Name { pos: None, expression: None }),
     }
 }
 

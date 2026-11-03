@@ -146,6 +146,11 @@ available to hosts too, but it cannot import documents.
   an error instead of silently ignoring the rest; such a tag used to show a
   value, and now shows `[[Undefined]]` and sets no names. A bracket closed
   by the wrong symbol is reported as that symbol, not as a missing bracket.
+  Errors of built-in functions (such as `math.sqrt` of a negative number or
+  a failed `texl.import`) and of the functions a host adds now point to the
+  call that produced them, where before they had no position. Rust
+  programs that add their own functions write their errors slightly
+  differently (one argument less).
 - Available: browser/JavaScript, Python, Rust.
 - The `texl` command-line tool (`texl-cli`) has been removed from the
   repository; its last release was 0.2.0 (2026-10-25), and its binaries
@@ -182,8 +187,10 @@ with it.
 ## Known limitations
 
 - An error that passes through a promise is lost: the promise holds
-  "nothing" instead. Errors raised inside built-in functions have no
-  position, and a misspelled name gives "nothing", not an error.
+  "nothing" instead. An error raised inside a built-in function points to
+  the call of that function, not to anything more precise, and errors a
+  built-in function puts inside a list or namespace have no position. A
+  misspelled name gives "nothing", not an error.
 - The memory cleaner only sees Swan's own memory. Swan values kept inside
   a host's own functions, and loops of references that pass through both
   Swan and JavaScript or Python objects, are not cleaned up.

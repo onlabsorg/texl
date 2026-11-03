@@ -162,7 +162,7 @@ async fn main() {
             let items: Vec<Value> = arg.items().collect();
             match items.as_slice() {
                 [Value::Text(t), Value::Numb(n)] => Value::Text(t.repeat(*n as usize).into()),
-                _ => Value::undef_unary("repeat", arg, 0),
+                _ => Value::undef_unary("repeat", arg),
             }
         })));
 
@@ -203,7 +203,7 @@ async fn main() {
                 tokio::time::sleep(Duration::from_millis(10)).await;
                 match arg {
                     Value::Numb(n) => Value::Numb(n * 2.0),
-                    other => Value::undef_unary("slow_double", other, 0),
+                    other => Value::undef_unary("slow_double", other),
                 }
             })
         })));
@@ -313,7 +313,11 @@ An undefined value carries an `Undef`, which explains itself:
   following it leads to the root cause;
 - `Undef::pos()` is a byte offset in `Undef::expression()`, the
   `swan_core::expression::Expression` (text and origin) of the code that
-  made the value. Both are `None` for errors of built-in functions.
+  made the value. Both are `None` for values made on purpose (`undef.from`).
+  A host function makes its errors with no position
+  (`Value::undef_unary(op, val)`, `Value::undef_binary(op, lhv, rhv)`); the
+  evaluator gives them the position of the call when the function returns
+  them.
 
 Swan knows only expressions. `template::render` and `Engine::render`
 evaluate each tag as its own expression, whose origin is a

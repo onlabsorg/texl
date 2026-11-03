@@ -28,7 +28,7 @@ pub fn eval(name: Value, scope: &Scope, pos: usize) -> Value {
         // A valid name: look it up starting from the outermost scope.
         Value::Name(n) => scope.lift(&n),
         // Not a name: report it as an undefined lifting operation.
-        other => Value::undef_unary("lifting", other, pos),
+        other => Value::undef_unary_at("lifting", other, pos),
     }
 }
 
@@ -83,7 +83,7 @@ mod tests {
             Value::Undefined(Undef::UnaryOperation { op, val, pos, .. }) => {
                 assert_eq!(op, "lifting");
                 assert!(matches!(*val, Value::Undefined(Undef::Name { .. })));
-                assert_eq!(pos, 0);
+                assert_eq!(pos, Some(0));
             }
             other => panic!("expected Undefined::UnaryOperation, got {:?}", other),
         }

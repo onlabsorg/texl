@@ -78,7 +78,7 @@ fn promise_resolve(p: Value) -> Value {
                 Value::Nothing
             },
         )),
-        other => Value::undef_binary("promise.resolve", other, Value::Nothing, 0),
+        other => Value::undef_binary("promise.resolve", other, Value::Nothing),
     }
 }
 

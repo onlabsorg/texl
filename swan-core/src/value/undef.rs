@@ -11,10 +11,12 @@ use crate::expression::{self, Expression};
 /// Why a value is undefined: the payload of [`Value::Undefined`].
 ///
 /// Positions (`pos`) are byte offsets in the text of `expression`, the code
-/// that made the value (see [`crate::expression`]). Built-in functions use
-/// position `0` and no expression, meaning "no position". Two `Undef`s are
-/// equal when they have the same variant and contents, regardless of position
-/// and expression.
+/// that made the value (see [`crate::expression`]). Built-in functions do not
+/// know where they are called from: they make values with no position
+/// (`pos: None`, no expression), and the evaluator gives them the position of
+/// the call when the built-in returns them ([`Undef::place`]). Two `Undef`s
+/// are equal when they have the same variant and contents, regardless of
+/// position and expression.
 ///
 /// [`Undef::describe`] explains the value in plain words, and
 /// [`Undef::members`] lists its details; the Swan built-in `undef.inspect`
@@ -30,8 +32,8 @@ pub enum Undef {
         op : &'static str,
         /// The operand.
         val: Box<Value>,
-        /// Source position of the operation.
-        pos: usize,
+        /// Source position of the operation, `None` if unknown.
+        pos: Option<usize>,
         /// The expression `pos` refers to.
         expression: Option<Rc<Expression>>,
     },
@@ -44,8 +46,8 @@ pub enum Undef {
         lhv: Box<Value>,
         /// The right-hand operand.
         rhv: Box<Value>,
-        /// Source position of the operation.
-        pos: usize,
+        /// Source position of the operation, `None` if unknown.
+        pos: Option<usize>,
         /// The expression `pos` refers to.
         expression: Option<Rc<Expression>>,
     },
@@ -56,7 +58,7 @@ pub enum Undef {
         /// The missing closing bracket.
         expected: char,
         /// Source position where the bracket was expected.
-        pos: usize,
+        pos: Option<usize>,
         /// The expression `pos` refers to.
         expression: Option<Rc<Expression>>,
     },
@@ -66,7 +68,7 @@ pub enum Undef {
         /// The token as written in the source.
         token: String,
         /// Source position of the token.
-        pos: usize,
+        pos: Option<usize>,
         /// The expression `pos` refers to.
         expression: Option<Rc<Expression>>,
     },
@@ -74,8 +76,8 @@ pub enum Undef {
     /// A name was expected (left of `=`, `:` or `->`, or after `$`), but
     /// another expression was found.
     Name {
-        /// Source position of the offending expression.
-        pos: usize,
+        /// Source position of the offending expression, `None` if unknown.
+        pos: Option<usize>,
         /// The expression `pos` refers to.
         expression: Option<Rc<Expression>>,
     },
@@ -135,17 +137,37 @@ impl Undef {
 
     /// The byte offset in the text of [`expression`](Self::expression) where
     /// the value was made. `None` for [`Undef::Value`], and for values made by
-    /// built-in functions (position `0`, no expression).
+    /// built-in functions that have not been given the position of their call
+    /// (see [`Undef::place`]).
     pub fn pos(&self) -> Option<usize> {
+        match self {
+            Undef::UnaryOperation { pos, .. }
+            | Undef::BinaryOperation { pos, .. }
+            | Undef::Termination { pos, .. }
+            | Undef::Token { pos, .. }
+            | Undef::Name { pos, .. } => *pos,
+            Undef::Value(_) => None,
+        }
+    }
+
+    /// Gives a value with no position the position `pos` in `expression`;
+    /// a value that has a position, and [`Undef::Value`], are left as they
+    /// are. The evaluator calls it on what a built-in function returns, with
+    /// the position of the call: a built-in cannot know where it is called
+    /// from.
+    pub fn place(&mut self, at: usize, in_expression: Option<Rc<Expression>>) {
         match self {
             Undef::UnaryOperation { pos, expression, .. }
             | Undef::BinaryOperation { pos, expression, .. }
             | Undef::Termination { pos, expression, .. }
             | Undef::Token { pos, expression, .. }
             | Undef::Name { pos, expression } => {
-                if *pos == 0 && expression.is_none() { None } else { Some(*pos) }
+                if pos.is_none() {
+                    *pos = Some(at);
+                    *expression = in_expression;
+                }
             }
-            Undef::Value(_) => None,
+            Undef::Value(_) => {}
         }
     }
 
@@ -356,31 +378,83 @@ fn a_type(val: &Value) -> String {
 
 impl Value {
 
-    /// Builds `Undefined` for unary operation `op` applied to `val`. `pos` is
-    /// the byte offset in the expression; the value takes the current
-    /// expression (see [`crate::expression`]).
+    /// Builds `Undefined` for operation `op` (usually a built-in function's
+    /// name, such as `"math.sqrt"`) applied to `val`, with no position: the
+    /// helper for built-in and host functions. The evaluator gives the value
+    /// the position of the call when the function returns it.
     #[inline]
-    pub fn undef_unary(op: &'static str, val: Value, pos: usize) -> Value {
+    pub fn undef_unary(op: &'static str, val: Value) -> Value {
         Value::Undefined(Undef::UnaryOperation {
             op,
             val: Box::new(val),
-            pos,
+            pos: None,
+            expression: None,
+        })
+    }
+
+    /// Builds `Undefined` for operation `op` applied to `lhv` and `rhv`, with
+    /// no position: the helper for built-in and host functions (see
+    /// [`Value::undef_unary`]).
+    #[inline]
+    pub fn undef_binary(op: &'static str, lhv: Value, rhv: Value) -> Value {
+        Value::Undefined(Undef::BinaryOperation {
+            op,
+            lhv: Box::new(lhv),
+            rhv: Box::new(rhv),
+            pos: None,
+            expression: None,
+        })
+    }
+
+    /// Builds `Undefined` for unary operation `op` applied to `val`, made at
+    /// byte offset `pos` of the current expression (see
+    /// [`crate::expression`]): the helper for the evaluator's operations.
+    #[inline]
+    pub fn undef_unary_at(op: &'static str, val: Value, pos: usize) -> Value {
+        Value::Undefined(Undef::UnaryOperation {
+            op,
+            val: Box::new(val),
+            pos: Some(pos),
             expression: expression::current(),
         })
     }
 
     /// Builds `Undefined` for binary operation `op` applied to `lhv` and
-    /// `rhv`. `pos` is the byte offset in the expression; the value takes the
-    /// current expression (see [`crate::expression`]).
+    /// `rhv`, made at byte offset `pos` of the current expression: the helper
+    /// for the evaluator's operations.
     #[inline]
-    pub fn undef_binary(op: &'static str, lhv: Value, rhv: Value, pos: usize) -> Value {
+    pub fn undef_binary_at(op: &'static str, lhv: Value, rhv: Value, pos: usize) -> Value {
         Value::Undefined(Undef::BinaryOperation {
             op,
             lhv: Box::new(lhv),
             rhv: Box::new(rhv),
-            pos,
+            pos: Some(pos),
             expression: expression::current(),
         })
+    }
+
+    /// Gives every `Undefined` in this value with no position (the value
+    /// itself, or the items of a tuple) the position `pos` of the current
+    /// expression. See [`Undef::place`].
+    pub fn place_undefined(self, pos: usize) -> Value {
+        match self {
+            Value::Undefined(mut undef) => {
+                undef.place(pos, expression::current());
+                Value::Undefined(undef)
+            }
+            Value::Tuple(items) if items.iter().any(|v| matches!(v, Value::Undefined(u) if u.pos().is_none())) => {
+                let expression = expression::current();
+                let items = items.iter().cloned().map(|v| match v {
+                    Value::Undefined(mut undef) => {
+                        undef.place(pos, expression.clone());
+                        Value::Undefined(undef)
+                    }
+                    other => other,
+                }).collect();
+                Value::Tuple(Rc::new(items))
+            }
+            other => other,
+        }
     }
 }
 
@@ -465,7 +539,7 @@ mod tests {
         assert_eq!(undef_of("1 +").cause().unwrap().describe(), "unexpected end of expression");
         assert_eq!(describe("undef.from 5"), "undefined on purpose, from the number `5`");
         assert_eq!(describe("undef.from {}"), "undefined on purpose, from a namespace");
-        let name = Undef::Name { pos: 0, expression: None };
+        let name = Undef::Name { pos: None, expression: None };
         assert_eq!(name.describe(), "expected a name");
     }
 
@@ -499,11 +573,20 @@ mod tests {
         assert_eq!(u.pos(), Some(4));
         assert_eq!(&*u.expression().unwrap().text, r#""a" - 1"#);
         assert_eq!(origin(&u).as_deref(), Some("doc"));
-        // Built-ins report no position.
+        // A built-in's error has the position of the call (its argument).
         let u = undef_of("math.sqrt(-1)");
+        assert_eq!(u.pos(), Some(9));
+        assert_eq!(origin(&u).as_deref(), Some("doc"));
+        // Made on purpose: no position.
+        assert_eq!(undef_of("undef.from 1").pos(), None);
+        // Made by a built-in, not yet returned to a call.
+        let Value::Undefined(mut u) = Value::undef_unary("f", Value::Nothing) else { panic!() };
         assert_eq!(u.pos(), None);
         assert!(u.expression().is_none());
-        assert_eq!(undef_of("undef.from 1").pos(), None);
+        u.place(3, None);
+        assert_eq!(u.pos(), Some(3));
+        u.place(5, None); // a position is never replaced
+        assert_eq!(u.pos(), Some(3));
         // An expression with no origin.
         let ast = Parser::new(Lexer::new("1 - TRUE")).parse();
         let e = Some(Rc::new(Expression::from("1 - TRUE")));
@@ -553,7 +636,7 @@ mod tests {
         let u = undef_of(r#""a" - 1"#);
         let names: Vec<_> = u.members().into_iter().map(|(n, _)| n).collect();
         assert_eq!(names, ["type", "description", "op", "lhv", "rhv", "pos", "origin"]);
-        let u = undef_of("math.sqrt(-1)");
+        let Value::Undefined(u) = Value::undef_unary("f", Value::Nothing) else { panic!() };
         let names: Vec<_> = u.members().into_iter().map(|(n, _)| n).collect();
         assert_eq!(names, ["type", "description", "op", "val"]);
         let u = undef_of("(1");

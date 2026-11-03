@@ -144,3 +144,33 @@ A syntax error must not produce a value (T3: errors explain themselves
 where they occur). Reporting the first error, rather than the left-over
 token, points at the cause: in `(1 ] 2)` the left-over is the final `)`,
 but the mistake is the `]`.
+
+## T8 — 2026-11-03 — Built-in errors take the position of their call (supersedes part of T2)
+
+The position of an undefined value is an `Option<usize>`: `None` means "no
+position", and `Some(0)` is a real position at the start of the
+expression, no longer told apart by the absence of an expression. Built-in
+and host functions still run with no current expression and make their
+errors with no position (`Value::undef_unary(op, val)`,
+`Value::undef_binary(op, lhv, rhv)`; the evaluator's operations use
+`undef_unary_at`/`undef_binary_at`). When a built-in returns, the evaluator
+gives every undefined value it returns with no position (the value itself,
+or the items of a tuple) the position of the call (the argument, as for
+"cannot apply" errors, or the `=>` of `x => f`) and the current
+expression. A value that already has a position, such as an undefined
+argument passed on, keeps it. A callback chained with `~>` captures the
+expression of the `~>` and runs with it, so a late call is placed in the
+right expression. Values inside a list or namespace a built-in returns are
+not placed.
+*Reason:* errors of the standard library, of `texl.import` and of host
+functions had no position, so a host could not show where they happened.
+A built-in cannot know where it is called from, but the evaluator can, so
+placing the value at the call covers every built-in and host function in
+one place, without changing them. "Position 0 and no expression" as a
+marker of "no position" was ambiguous when a host evaluates code without an
+expression: a value genuinely made at offset 0 and passed on by a built-in
+would have been moved. An explicit `None` removes the ambiguity. Passing
+the call position to every built-in, or wrapping built-in errors in a new
+"call" error, were considered: the first changes every built-in and host
+function for the same result, the second adds a level that repeats the
+function name already in `op`.

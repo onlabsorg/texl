@@ -629,8 +629,8 @@ undefined value.
 | `lhv`, `rhv`  | The operands of a binary operation.                          |
 | `expected`    | The missing closing bracket of a `"Termination"` error.      |
 | `token`       | The misplaced token of a `"Token"` error.                    |
-| `pos`         | Where the error is in the source of the code that made it, in UTF-16 code units. `null` for errors of built-in functions. |
-| `uri`         | The URL of the document the error is in. `null` for built-in functions and for templates rendered in a context. |
+| `pos`         | Where the error is in the source of the code that made it, in UTF-16 code units; for an error of a built-in or host function, the call that returned it. `null` for values made on purpose (`undef.from`). |
+| `uri`         | The URL of the document the error is in. `null` when `pos` is, and for templates rendered in a context. |
 | `cause`       | The first operand (or tuple item) that is itself undefined: following `cause` leads to the root cause. |
 
 | `type`              | Meaning                                          |

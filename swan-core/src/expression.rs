@@ -13,14 +13,16 @@
 //! - a function captures the current expression when it is defined, and its
 //!   body runs with it, so an error raised inside a function points into the
 //!   expression that defined it, wherever the function is called from;
-//! - a built-in function runs with no expression: built-ins report position
-//!   `0` and no expression, meaning "no position";
+//! - a built-in function runs with no expression: it makes undefined values
+//!   with no position, and the evaluator gives them the position of the call
+//!   in the current expression when the built-in returns them;
 //! - code compiled by the built-in `parse` runs as an expression of its own,
 //!   with no origin.
 //!
-//! Undefined values made by [`Value::undef_unary`](crate::value::Value::undef_unary),
-//! [`Value::undef_binary`](crate::value::Value::undef_binary) and by the
-//! evaluator take the current expression.
+//! Undefined values made by the evaluator (and by
+//! [`Value::undef_unary_at`](crate::value::Value::undef_unary_at),
+//! [`Value::undef_binary_at`](crate::value::Value::undef_binary_at)) take
+//! the current expression.
 //!
 //! ```
 //! use std::any::Any;

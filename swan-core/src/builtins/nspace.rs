@@ -37,7 +37,7 @@ fn nspace_enum(val: Value) -> Value {
         Value::Namespace(ns) => Value::tuple(
             ns.names().into_iter().map(|k| Value::Text(k.into())).collect()
         ),
-        other => Value::undef_unary("nspace.enum", other, 0),
+        other => Value::undef_unary("nspace.enum", other),
     }
 }
 
@@ -46,7 +46,7 @@ fn nspace_enum(val: Value) -> Value {
 fn nspace_size(val: Value) -> Value {
     match val {
         Value::Namespace(ns) => Value::Numb(ns.len() as f64),
-        other => Value::undef_unary("nspace.size", other, 0),
+        other => Value::undef_unary("nspace.size", other),
     }
 }
 

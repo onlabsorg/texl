@@ -71,7 +71,7 @@ fn time_to_date(t: Value) -> Value {
             ns.insert("second", Value::Numb(dt.second));
             Value::Namespace(ns)
         }
-        other => Value::undef_unary("time.to_date", other, 0),
+        other => Value::undef_unary("time.to_date", other),
     }
 }
 
@@ -87,7 +87,7 @@ fn time_from_date(date: Value) -> Value {
             let s = numb_field(&ns, "second", 0.0);
             Value::Numb(epoch_from_parts(y, m, d, h, min, s))
         }
-        other => Value::undef_unary("time.from_date", other, 0),
+        other => Value::undef_unary("time.from_date", other),
     }
 }
 
@@ -101,7 +101,7 @@ fn time_to_string(val: Value) -> Value {
                 dt.year, dt.month, dt.day, dt.hour, dt.minute, dt.second
             ).into())
         }
-        other => Value::undef_unary("time.to_string", other, 0),
+        other => Value::undef_unary("time.to_string", other),
     }
 }
 
@@ -112,9 +112,9 @@ fn time_from_string(val: Value) -> Value {
     match val {
         Value::Text(s) => match parse_iso_string(&s) {
             Some(t) => Value::Numb(t),
-            None => Value::undef_unary("time.from_string", Value::Text(s), 0),
+            None => Value::undef_unary("time.from_string", Value::Text(s)),
         },
-        other => Value::undef_unary("time.from_string", other, 0),
+        other => Value::undef_unary("time.from_string", other),
     }
 }
 
@@ -127,7 +127,7 @@ fn time_week_day(val: Value) -> Value {
             let wd = (days + 4).rem_euclid(7);
             Value::Numb(wd as f64)
         }
-        other => Value::undef_unary("time.week_day", other, 0),
+        other => Value::undef_unary("time.week_day", other),
     }
 }
 
@@ -149,7 +149,7 @@ fn time_week_number(val: Value) -> Value {
             let wn = 1 + (thu_days - jan4_thu_days) / 7;
             Value::Numb(wn as f64)
         }
-        other => Value::undef_unary("time.week_number", other, 0),
+        other => Value::undef_unary("time.week_number", other),
     }
 }
 
