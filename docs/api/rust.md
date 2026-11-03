@@ -317,7 +317,9 @@ An undefined value carries an `Undef`, which explains itself:
   A host function makes its errors with no position
   (`Value::undef_unary(op, val)`, `Value::undef_binary(op, lhv, rhv)`); the
   evaluator gives them the position of the call when the function returns
-  them.
+  them, or when a pending promise it returns resolves to them. To call a
+  Swan value from a host function, use `swan_core::evaluator::apply`, which
+  leaves the position of its errors to that call.
 
 Swan knows only expressions. `template::render` and `Engine::render`
 evaluate each tag as its own expression, whose origin is a
@@ -353,7 +355,8 @@ assert_eq!(place.uri.as_deref(), Some("/cart.texl"));
 The bindings convert positions to their own unit with
 `texl_core::document::utf16_offset` (JavaScript) and `char_offset`
 (Python); `texl_core::engine::convert_tag_positions` does it for the tags of
-a document.
+a document, and with `utf16_to_byte_offset` or `char_to_byte_offset` it
+converts them back when a document returns from the host.
 
 ## Memory
 

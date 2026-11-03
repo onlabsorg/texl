@@ -185,10 +185,41 @@ pub fn char_offset(text: &str, byte: usize) -> usize {
     prefix(text, byte).chars().count()
 }
 
+/// Converts offset `units` in UTF-16 code units in `text` to a byte offset:
+/// the inverse of [`utf16_offset`]. An offset past the end or inside a
+/// character is clamped to the previous character boundary.
+pub fn utf16_to_byte_offset(text: &str, units: usize) -> usize {
+    let mut count = 0;
+    for (byte, ch) in text.char_indices() {
+        count += ch.len_utf16();
+        if count > units { return byte; }
+    }
+    text.len()
+}
+
+/// Converts offset `chars` in code points in `text` to a byte offset: the
+/// inverse of [`char_offset`]. An offset past the end is clamped to the end.
+pub fn char_to_byte_offset(text: &str, chars: usize) -> usize {
+    text.char_indices().nth(chars).map_or(text.len(), |(byte, _)| byte)
+}
+
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_offsets_back_to_bytes() {
+        let s = "è°x😀y";
+        for byte in [0, 2, 4, 5, 9, 10] {
+            assert_eq!(utf16_to_byte_offset(s, utf16_offset(s, byte)), byte);
+            assert_eq!(char_to_byte_offset(s, char_offset(s, byte)), byte);
+        }
+        // Inside the surrogate pair of 😀, and past the end
+        assert_eq!(utf16_to_byte_offset(s, 4), 5);
+        assert_eq!(utf16_to_byte_offset(s, 99), 10);
+        assert_eq!(char_to_byte_offset(s, 99), 10);
+    }
 
     #[test]
     fn test_offsets() {

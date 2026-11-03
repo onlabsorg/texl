@@ -56,9 +56,13 @@ impl PromiseCallback {
 /// The shared state of a [`Promise`], kept behind `Rc<RefCell<..>>`.
 #[derive(Clone)]
 pub struct PromiseData {
-    /// `None` while pending; `Some(v)` once resolved. Set at most once and
-    /// never `Value::Undefined`.
+    /// `None` while pending; `Some(v)` once resolved. Set at most once.
     pub value: Option<Value>,
+
+    /// The position, in an expression, of the first call that returned this
+    /// promise while it was pending, set by [`Promise::place_undefined`]: the
+    /// value the promise resolves to gets it with [`Value::place_undefined`].
+    pub placement: Option<(usize, Option<Rc<Expression>>)>,
 
     /// Callbacks waiting for resolution, each paired with the child
     /// `Value::Promise` to resolve with that callback's result. Always empty
@@ -72,6 +76,7 @@ impl fmt::Debug for PromiseData {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("PromiseData")
             .field("value", &self.value)
+            .field("placement", &self.placement.as_ref().map(|(pos, _)| pos))
             .field("children_count", &self.children.len())
             .finish()
     }
@@ -122,6 +127,7 @@ impl Promise {
     pub fn new() -> Self {
         let promise = Self(Rc::new(RefCell::new(PromiseData {
             value: None,
+            placement: None,
             children: Vec::new(),
         })));
         crate::gc::track_promise(&promise);
@@ -135,8 +141,8 @@ impl Promise {
     ///   the value and the returned child is already resolved.
     /// - If `self` is pending, `f` is queued and runs when `self` is resolved.
     ///
-    /// `f` is invoked at most once. If `f` returns `Value::Undefined`, the child
-    /// resolves to `Value::Nothing` (see [`Promise::resolve`]).
+    /// `f` is invoked at most once. Whatever `f` returns resolves the child,
+    /// `Value::Undefined` included (see [`Promise::resolve`]).
     pub fn then(&self, f: impl Fn(Value) -> Value + 'static) -> Value {
         self.chain(PromiseCallback::Native(Rc::new(f)))
     }
@@ -146,10 +152,24 @@ impl Promise {
     /// The callable `f` is applied to the resolved value via
     /// [`eval_apply`], with `pos` (in the current expression, captured now) as
     /// the source position used in any resulting `Undefined` (for example,
-    /// when `f` is not callable). Such an `Undefined` result resolves the
-    /// child to `Value::Nothing`.
+    /// when `f` is not callable). Such an `Undefined` resolves the child
+    /// like any other value (T9).
     pub fn then_apply(&self, f: Value, pos: usize) -> Value {
         self.chain(PromiseCallback::Apply(f, pos, expression::current()))
+    }
+
+    /// Gives the value this promise resolves to the position `pos` in
+    /// `expression`, for its undefined values with no position (see
+    /// [`Value::place_undefined`]), if it is pending and has no position yet.
+    /// The evaluator calls it on the promises built-ins return: the first
+    /// call that returns a pending promise is where its value comes from.
+    /// The promise is not copied, so a built-in that returns the same
+    /// promise twice still returns one promise.
+    pub fn place_undefined(&self, pos: usize, expression: &Option<Rc<Expression>>) {
+        let mut inner = self.0.borrow_mut();
+        if inner.value.is_none() && inner.placement.is_none() {
+            inner.placement = Some((pos, expression.clone()));
+        }
     }
 
     /// Runs `callback` now if resolved, or queues it; returns the child promise.
@@ -186,8 +206,12 @@ impl Promise {
         }
 
         // A Swan promise never rejects, and an undefined value is not a
-        // rejection: it is stored like any other value (T9).
-        let resolve_val = v;
+        // rejection: it is stored like any other value (T9). Its undefined
+        // values with no position get that of the call that returned it.
+        let resolve_val = match &inner.placement {
+            Some((pos, expression)) => v.place_undefined_in(*pos, expression),
+            None => v,
+        };
 
         inner.value = Some(resolve_val.clone());
 

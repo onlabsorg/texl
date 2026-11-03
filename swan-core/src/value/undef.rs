@@ -435,20 +435,32 @@ impl Value {
 
     /// Gives every `Undefined` in this value with no position (the value
     /// itself, or the items of a tuple) the position `pos` of the current
-    /// expression. See [`Undef::place`].
+    /// expression. A pending promise (the value itself, or a tuple item) does
+    /// the same with its value when it resolves (see
+    /// [`Promise::place_undefined`](crate::value::Promise::place_undefined)).
+    /// See [`Undef::place`].
     pub fn place_undefined(self, pos: usize) -> Value {
+        self.place_undefined_in(pos, &expression::current())
+    }
+
+    /// [`Value::place_undefined`] in the given expression.
+    pub(crate) fn place_undefined_in(self, pos: usize, expression: &Option<Rc<Expression>>) -> Value {
         match self {
             Value::Undefined(mut undef) => {
-                undef.place(pos, expression::current());
+                undef.place(pos, expression.clone());
                 Value::Undefined(undef)
             }
-            Value::Tuple(items) if items.iter().any(|v| matches!(v, Value::Undefined(u) if u.pos().is_none())) => {
-                let expression = expression::current();
+            Value::Promise(promise) => {
+                promise.place_undefined(pos, expression);
+                Value::Promise(promise)
+            }
+            Value::Tuple(items) if items.iter().any(|v| match v {
+                Value::Undefined(u) => u.pos().is_none(),
+                Value::Promise(_) => true,
+                _ => false,
+            }) => {
                 let items = items.iter().cloned().map(|v| match v {
-                    Value::Undefined(mut undef) => {
-                        undef.place(pos, expression.clone());
-                        Value::Undefined(undef)
-                    }
+                    Value::Undefined(_) | Value::Promise(_) => v.place_undefined_in(pos, expression),
                     other => other,
                 }).collect();
                 Value::Tuple(Rc::new(items))
@@ -620,6 +632,47 @@ mod tests {
         })));
         let Value::Undefined(u) = run(&expr("call_z f", "c"), &scope) else { panic!() };
         assert_eq!(origin(&u).as_deref(), Some("a"));
+    }
+
+    #[test]
+    fn test_builtins_calling_swan_values_leave_errors_to_their_call() {
+        // A built-in that applies a Swan value with `apply`: the errors of
+        // the application get the position of the built-in's call.
+        let scope = root_scope();
+        scope.set("call_z", Value::Builtin(BuiltinFn::new("call_z", |f| {
+            crate::evaluator::apply(f, Value::Text("z".into()))
+        })));
+        let Value::Undefined(u) = run(&expr("x = 1, call_z math.sqrt", "a"), &scope) else { panic!() };
+        assert_eq!((u.pos(), origin(&u).as_deref()), (Some(14), Some("a")));
+        let Value::Undefined(u) = run(&expr("x = 1, call_z [1]", "a"), &scope) else { panic!() };
+        assert_eq!((u.pos(), origin(&u).as_deref()), (Some(14), Some("a")));
+        // A composed function is a built-in too: the error is at its call.
+        let Value::Undefined(u) = run(&expr("f = math.sqrt << math.sqrt, f \"z\"", "a"), &scope) else { panic!() };
+        assert_eq!((u.pos(), origin(&u).as_deref()), (Some(30), Some("a")));
+    }
+
+    #[test]
+    fn test_promises_of_builtins_place_their_value() {
+        use crate::value::Promise;
+        let scope = root_scope();
+        let pending = Promise::new();
+        let p = pending.clone();
+        scope.set("later", Value::Builtin(BuiltinFn::new("later", move |_| Value::Promise(p.clone()))));
+        let Value::Promise(got) = run(&expr("x = 1, later()", "a"), &scope) else { panic!() };
+        // The same promise, so a built-in can share one
+        assert!(Rc::ptr_eq(&got.0, &pending.0));
+        // A second call does not move it
+        run(&expr("later()", "b"), &scope);
+        pending.resolve(Value::undef_unary("later", Value::Nothing));
+        let Some(Value::Undefined(u)) = got.0.borrow().value.clone() else { panic!() };
+        assert_eq!((u.pos(), origin(&u).as_deref()), (Some(12), Some("a")));
+        // An undefined value that has a position keeps it
+        let pending = Promise::new();
+        pending.place_undefined(3, &None);
+        let placed = undef_of(r#""a" - 1"#);
+        pending.resolve(Value::Undefined(placed.clone()));
+        let Some(Value::Undefined(u)) = pending.0.borrow().value.clone() else { panic!() };
+        assert_eq!(u.pos(), placed.pos());
     }
 
     #[test]

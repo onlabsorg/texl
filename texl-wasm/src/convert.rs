@@ -18,10 +18,12 @@
 //! become `TexlUndefined` objects (see [`crate::undefined`]). Positions are
 //! converted to UTF-16 code units (JS string indices): the `pos` of an
 //! undefined value, and the tag spans of a document namespace (see
-//! [`texl_core::engine::convert_tag_positions`]).
+//! [`texl_core::engine::convert_tag_positions`]). An object with the members
+//! of a document gets its tag spans converted back to bytes, so a document
+//! passed back to Swan keeps its positions.
 
 use js_sys::{Array, Function, Object, Reflect};
-use texl_core::document::utf16_offset;
+use texl_core::document::{utf16_offset, utf16_to_byte_offset};
 use swan_core::value::{BuiltinFn, Namespace, Promise, Value};
 
 use crate::undefined::{js_to_undefined, undefined_to_js};
@@ -108,6 +110,8 @@ pub fn js_to_swan_value(val: JsValue) -> Result<Value, JsValue> {
         // Convert JS Object to nested Swan Namespace
         let mut ns = Namespace::new();
         for_each_entry(&val.into(), |key, value| ns.insert(key, value))?;
+        // A document comes back with its tag positions in bytes
+        let ns = texl_core::engine::convert_tag_positions(&ns, utf16_to_byte_offset).unwrap_or(ns);
         Ok(Value::Namespace(ns))
     } else {
         Ok(Value::Nothing)

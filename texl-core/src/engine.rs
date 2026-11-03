@@ -526,8 +526,10 @@ pub fn is_document(ns: &Namespace) -> bool {
 /// with `convert(text, byte_offset)`: `start` and `end` against `source`,
 /// `out_start` and `out_end` against `text`. Bindings use it to give hosts
 /// positions in their own unit, with [`document::utf16_offset`] or
-/// [`document::char_offset`]. Returns `None` if `doc` is not a
-/// document.
+/// [`document::char_offset`], and to convert them back to bytes when a
+/// document comes back from the host, with [`document::utf16_to_byte_offset`]
+/// or [`document::char_to_byte_offset`], so that a document round-trips.
+/// Returns `None` if `doc` is not a document.
 pub fn convert_tag_positions(doc: &Namespace, convert: impl Fn(&str, usize) -> usize) -> Option<Namespace> {
     if !is_document(doc) { return None; }
     let (Value::Text(source), Value::Text(text), Value::List(tags)) =

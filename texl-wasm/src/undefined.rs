@@ -79,8 +79,10 @@ pub fn undefined_to_js(undef: &Undef) -> JsValue {
         match name {
             "type" | "description" => {}
             "pos" => {
-                let pos = locate(undef).map_or(0, |loc| utf16_offset(&loc.text, loc.pos));
-                set("pos", &JsValue::from_f64(pos as f64));
+                // A position that cannot be located in a document or expression stays `null`
+                if let Some(loc) = locate(undef) {
+                    set("pos", &JsValue::from_f64(utf16_offset(&loc.text, loc.pos) as f64));
+                }
             }
             _ => set(name, &swan_value_to_js(&value)),
         }

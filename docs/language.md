@@ -377,7 +377,13 @@ only displays. The evaluator keeps the expression it runs in a thread-local
   position of the call when the built-in returns it (the argument, or the
   `=>` of `x => f`), in the expression the call is in. An error that already
   has a position, such as an undefined argument passed on, keeps it;
-  position `0` is a real position, not "none";
+  position `0` is a real position, not "none". A pending promise a built-in
+  returns gives the same position to the value it resolves to; the first
+  call that returns it decides, and it stays the same promise;
+- a built-in or host that calls a Swan value from Rust uses
+  `evaluator::apply`, which adds no position, so the errors of that call are
+  placed at the call of the outer built-in. A composed function (`f << g`)
+  works this way too;
 - code parsed with `parse` runs as an expression of its own, with no origin.
 
 Texl evaluates each tag as its own expression, whose origin

@@ -233,6 +233,12 @@ async function testDebug() {
     const rendering = await context.render("° <% b = 1 %><% b + 1 %>");
     check("context renderings have text", rendering.text, "° 2");
     check("context renderings have data", rendering.data.b, 1);
+    const roundTrip = engine.createContext();
+    const emoji = { uri: "d", source: "😀 <% 1 %>", data: {}, text: "😀 1", tags: [{ start: 3, end: 10, out_start: 3, out_end: 4, value: 1 }] };
+    roundTrip.set("lib", emoji);
+    const back = roundTrip.get("lib").tags[0];
+    check("a document passed back keeps its tag positions", [back.start, back.end, back.out_start, back.out_end].join(), "3,10,3,4");
+    check("Swan holds a document's tag positions in bytes", (await roundTrip.render("<% (lib.tags 0).start %>")).text, "5");
     check("context renderings have tags", [rendering.tags[1].start, rendering.tags[1].value].join(), "13,2");
 }
 

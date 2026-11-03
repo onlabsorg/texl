@@ -629,7 +629,7 @@ undefined value.
 | `lhv`, `rhv`  | The operands of a binary operation.                          |
 | `expected`    | The missing closing bracket of a `"Termination"` error.      |
 | `token`       | The misplaced token of a `"Token"` error.                    |
-| `pos`         | Where the error is in the source of the code that made it, in UTF-16 code units; for an error of a built-in or host function, the call that returned it. `null` for values made on purpose (`undef.from`). |
+| `pos`         | Where the error is in the source of the code that made it, in UTF-16 code units; for an error of a built-in or host function, the call that returned it. `null` for values made on purpose (`undef.from`) and when the error has no known place in any source. |
 | `uri`         | The URL of the document the error is in. `null` when `pos` is, and for templates rendered in a context. |
 | `cause`       | The first operand (or tuple item) that is itself undefined: following `cause` leads to the root cause. |
 

@@ -154,6 +154,12 @@ available to hosts too, but it cannot import documents.
   (a value that arrives later) is now kept and shown as `[[Undefined]]`
   with its details; before, it was silently replaced by "nothing", so such
   a tag rendered empty.
+  Errors of functions that wait for their result now point to their call
+  too, and so do errors of combined functions (`f << g`) and of built-in
+  functions that a Python function calls. A built-in function called
+  directly from Python gives an error with no position. A document handed
+  back to the engine by JavaScript or Python keeps correct expression
+  positions; they used to go wrong in text with non-English characters.
 - Available: browser/JavaScript, Python, Rust.
 - The `texl` command-line tool (`texl-cli`) has been removed from the
   repository; its last release was 0.2.0 (2026-10-25), and its binaries

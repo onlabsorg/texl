@@ -194,3 +194,26 @@ through a promise (a tag rendered empty instead of `[[Undefined]]`), made
 `x ~> f` differ from `f x`, and threw away the call position given to
 errors since T8. No part of the engine relies on it: a pending promise is
 told apart by having no value, not by an undefined one.
+
+## T10 — 2026-11-03 — Positions through promises, host calls and round trips
+
+Three rules complete T8. (1) A pending promise a built-in returns gives the
+position of the call to the position-less undefined values it resolves to.
+The position is stored on the promise (`Promise::place_undefined`), and the
+first call that returns it decides. (2) A built-in or host that calls a Swan
+value from Rust uses `evaluator::apply`, which adds no position, so its
+errors are placed at the outer call; composed functions and the Python
+`Function` use it. A position that cannot be located is `null` / `None` in
+the bindings, never `0`. (3) The bindings convert a document's tag positions
+back to bytes when an object or mapping with the members of a document comes
+back from the host, so Swan always holds bytes and a document round-trips.
+*Reason:* since T9 errors travel through promises, and without (1) those of
+async host functions had no location. A child promise that places the value
+was tried first and rejected: it breaks the guarantee that imports of one
+document return the same promise. Without (2), `eval_apply(.., 0)` outside
+an expression fixed position `0`, which T8 never moves, so these errors
+could not reach their call. Without (3), a document passed back was
+converted twice and its positions were wrong in non-ASCII text. Marking
+converted documents was not chosen: the marker would have to survive plain
+JavaScript objects and Python dicts. A host object that has exactly the five
+members of a document is treated as one, in both directions.

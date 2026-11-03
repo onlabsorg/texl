@@ -476,14 +476,14 @@ pub fn eval(node: &Node, scope: &Scope) -> Value {
         Node::CompositionOp(bin) => {
             let lhv = eval(&bin.lho, scope);
             let rhv = eval(&bin.rho, scope);
-            map_pairs!(lhv, rhv, |l,r| eval_composition(l, r, bin.pos))
+            map_pairs!(lhv, rhv, |l,r| eval_composition(l, r))
         }
 
         // Reverse composition: `F >> G` - apply `F` first, then `G`. (Swapped operands to eval_composition).
         Node::ReverseCompositionOp(bin) => {
             let lhv = eval(&bin.lho, scope);
             let rhv = eval(&bin.rho, scope);
-            map_pairs!(lhv, rhv, |l,r| eval_composition(r, l, bin.pos))
+            map_pairs!(lhv, rhv, |l,r| eval_composition(r, l))
         }
 
 
@@ -603,10 +603,31 @@ fn eval_names(node: &Node) -> Value {
 /// Broadcasting over a tuple of *callables* is not done here; the callers
 /// (`ApplicationOp`, `MappingOp`) do it with `map_values!`.
 pub fn eval_apply(func: Value, arg: Value, pos: usize) -> Value {
+    apply_at(func, arg, Some(pos))
+}
+
+/// Applies `func` to `arg` like [`eval_apply`], but outside any expression:
+/// for hosts and built-ins that call a Swan value from Rust.
+///
+/// The errors of the application itself (a non-callable `func`, a bad index)
+/// and the undefined values a built-in returns keep no position, so the
+/// built-in or host function that made the call returns them position-less
+/// and they get the position of *its* call in Swan code (T8). The errors made
+/// inside the body of a Swan function keep their position in it.
+pub fn apply(func: Value, arg: Value) -> Value {
+    apply_at(func, arg, None)
+}
+
+/// [`eval_apply`] at position `pos` of the current expression, or with no
+/// position ([`apply`]).
+fn apply_at(func: Value, arg: Value, pos: Option<usize>) -> Value {
     match func {
         // A built-in cannot know where it is called from: the undefined values
         // it returns with no position get the position of the call.
-        Value::Builtin(ref f) => f.call(arg).place_undefined(pos),
+        Value::Builtin(ref f) => match pos {
+            Some(pos) => f.call(arg).place_undefined(pos),
+            None => f.call(arg),
+        },
 
         Value::Func { params, body, closure, expression: func_expression } => {
             let local_scope = closure.new_child();
@@ -655,7 +676,16 @@ pub fn eval_apply(func: Value, arg: Value, pos: usize) -> Value {
             }
         }
 
-        other => Value::undef_binary_at("application", other, arg, pos),
+        other => application_error(other, arg, pos),
+    }
+}
+
+/// The `Undefined` of an application of `func` to `arg` that is not valid,
+/// at `pos` in the current expression or with no position.
+fn application_error(func: Value, arg: Value, pos: Option<usize>) -> Value {
+    match pos {
+        Some(pos) => Value::undef_binary_at("application", func, arg, pos),
+        None => Value::undef_binary("application", func, arg),
     }
 }
 
@@ -663,7 +693,7 @@ pub fn eval_apply(func: Value, arg: Value, pos: usize) -> Value {
 ///
 /// Negative, fractional or out-of-range indices give `Nothing`.
 /// Non-numbers give `Undefined`. `pos` is used for the `Undefined` returned for a non-number index.
-fn eval_apply_list(list: &[Value], arg: Value, pos: usize) -> Value {
+fn eval_apply_list(list: &[Value], arg: Value, pos: Option<usize>) -> Value {
     match arg {
         Value::Numb(n) => {
             if n >= 0.0 && n.fract() == 0.0 {
@@ -676,7 +706,7 @@ fn eval_apply_list(list: &[Value], arg: Value, pos: usize) -> Value {
             Value::Nothing
         }
         // Argument is not a number
-        other => Value::undef_binary_at("application", Value::list(list.to_vec()), other, pos),
+        other => application_error(Value::list(list.to_vec()), other, pos),
     }
 }
 
@@ -686,7 +716,7 @@ fn eval_apply_list(list: &[Value], arg: Value, pos: usize) -> Value {
 /// Indexing is by Unicode character (`char`), not by byte, and is zero-based.
 /// Negative, fractional or out-of-range indices give `Nothing`.
 /// Non-numbers give `Undefined`. `pos` is used for the `Undefined` returned for a non-number index.
-fn eval_apply_text(text: &Rc<str>, arg: Value, pos: usize) -> Value {
+fn eval_apply_text(text: &Rc<str>, arg: Value, pos: Option<usize>) -> Value {
     match arg {
         Value::Numb(n) => {
             if n >= 0.0 && n.fract() == 0.0 {
@@ -698,7 +728,7 @@ fn eval_apply_text(text: &Rc<str>, arg: Value, pos: usize) -> Value {
             Value::Nothing
         }
         // Argument is not a number
-        other => Value::undef_binary_at("application", Value::Text(text.clone()), other, pos),
+        other => application_error(Value::Text(text.clone()), other, pos),
     }
 }
 
@@ -706,11 +736,11 @@ fn eval_apply_text(text: &Rc<str>, arg: Value, pos: usize) -> Value {
 ///
 /// A missing key gives `Nothing`; a non-text key gives
 /// `Undef::BinaryOperation { op: "application", .. }`.
-fn eval_apply_namespace(ns: &Namespace, arg: Value, pos: usize) -> Value {
+fn eval_apply_namespace(ns: &Namespace, arg: Value, pos: Option<usize>) -> Value {
     match arg {
         Value::Text(t) => ns.get(&t),
         // Argument is not a string
-        other => Value::undef_binary_at("application", Value::Namespace(ns.clone()), other, pos),
+        other => application_error(Value::Namespace(ns.clone()), other, pos),
     }
 }
 
@@ -722,16 +752,17 @@ fn eval_apply_namespace(ns: &Namespace, arg: Value, pos: usize) -> Value {
 
 /// `f << g` builds a `Builtin` named `"composed"` that computes `f(g(x))`.
 ///
-/// Both functions are applied with [`eval_apply`] and the whole argument `x`
+/// Both functions are applied with [`apply`] and the whole argument `x`
 /// is passed to `g`; its whole result is passed to `f`. Applying errors become
-/// `Undefined` values, as usual. `pos` is the position of the composition
-/// operator and is used for any application error. `>>` calls this with its
-/// operands swapped. Tuple operands are broadcast by the caller using `map_pairs!`.
-fn eval_composition(f: Value, g: Value, pos: usize) -> Value {
+/// `Undefined` values, as usual, with no position: like the errors of any
+/// built-in, they get the position of the call of the composed function.
+/// `>>` calls this with its operands swapped. Tuple operands are broadcast by
+/// the caller using `map_pairs!`.
+fn eval_composition(f: Value, g: Value) -> Value {
     // f and g are captured where the cycle collector can see them
     Value::Builtin(BuiltinFn::capturing("composed", vec![f, g], move |fg, x| {
-        let y = eval_apply(fg[1].clone(), x, pos);    // y = g(x)
-        eval_apply(fg[0].clone(), y, pos)             // z = f(y)
+        let y = apply(fg[1].clone(), x);    // y = g(x)
+        apply(fg[0].clone(), y)             // z = f(y)
     }))
 }
 

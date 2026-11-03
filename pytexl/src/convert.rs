@@ -19,15 +19,17 @@
 //! bindings only), promises become [`Promise`], functions become [`Function`] and undefined
 //! values become [`Undefined`], which keeps the details of the error. Positions are converted
 //! to code points (Python string indices): the `pos` of an [`Undefined`], and the tag spans of
-//! a document namespace (see [`texl_core::engine::convert_tag_positions`]).
+//! a document namespace (see [`texl_core::engine::convert_tag_positions`]). A mapping with the
+//! members of a document gets its tag spans converted back to bytes, so a document passed
+//! back to Swan keeps its positions.
 
 
 use pyo3::prelude::*;
 use pyo3::sync::PyOnceLock;
 use pyo3::types::{PyBool, PyDict, PyFloat, PyInt, PyList, PyString, PyTuple};
-use swan_core::evaluator::eval_apply;
+use swan_core::evaluator::apply;
 use pyo3::basic::CompareOp;
-use texl_core::document::{char_offset, locate, members};
+use texl_core::document::{char_offset, char_to_byte_offset, locate, members};
 use swan_core::value::{BuiltinFn, Namespace, Undef, Value};
 
 use crate::runtime::{self, AwaitPy};
@@ -103,7 +105,7 @@ impl Function {
     #[pyo3(signature = (*args))]
     fn __call__(&self, py: Python<'_>, args: &Bound<'_, PyTuple>) -> Py<PyAny> {
         let arg = py_args_to_swan(args);
-        swan_to_py(py, &eval_apply(self.inner.clone(), arg, 0))
+        swan_to_py(py, &apply(self.inner.clone(), arg))
     }
 
     fn __repr__(&self) -> String {
@@ -180,8 +182,9 @@ impl Undefined {
     /// The members of `undef.inspect`, converted to Python values, with `pos` in code points.
     fn members(&self, py: Python<'_>) -> Vec<(&'static str, Py<PyAny>)> {
         members(&self.inner).into_iter().map(|(name, value)| {
-            let value = match (name, char_pos(&self.inner)) {
-                ("pos", Some(pos)) => pos.into_pyobject(py).unwrap().into_any().unbind(),
+            // A position that cannot be located in a document or expression is `None`
+            let value = match name {
+                "pos" => char_pos(&self.inner).into_pyobject(py).unwrap().into_any().unbind(),
                 _ => swan_to_py(py, &value),
             };
             (name, value)
@@ -355,7 +358,10 @@ pub fn py_to_swan(obj: &Bound<'_, PyAny>) -> Value {
     } else if obj.is_instance_of::<PyDict>() || mapping_type(py).is_ok_and(|m| obj.is_instance(m).unwrap_or(false)) {
         let mut ns = Namespace::new();
         match for_each_entry(obj, |key, value| ns.insert(key, value)) {
-            Ok(()) => Value::Namespace(ns),
+            // A document comes back with its tag positions in bytes
+            Ok(()) => Value::Namespace(
+                texl_core::engine::convert_tag_positions(&ns, char_to_byte_offset).unwrap_or(ns),
+            ),
             Err(_) => Value::Nothing,
         }
     } else if is_awaitable(obj) {

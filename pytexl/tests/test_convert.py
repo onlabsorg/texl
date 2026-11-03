@@ -160,6 +160,41 @@ class UndefinedTest(unittest.IsolatedAsyncioTestCase):
         self.assertIsInstance(value, pytexl.Undefined)
         return value
 
+    async def test_builtin_called_from_python_has_no_position(self):
+        await self.context.render("<% f = math.sqrt %>")
+        u = self.context.get("f")("z")
+        self.assertIsInstance(u, pytexl.Undefined)
+        self.assertIsNone(u.pos)
+        self.assertNotIn("pos", u.inspect())
+
+    async def test_builtin_called_from_a_callback_has_the_position_of_the_callback(self):
+        context = pytexl.Engine().create_context({"cb": lambda f: f("z")})
+        rendering = await context.render("<% cb math.sqrt %>")
+        self.assertEqual(rendering.tags[0].value.pos, 6)  # the argument of `cb`
+
+    async def test_async_callback_error_has_the_position_of_the_call(self):
+        await self.context.render("<% f = math.sqrt %>")
+        f = self.context.get("f")
+
+        async def bad(x):
+            return f("z")
+
+        context = pytexl.Engine().create_context({"bad": bad})
+        rendering = await context.render("<% bad 1 %>")
+        self.assertIsInstance(rendering.tags[0].value, pytexl.Undefined)
+        self.assertEqual(rendering.tags[0].value.pos, 7)  # the argument of `bad`
+
+    async def test_document_round_trip_keeps_tag_positions(self):
+        document = {
+            "uri": "d.texl", "source": "è <% 1 %>", "data": {}, "text": "è 1",
+            "tags": [{"start": 2, "end": 9, "out_start": 2, "out_end": 3, "value": 1}],
+        }
+        self.context.set("lib", document)
+        self.assertEqual(self.context.get("lib"), document)
+        # Swan itself holds byte offsets
+        rendering = await self.context.render("<% (lib.tags 0).start %>")
+        self.assertEqual(rendering.text, "3")
+
     async def test_binary_operation(self):
         u = await self.undefined('"hello" - 1')
         self.assertEqual(u.type, "BinaryOperation")
