@@ -46,7 +46,7 @@
 
 use crate::value::{BuiltinFn, Scope, Undef, Value, WeakScope};
 use crate::lexer::Lexer;
-use crate::source::{self, Source};
+use crate::expression::{self, Expression};
 use std::rc::Rc;
 use crate::parser::Parser;
 use crate::evaluator::eval;
@@ -241,13 +241,13 @@ fn parse_function(arg: Value) -> Value {
         Value::Text(text) => {
             let mut parser = Parser::new(Lexer::new(&text));
             let ast = parser.parse();
-            // Positions in the parsed code refer to the parsed text.
-            let src = Some(Rc::new(Source::new(None, &text)));
+            // The parsed code is an expression of its own, with no origin.
+            let expr = Some(Rc::new(Expression::new(&text, None)));
 
             // The closure takes ownership of the AST.
             Value::Builtin(BuiltinFn::new("eval", move |ns_arg| {
                 match ns_arg {
-                    Value::Namespace(ns) => source::with_source(src.clone(), || {
+                    Value::Namespace(ns) => expression::with_expression(expr.clone(), || {
                         BUILTINS.with(|builtins| eval(&ast, &builtins.subcontext(ns)))
                     }),
                     other => Value::undef_unary("eval", other, 0),
@@ -297,12 +297,12 @@ fn wrap_names(val: &Value) -> Value {
         Value::Tuple(items) => {
             let mapped: Vec<Value> = items.iter().map(wrap_names).collect();
             if mapped.iter().any(|v| matches!(v, Value::Undefined(_))) {
-                Value::Undefined(Undef::Name { pos: 0, source: None })
+                Value::Undefined(Undef::Name { pos: 0, expression: None })
             } else {
                 Value::tuple(mapped)
             }
         }
-        _ => Value::Undefined(Undef::Name { pos: 0, source: None }),
+        _ => Value::Undefined(Undef::Name { pos: 0, expression: None }),
     }
 }
 

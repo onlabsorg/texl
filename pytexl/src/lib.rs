@@ -18,7 +18,7 @@ mod runtime;
 
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
-use swan_core::source::char_offset;
+use texl_core::document::char_offset;
 use swan_core::value::{Scope, Value};
 use texl_core::helpers::spawner_fn;
 use texl_core::{Engine, LoaderFn, loader_fn, template};

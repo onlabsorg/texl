@@ -24,7 +24,7 @@ mod undefined;
 
 use js_sys::{Array, Object, Reflect};
 use swan_core::builtins::set_builtin;
-use swan_core::source::utf16_offset;
+use texl_core::document::utf16_offset;
 use swan_core::value::{BuiltinFn, Scope, Value};
 use texl_core::helpers::spawner_fn;
 use texl_core::{Engine, loader_fn, template};

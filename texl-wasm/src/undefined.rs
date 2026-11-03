@@ -22,6 +22,8 @@ use swan_core::value::{Undef, Value};
 use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsCast;
 
+use texl_core::document::{locate, members, utf16_offset};
+
 use crate::convert::swan_value_to_js;
 
 /// The undefined values given to JS, by key.
@@ -72,12 +74,12 @@ pub fn undefined_to_js(undef: &Undef) -> JsValue {
     for name in MEMBERS {
         set(name, &JsValue::NULL);
     }
-    for (name, value) in undef.members() {
+    // The members in document terms (`pos` in the document, `uri`)
+    for (name, value) in members(undef) {
         match name {
             "type" | "description" => {}
             "pos" => {
-                let pos = undef.pos().unwrap_or(0);
-                let pos = undef.source().map_or(pos, |src| src.utf16_offset(pos));
+                let pos = locate(undef).map_or(0, |loc| utf16_offset(&loc.text, loc.pos));
                 set("pos", &JsValue::from_f64(pos as f64));
             }
             _ => set(name, &swan_value_to_js(&value)),

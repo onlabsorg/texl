@@ -110,9 +110,9 @@ pub enum Value {
         body:    Box<Node>,
         /// Scope captured at definition time.
         closure: Scope,
-        /// The source the function was defined in: its body runs with it as
-        /// the current source (see [`crate::source`]).
-        source: Option<Rc<crate::source::Source>>,
+        /// The expression the function was defined in: its body runs with it
+        /// as the current expression (see [`crate::expression`]).
+        expression: Option<Rc<crate::expression::Expression>>,
     },
 
     /// A native Rust function callable from Swan.

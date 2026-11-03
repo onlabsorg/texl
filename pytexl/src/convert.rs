@@ -27,7 +27,7 @@ use pyo3::sync::PyOnceLock;
 use pyo3::types::{PyBool, PyDict, PyFloat, PyInt, PyList, PyString, PyTuple};
 use swan_core::evaluator::eval_apply;
 use pyo3::basic::CompareOp;
-use swan_core::source::char_offset;
+use texl_core::document::{char_offset, locate, members};
 use swan_core::value::{BuiltinFn, Namespace, Undef, Value};
 
 use crate::runtime::{self, AwaitPy};
@@ -167,16 +167,16 @@ pub struct Undefined {
     pub inner: Undef,
 }
 
-/// The position of `undef` in code points, if it has one.
+/// The position of `undef` in its document (or expression), in code points,
+/// if it has one.
 fn char_pos(undef: &Undef) -> Option<usize> {
-    let pos = undef.pos()?;
-    Some(undef.source().map_or(pos, |src| src.char_offset(pos)))
+    locate(undef).map(|loc| char_offset(&loc.text, loc.pos))
 }
 
 impl Undefined {
     /// The members of `undef.inspect`, converted to Python values, with `pos` in code points.
     fn members(&self, py: Python<'_>) -> Vec<(&'static str, Py<PyAny>)> {
-        self.inner.members().into_iter().map(|(name, value)| {
+        members(&self.inner).into_iter().map(|(name, value)| {
             let value = match (name, char_pos(&self.inner)) {
                 ("pos", Some(pos)) => pos.into_pyobject(py).unwrap().into_any().unbind(),
                 _ => swan_to_py(py, &value),
@@ -238,7 +238,7 @@ impl Undefined {
     /// str | None: The URL of the document the error is in.
     #[getter]
     fn uri(&self) -> Option<String> {
-        self.inner.source().and_then(|s| s.uri.as_ref()).map(|u| u.to_string())
+        locate(&self.inner).and_then(|loc| loc.uri).map(|u| u.to_string())
     }
 
     /// str | None: The missing closing bracket of a ``"Termination"`` error.

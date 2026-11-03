@@ -115,7 +115,10 @@ outermost:
   WebAssembly has no system clock).
 - The **globals scope** receives a copy of the engine's globals when the
   document scope is created (`Engine::create_scope`). Globals added to the
-  engine later do not reach existing scopes.
+  engine later do not reach existing scopes. Every engine starts with one
+  global, `undef`: the built-in namespace with Texl's `undef.inspect`, which
+  gives positions in the document (see
+  [Positions and origins](#positions-and-origins)).
 - The **document scope** is where the tags of a document run. Its bindings,
   taken when the rendering ends, are the document's `data`.
 
@@ -341,29 +344,41 @@ cannot subtract the number `1` from the text `"a"`
 
 `undef.inspect` returns `type`, `description`, the members of the kind
 (`op`, `val`, `lhv`, `rhv`, `expected`, `token`), `pos` and `uri`; `pos` and
-`uri` are absent when unknown.
+`uri` are absent when unknown. In a document, `pos` is a byte offset in the
+document. This is Texl's `undef.inspect`, which the engine binds in every
+scope it creates; Swan's own `undef.inspect` (in `parse`d code, or in a scope
+not made by the engine) gives `pos` relative to the expression and `origin`
+instead of `uri` (see below).
 
-### Positions and sources
+### Positions and origins
 
-An undefined value records a byte offset (`pos`) and the `Source` it refers
-to: the URI and the text of the code that made it (`swan_core::source`). The
-evaluator keeps the source of the code it runs in a thread-local *current
-source*:
+Swan knows nothing about documents. An undefined value records a byte offset
+(`pos`) in the `Expression` that made it (`swan_core::expression`): the text
+that was evaluated and an optional *origin*, which the host sets and Swan
+only displays. The evaluator keeps the expression it runs in a thread-local
+*current expression*:
 
-- `template::render` sets it to the template around each tag, and lexes the
-  tag with its offset in the template (`Lexer::with_offset`), so positions are
-  offsets in the whole document, not in the tag;
-- a function keeps the current source of the place it was defined, and its
-  body runs with it, so an error inside a function imported from another
-  document points into that document, with that document's URI;
-- a built-in function runs with no source: its errors have no position;
-- code parsed with `parse` runs with its own text as the source, without a
-  URI.
+- the host sets it around an evaluation (`with_expression`);
+- a function keeps the current expression of the place it was defined, and
+  its body runs with it, so an error inside a function imported from another
+  document points into that document;
+- a built-in function runs with no expression: its errors have no position;
+- code parsed with `parse` runs as an expression of its own, with no origin.
 
-Hosts convert positions to their own unit when a value reaches them: UTF-16
-code units in JavaScript, code points in Python. Since every undefined value
-carries its source, the conversion is right whichever way the value arrives
-(a tag, `data`, a function result).
+Texl evaluates each tag as its own expression, whose origin
+(`texl_core::document::TagOrigin`, displayed as `<uri>::<tag start>`) holds
+the document (its URI and the text that was rendered) and where the tag and
+its expression start. `texl_core::document::locate` turns a value's `pos`
+into an offset in the whole document, with its URI and the start of its tag.
+The origin keeps the rendered text alive as long as a value refers to it, so
+the position stays right after the document is edited and rendered again,
+and whichever way the value arrives (another tag, `data`, a function
+result). Hosts then convert the offset to their own unit: UTF-16 code units
+in JavaScript, code points in Python.
+
+The tag that shows a value and the place that made it can differ: in
+`<% x = "a" - 1 %>…<% x %>` the second tag shows the error, and its origin
+points into the first.
 
 ### Tags
 
@@ -539,9 +554,10 @@ separate process with its own limits.
 ## Limits and performance
 
 - **Numbers** are 64-bit floats: integers are exact up to 2<sup>53</sup>.
-- **Positions** in `Undefined` values are byte offsets in the source that
-  made them (see [Positions and sources](#positions-and-sources)); the hosts
-  convert them. Built-in functions report no position.
+- **Positions** in `Undefined` values are byte offsets in the expression
+  that made them; Texl turns them into offsets in the document (see
+  [Positions and origins](#positions-and-origins)) and the hosts convert
+  them. Built-in functions report no position.
 - **Recursion** uses the native stack, with no depth limit: a recursion that
   never ends stops the host program with a stack overflow instead of producing
   `Undefined`. This is a known issue.

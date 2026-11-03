@@ -21,7 +21,7 @@
 //! [`texl_core::engine::convert_tag_positions`]).
 
 use js_sys::{Array, Function, Object, Reflect};
-use swan_core::source::utf16_offset;
+use texl_core::document::utf16_offset;
 use swan_core::value::{BuiltinFn, Namespace, Promise, Value};
 
 use crate::undefined::{js_to_undefined, undefined_to_js};

@@ -31,10 +31,10 @@
 //! (from `<%` to after `%>`), the byte span of its text in `text`, and the
 //! value that was rendered. Tags that render nothing, such as assignments,
 //! are included, so a host can find an undefined value whatever its tag
-//! renders. Undefined values made by the document carry its URL and
-//! source, with positions as byte offsets in `source`
-//! ([`swan_core::source`]). A document holds every tag value as long as it
-//! lives; the values are freed with it.
+//! renders. Undefined values made by the document know its URL and text,
+//! and [`document::locate`] gives their position as a byte offset in
+//! `source`. A document holds every tag value as long as it lives; the
+//! values are freed with it.
 //!
 //! The `data` field holds every name the template bound, with `=`, `:`,
 //! `bind` or `label`, so a document can act as a library of values and
@@ -106,10 +106,10 @@ use url::Url;
 
 use swan_core::builtins::root_scope;
 use swan_core::gc;
-use swan_core::source::Source;
 use swan_core::value::{BuiltinFn, Namespace, Promise, Scope, Value};
 
 use crate::helpers::{spawn, SpawnFn};
+use crate::document::{self, Document};
 use crate::template;
 
 /// A host-provided function that fetches the source of a document.
@@ -200,9 +200,14 @@ impl Engine {
     /// `wasm_bindgen_futures::spawn_local`). With `None`, tasks go onto a
     /// thread-local queue, and the host must call
     /// [`helpers::run_pending`](crate::helpers::run_pending) to run them.
+    ///
+    /// The engine starts with one global, `undef`: Swan's `undef` namespace
+    /// with an `inspect` that gives positions in the document and its URI
+    /// (see [`document::members`]).
     pub fn new(spawner: Option<SpawnFn>) -> Self {
+        let undef = document::undef_namespace(root_scope().get("undef"));
         Self {
-            builtins: Rc::new(RefCell::new(HashMap::new())),
+            builtins: Rc::new(RefCell::new(HashMap::from([("undef".to_string(), undef)]))),
             loaders: Rc::new(RefCell::new(HashMap::new())),
             default_loader: Rc::new(RefCell::new(None)),
             spawner: Rc::new(RefCell::new(spawner)),
@@ -433,7 +438,7 @@ impl Engine {
             .into_iter().collect();
         scope.set("texl", Value::Namespace(texl));
 
-        let rendering = template::render(Source::new(Some(url), source), &scope).await;
+        let rendering = template::render(Document::new(Some(url), source), &scope).await;
         let tags = rendering.tags.iter().map(|tag| Value::Namespace(tag.to_namespace())).collect();
 
         let doc: Namespace = [
@@ -520,8 +525,8 @@ pub fn is_document(ns: &Namespace) -> bool {
 /// Returns a copy of the document `doc` whose tag positions are converted
 /// with `convert(text, byte_offset)`: `start` and `end` against `source`,
 /// `out_start` and `out_end` against `text`. Bindings use it to give hosts
-/// positions in their own unit, with [`swan_core::source::utf16_offset`] or
-/// [`swan_core::source::char_offset`]. Returns `None` if `doc` is not a
+/// positions in their own unit, with [`document::utf16_offset`] or
+/// [`document::char_offset`]. Returns `None` if `doc` is not a
 /// document.
 pub fn convert_tag_positions(doc: &Namespace, convert: impl Fn(&str, usize) -> usize) -> Option<Namespace> {
     if !is_document(doc) { return None; }
@@ -1148,10 +1153,13 @@ mod tests {
         assert_eq!(rendering(doc.clone()), "x");
         // The assignment renders nothing, but `y` holds the undefined value
         let Value::Undefined(u) = data(doc.clone()).get("y") else { panic!() };
-        assert_eq!(u.pos(), Some(11));
+        assert_eq!(u.pos(), Some(9)); // in the expression
+        let loc = document::locate(&u).unwrap();
+        assert_eq!(loc.pos, 11);
         assert_eq!(&source[11..12], "-");
-        assert_eq!(u.source().unwrap().uri.as_deref(), Some("/main.texl"));
-        assert_eq!(&*u.source().unwrap().text, source);
+        assert_eq!(loc.uri.as_deref(), Some("/main.texl"));
+        assert_eq!(&*loc.text, source);
+        assert_eq!(loc.tag_start, Some(0));
         // A tag whose value is undefined renders `[[Undefined]]` and keeps the value
         let doc = block_on(engine.render("/main.texl", r#"<% (1 %>"#));
         assert_eq!(rendering(doc.clone()), "[[Undefined]]");
@@ -1167,10 +1175,41 @@ mod tests {
         let tags = tags(&doc);
         assert_eq!(numb(&tags[0], "start"), source.find("<%").unwrap());
         let Value::Undefined(u) = tags[0].get("value") else { panic!() };
-        let pos = u.cause().unwrap().pos().unwrap();
-        assert_eq!(&source[pos..pos + 1], "-");
-        let src = u.source().unwrap();
-        assert_eq!(src.char_offset(pos), source.chars().position(|c| c == '-').unwrap());
+        let loc = document::locate(u.cause().unwrap()).unwrap();
+        assert_eq!(&source[loc.pos..loc.pos + 1], "-");
+        assert_eq!(document::char_offset(&loc.text, loc.pos), source.chars().position(|c| c == '-').unwrap());
+    }
+
+    #[test]
+    fn test_engine_values_are_located_where_they_were_made() {
+        let engine = Engine::new(None);
+        // Made in one tag, shown by another: located in the first
+        let source = r#"<% x = "a" - 1 %>, <% x %>"#;
+        let doc = block_on(engine.render("/main.texl", source));
+        let Value::Undefined(u) = tags(&doc)[1].get("value") else { panic!() };
+        let loc = document::locate(&u).unwrap();
+        assert_eq!((loc.tag_start, loc.pos), (Some(0), 11));
+        assert_eq!(&source[11..12], "-");
+        // Code run by `parse` is located in its own text, with no document
+        let doc = block_on(engine.render("/main.texl", r#"<% (parse "1 + TRUE") {} %>"#));
+        let Value::Undefined(u) = tags(&doc)[0].get("value") else { panic!() };
+        let loc = document::locate(&u).unwrap();
+        assert_eq!((loc.uri, &*loc.text, loc.pos, loc.tag_start), (None, "1 + TRUE", 2, None));
+    }
+
+    #[test]
+    fn test_engine_undef_inspect_gives_document_positions() {
+        let engine = Engine::new(None);
+        let source = r#"ab <% i = undef.inspect(2 * ("a" - 1)), i.pos, i.uri, i.rhv.pos %>"#;
+        let doc = block_on(engine.render("/main.texl", source));
+        let star = source.find('*').unwrap();
+        let minus = source.find('-').unwrap();
+        assert_eq!(rendering(doc), format!("ab {star}, /main.texl, {minus}"));
+        // `undef.from` is still there, and `origin` is not shown
+        let doc = block_on(engine.render("/main.texl", r#"<% i = undef.inspect(-"a"), i.origin, undef.from 1 %>"#));
+        assert_eq!(rendering(doc), "[[Undefined]]");
+        let doc = block_on(engine.render("/main.texl", r#"<% (undef.inspect(undef.from 1)).val %>"#));
+        assert_eq!(rendering(doc), "1");
     }
 
     #[test]
@@ -1192,12 +1231,13 @@ mod tests {
         assert_eq!(lib_tags.len(), 2);
         assert_eq!(numb(&lib_tags[1], "start"), lib.rfind("<%").unwrap());
         let Value::Undefined(u) = lib_tags[1].get("value") else { panic!() };
-        assert_eq!(u.source().unwrap().uri.as_deref(), Some("/lib.texl"));
+        assert_eq!(document::locate(&u).unwrap().uri.as_deref(), Some("/lib.texl"));
         // An error inside a function of the library points into the library
         let v = tags(&doc)[1].get("value"); let Value::Undefined(u) = v else { panic!("{v:?}") };
-        assert_eq!(u.source().unwrap().uri.as_deref(), Some("/lib.texl"));
-        let pos = u.pos().unwrap();
-        assert_eq!(&lib[pos..pos + 1], "-");
+        let loc = document::locate(&u).unwrap();
+        assert_eq!(loc.uri.as_deref(), Some("/lib.texl"));
+        assert_eq!(&lib[loc.pos..loc.pos + 1], "-");
+        assert_eq!(loc.tag_start, Some(lib.find("<%").unwrap()));
     }
 
 }

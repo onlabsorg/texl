@@ -108,7 +108,14 @@ document and a little program that produces it.
 Hosts can inject their own values and functions into the template scope, and
 register loaders for their own URL schemes. A host application can thus give
 templates access to its data and services, and decide where documents come
-from. A *context* (a scope that keeps its names across several renders) is
+from.
+
+The Swan language knows nothing about templates or documents: it evaluates
+single expressions, and an error records its position within the expression
+that made it, plus a label of where that expression came from, which the
+program using Swan sets and reads back. The template engine uses that label
+to tell which document and which expression an error belongs to, and turns
+the position into one in the whole document. A *context* (a scope that keeps its names across several renders) is
 available to hosts too, but it cannot import documents.
 
 ## Status
@@ -130,7 +137,10 @@ available to hosts too, but it cannot import documents.
   context's names and the expression list, errors reach JavaScript as
   objects with their details instead of `undefined`, and error positions
   count from the start of the document and use each host's own string
-  indices.
+  indices. Since 2026-11-03, the Swan language no longer knows about
+  documents (see "Architecture"); for templates and hosts nothing changes,
+  except that inspecting an error in code built at run time with `parse`
+  gives its position within that code, with no document address.
 - Available: browser/JavaScript, Python, Rust.
 - The `texl` command-line tool (`texl-cli`) has been removed from the
   repository; its last release was 0.2.0 (2026-10-25), and its binaries

@@ -1,5 +1,5 @@
 use super::*;
-use crate::source::{self, Source};
+use crate::expression::{self, Expression};
 
 
 
@@ -10,10 +10,11 @@ use crate::source::{self, Source};
 
 /// Why a value is undefined: the payload of [`Value::Undefined`].
 ///
-/// Positions (`pos`) are byte offsets in `source`, the text of the code that
-/// made the value (see [`crate::source`]). Built-in functions use position
-/// `0` and no source, meaning "no position". Two `Undef`s are equal when they
-/// have the same variant and contents, regardless of position and source.
+/// Positions (`pos`) are byte offsets in the text of `expression`, the code
+/// that made the value (see [`crate::expression`]). Built-in functions use
+/// position `0` and no expression, meaning "no position". Two `Undef`s are
+/// equal when they have the same variant and contents, regardless of position
+/// and expression.
 ///
 /// [`Undef::describe`] explains the value in plain words, and
 /// [`Undef::members`] lists its details; the Swan built-in `undef.inspect`
@@ -31,8 +32,8 @@ pub enum Undef {
         val: Box<Value>,
         /// Source position of the operation.
         pos: usize,
-        /// The source `pos` refers to.
-        source: Option<Rc<Source>>,
+        /// The expression `pos` refers to.
+        expression: Option<Rc<Expression>>,
     },
 
     /// The result of a binary operation that is not defined for the operand types.
@@ -45,8 +46,8 @@ pub enum Undef {
         rhv: Box<Value>,
         /// Source position of the operation.
         pos: usize,
-        /// The source `pos` refers to.
-        source: Option<Rc<Source>>,
+        /// The expression `pos` refers to.
+        expression: Option<Rc<Expression>>,
     },
 
     /// Syntax error: a group `(...)`, `[...]` or `{...}` without its closing
@@ -56,8 +57,8 @@ pub enum Undef {
         expected: char,
         /// Source position where the bracket was expected.
         pos: usize,
-        /// The source `pos` refers to.
-        source: Option<Rc<Source>>,
+        /// The expression `pos` refers to.
+        expression: Option<Rc<Expression>>,
     },
 
     /// Syntax error: a token that is not valid where it appears.
@@ -66,8 +67,8 @@ pub enum Undef {
         token: String,
         /// Source position of the token.
         pos: usize,
-        /// The source `pos` refers to.
-        source: Option<Rc<Source>>,
+        /// The expression `pos` refers to.
+        expression: Option<Rc<Expression>>,
     },
 
     /// A name was expected (left of `=`, `:` or `->`, or after `$`), but
@@ -75,8 +76,8 @@ pub enum Undef {
     Name {
         /// Source position of the offending expression.
         pos: usize,
-        /// The source `pos` refers to.
-        source: Option<Rc<Source>>,
+        /// The expression `pos` refers to.
+        expression: Option<Rc<Expression>>,
     },
 
     /// An undefined value created explicitly, for example by the Swan
@@ -132,30 +133,30 @@ impl Undef {
         }
     }
 
-    /// The byte offset in [`source`](Self::source) where the value was made.
-    /// `None` for [`Undef::Value`], and for values made by built-in functions
-    /// (position `0`, no source).
+    /// The byte offset in the text of [`expression`](Self::expression) where
+    /// the value was made. `None` for [`Undef::Value`], and for values made by
+    /// built-in functions (position `0`, no expression).
     pub fn pos(&self) -> Option<usize> {
         match self {
-            Undef::UnaryOperation { pos, source, .. }
-            | Undef::BinaryOperation { pos, source, .. }
-            | Undef::Termination { pos, source, .. }
-            | Undef::Token { pos, source, .. }
-            | Undef::Name { pos, source } => {
-                if *pos == 0 && source.is_none() { None } else { Some(*pos) }
+            Undef::UnaryOperation { pos, expression, .. }
+            | Undef::BinaryOperation { pos, expression, .. }
+            | Undef::Termination { pos, expression, .. }
+            | Undef::Token { pos, expression, .. }
+            | Undef::Name { pos, expression } => {
+                if *pos == 0 && expression.is_none() { None } else { Some(*pos) }
             }
             Undef::Value(_) => None,
         }
     }
 
-    /// The source text that [`pos`](Self::pos) refers to, if known.
-    pub fn source(&self) -> Option<&Rc<Source>> {
+    /// The expression that [`pos`](Self::pos) refers to, if known.
+    pub fn expression(&self) -> Option<&Rc<Expression>> {
         match self {
-            Undef::UnaryOperation { source, .. }
-            | Undef::BinaryOperation { source, .. }
-            | Undef::Termination { source, .. }
-            | Undef::Token { source, .. }
-            | Undef::Name { source, .. } => source.as_ref(),
+            Undef::UnaryOperation { expression, .. }
+            | Undef::BinaryOperation { expression, .. }
+            | Undef::Termination { expression, .. }
+            | Undef::Token { expression, .. }
+            | Undef::Name { expression, .. } => expression.as_ref(),
             Undef::Value(_) => None,
         }
     }
@@ -188,9 +189,10 @@ impl Undef {
 
     /// The details of the value, by member name, as `undef.inspect` shows
     /// them: `type`, `description`, the variant's fields (`op`, `val`,
-    /// `lhv`, `rhv`, `expected`, `token`), `pos` (a byte offset, absent when
-    /// there is no position) and `uri` (when the source has one). Operands
-    /// are returned as they are, not inspected.
+    /// `lhv`, `rhv`, `expected`, `token`), `pos` (a byte offset in the
+    /// expression, absent when there is no position) and `origin` (the
+    /// expression's origin as text, when it has one). Operands are returned
+    /// as they are, not inspected.
     pub fn members(&self) -> Vec<(&'static str, Value)> {
         let mut members = vec![
             ("type", Value::Text(self.kind().into())),
@@ -214,8 +216,8 @@ impl Undef {
         if let Some(pos) = self.pos() {
             members.push(("pos", Value::Numb(pos as f64)));
         }
-        if let Some(uri) = self.source().and_then(|s| s.uri.as_ref()) {
-            members.push(("uri", Value::Text(uri.as_ref().into())));
+        if let Some(origin) = self.expression().and_then(|e| e.origin.as_ref()) {
+            members.push(("origin", Value::Text(origin.to_string().into())));
         }
         members
     }
@@ -355,21 +357,21 @@ fn a_type(val: &Value) -> String {
 impl Value {
 
     /// Builds `Undefined` for unary operation `op` applied to `val`. `pos` is
-    /// the source byte offset; the value takes the current source (see
-    /// [`crate::source`]).
+    /// the byte offset in the expression; the value takes the current
+    /// expression (see [`crate::expression`]).
     #[inline]
     pub fn undef_unary(op: &'static str, val: Value, pos: usize) -> Value {
         Value::Undefined(Undef::UnaryOperation {
             op,
             val: Box::new(val),
             pos,
-            source: source::current(),
+            expression: expression::current(),
         })
     }
 
     /// Builds `Undefined` for binary operation `op` applied to `lhv` and
-    /// `rhv`. `pos` is the source byte offset; the value takes the current
-    /// source (see [`crate::source`]).
+    /// `rhv`. `pos` is the byte offset in the expression; the value takes the
+    /// current expression (see [`crate::expression`]).
     #[inline]
     pub fn undef_binary(op: &'static str, lhv: Value, rhv: Value, pos: usize) -> Value {
         Value::Undefined(Undef::BinaryOperation {
@@ -377,7 +379,7 @@ impl Value {
             lhv: Box::new(lhv),
             rhv: Box::new(rhv),
             pos,
-            source: source::current(),
+            expression: expression::current(),
         })
     }
 }
@@ -395,11 +397,25 @@ mod tests {
     use crate::lexer::Lexer;
     use crate::parser::Parser;
 
-    /// Evaluates `text` with a source named `doc` and returns its `Undef`.
+    /// An expression whose origin is the name `origin`.
+    fn expr(text: &str, origin: &str) -> Rc<Expression> {
+        Rc::new(Expression::new(text, Some(Rc::new(origin.to_string()))))
+    }
+
+    /// Evaluates `expr` in `scope`, with it as the current expression.
+    fn run(expr: &Rc<Expression>, scope: &crate::value::Scope) -> Value {
+        let ast = Parser::new(Lexer::new(&expr.text)).parse();
+        expression::with_expression(Some(expr.clone()), || eval(&ast, scope))
+    }
+
+    /// The origin of `u`'s expression, as text.
+    fn origin(u: &Undef) -> Option<String> {
+        u.expression()?.origin.as_ref().map(|o| o.to_string())
+    }
+
+    /// Evaluates `text` as an expression from `doc` and returns its `Undef`.
     fn undef_of(text: &str) -> Undef {
-        let src = Rc::new(Source::new(Some("doc"), text));
-        let ast = Parser::new(Lexer::new(text)).parse();
-        match source::with_source(Some(src), || eval(&ast, &root_scope())) {
+        match run(&expr(text, "doc"), &root_scope()) {
             Value::Undefined(u) => u,
             other => panic!("not undefined: {other:?}"),
         }
@@ -449,7 +465,7 @@ mod tests {
         assert_eq!(undef_of("1 +").cause().unwrap().describe(), "unexpected end of expression");
         assert_eq!(describe("undef.from 5"), "undefined on purpose, from the number `5`");
         assert_eq!(describe("undef.from {}"), "undefined on purpose, from a namespace");
-        let name = Undef::Name { pos: 0, source: None };
+        let name = Undef::Name { pos: 0, expression: None };
         assert_eq!(name.describe(), "expected a name");
     }
 
@@ -478,65 +494,70 @@ mod tests {
     }
 
     #[test]
-    fn test_positions_and_sources() {
+    fn test_positions_and_expressions() {
         let u = undef_of(r#""a" - 1"#);
         assert_eq!(u.pos(), Some(4));
-        assert_eq!(u.source().unwrap().uri.as_deref(), Some("doc"));
+        assert_eq!(&*u.expression().unwrap().text, r#""a" - 1"#);
+        assert_eq!(origin(&u).as_deref(), Some("doc"));
         // Built-ins report no position.
         let u = undef_of("math.sqrt(-1)");
         assert_eq!(u.pos(), None);
-        assert!(u.source().is_none());
+        assert!(u.expression().is_none());
         assert_eq!(undef_of("undef.from 1").pos(), None);
-        // Positions are offsets in the whole text when lexing a slice.
-        let doc = r#"abc<% "a" - 1 %>"#;
-        let src = Rc::new(Source::new(Some("doc"), doc));
-        let ast = Parser::new(Lexer::with_offset(&doc[5..14], 5)).parse();
-        let Value::Undefined(u) = source::with_source(Some(src), || eval(&ast, &root_scope())) else { panic!() };
-        assert_eq!(u.pos(), Some(10));
-        assert_eq!(&doc[10..11], "-");
+        // An expression with no origin.
+        let ast = Parser::new(Lexer::new("1 - TRUE")).parse();
+        let e = Some(Rc::new(Expression::from("1 - TRUE")));
+        let Value::Undefined(u) = expression::with_expression(e, || eval(&ast, &root_scope())) else { panic!() };
+        assert_eq!(u.pos(), Some(2));
+        assert!(origin(&u).is_none());
     }
 
     #[test]
-    fn test_functions_keep_their_source() {
-        // `f` is defined in source A and called from source B: the error points into A.
+    fn test_values_keep_their_expression() {
+        // A value made by expression A and read by expression B points into A.
         let scope = root_scope();
-        let a = Rc::new(Source::new(Some("a"), r#"f = x -> x - 1"#));
-        let ast = Parser::new(Lexer::new(&a.text)).parse();
-        source::with_source(Some(a.clone()), || eval(&ast, &scope));
-        let b = Rc::new(Source::new(Some("b"), r#"f "z""#));
-        let ast = Parser::new(Lexer::new(&b.text)).parse();
-        let Value::Undefined(u) = source::with_source(Some(b), || eval(&ast, &scope)) else { panic!() };
-        assert_eq!(u.source().unwrap().uri.as_deref(), Some("a"));
+        run(&expr(r#"x = "a" - 1"#, "a"), &scope);
+        let Value::Undefined(u) = run(&expr("x", "b"), &scope) else { panic!() };
+        assert_eq!(origin(&u).as_deref(), Some("a"));
+        assert_eq!(u.pos(), Some(8));
+    }
+
+    #[test]
+    fn test_functions_keep_their_expression() {
+        // `f` is defined in expression A and called from expression B: the
+        // error points into A.
+        let scope = root_scope();
+        run(&expr(r#"f = x -> x - 1"#, "a"), &scope);
+        let Value::Undefined(u) = run(&expr(r#"f "z""#, "b"), &scope) else { panic!() };
+        assert_eq!(origin(&u).as_deref(), Some("a"));
         assert_eq!(u.pos(), Some(11));
         // The same through a built-in that calls back into Swan.
         scope.set("call_z", Value::Builtin(BuiltinFn::new("call_z", |f| {
             crate::evaluator::eval_apply(f, Value::Text("z".into()), 0)
         })));
-        let c = Rc::new(Source::new(Some("c"), "call_z f"));
-        let ast = Parser::new(Lexer::new(&c.text)).parse();
-        let Value::Undefined(u) = source::with_source(Some(c), || eval(&ast, &scope)) else { panic!() };
-        assert_eq!(u.source().unwrap().uri.as_deref(), Some("a"));
+        let Value::Undefined(u) = run(&expr("call_z f", "c"), &scope) else { panic!() };
+        assert_eq!(origin(&u).as_deref(), Some("a"));
     }
 
     #[test]
-    fn test_parsed_code_has_its_own_source() {
+    fn test_parsed_code_is_its_own_expression() {
         let u = undef_of(r#"(parse "1 + TRUE") {}"#);
         assert_eq!(u.pos(), Some(2));
-        let src = u.source().unwrap();
-        assert_eq!(src.uri, None);
-        assert_eq!(&*src.text, "1 + TRUE");
+        let e = u.expression().unwrap();
+        assert!(e.origin.is_none());
+        assert_eq!(&*e.text, "1 + TRUE");
     }
 
     #[test]
     fn test_members() {
         let u = undef_of(r#""a" - 1"#);
         let names: Vec<_> = u.members().into_iter().map(|(n, _)| n).collect();
-        assert_eq!(names, ["type", "description", "op", "lhv", "rhv", "pos", "uri"]);
+        assert_eq!(names, ["type", "description", "op", "lhv", "rhv", "pos", "origin"]);
         let u = undef_of("math.sqrt(-1)");
         let names: Vec<_> = u.members().into_iter().map(|(n, _)| n).collect();
         assert_eq!(names, ["type", "description", "op", "val"]);
         let u = undef_of("(1");
         let names: Vec<_> = u.members().into_iter().map(|(n, _)| n).collect();
-        assert_eq!(names, ["type", "description", "expected", "pos", "uri"]);
+        assert_eq!(names, ["type", "description", "expected", "pos", "origin"]);
     }
 }

@@ -46,8 +46,6 @@ pub struct Lexer<'a> {
     /// Starts at 0.  Incremented by `ch.len_utf8()` with every consumed char,
     /// keeping it valid as a UTF-8 byte index into `source`.
     position: usize,
-    /// Added to every position the lexer returns (see [`Lexer::with_offset`]).
-    base: usize,
     /// Position just past the last token returned by `next_token`.
     token_end: usize,
 }
@@ -56,19 +54,11 @@ impl<'a> Lexer<'a> {
 
     /// Creates a new `Lexer` positioned at the start of `source`.
     pub fn new(source: &'a str) -> Self {
-        Self::with_offset(source, 0)
-    }
-
-    /// Creates a `Lexer` for `source`, a slice that starts at byte `base` of a
-    /// larger text (such as an expression inside a document): every position
-    /// it returns is a byte offset in that larger text.
-    pub fn with_offset(source: &'a str, base: usize) -> Self {
         Self {
             source,
             chars: source.chars().peekable(),
             position: 0,
-            base,
-            token_end: base,
+            token_end: 0,
         }
     }
 
@@ -81,11 +71,7 @@ impl<'a> Lexer<'a> {
     /// The source text between positions `start` and `end` (as returned by
     /// [`next_token`](Self::next_token)), or `""` if out of range.
     pub fn slice(&self, start: usize, end: usize) -> &'a str {
-        let source = self.source;
-        start.checked_sub(self.base)
-            .zip(end.checked_sub(self.base))
-            .and_then(|(s, e)| source.get(s..e))
-            .unwrap_or("")
+        self.source.get(start..end).unwrap_or("")
     }
 
     // -------------------------------------------------------------------------
@@ -303,11 +289,11 @@ impl<'a> Lexer<'a> {
     /// is consumed too before the token is returned.
     pub fn next_token(&mut self) -> (usize, Token<'a>) {
         let (pos, token) = self.scan_token();
-        self.token_end = self.base + self.position;
-        (self.base + pos, token)
+        self.token_end = self.position;
+        (pos, token)
     }
 
-    /// Scans the next token; positions are relative to `source`.
+    /// Scans the next token.
     fn scan_token(&mut self) -> (usize, Token<'a>) {
         self.skip_whitespaces();
 

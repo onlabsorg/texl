@@ -311,17 +311,24 @@ An undefined value carries an `Undef`, which explains itself:
   ``cannot add the text `"a"` and the number `1` ``;
 - `Undef::cause()` gives the first operand that is itself undefined, so
   following it leads to the root cause;
-- `Undef::pos()` is a byte offset in `Undef::source()`, the
-  `swan_core::source::Source` (URI and text) of the code that made the value.
-  Both are `None` for errors of built-in functions;
-- `Undef::members()` lists the details that `undef.inspect` shows in Swan.
+- `Undef::pos()` is a byte offset in `Undef::expression()`, the
+  `swan_core::expression::Expression` (text and origin) of the code that
+  made the value. Both are `None` for errors of built-in functions.
 
-The evaluator takes the source from the *current source*, which the host
-sets with `swan_core::source::with_source` around an evaluation;
-`template::render` and `Engine::render` do it for you, with positions in the
-whole template. A function keeps the source it was defined in, so an error
-inside a function imported from another document points into that
-document.
+Swan knows only expressions. `template::render` and `Engine::render`
+evaluate each tag as its own expression, whose origin is a
+`texl_core::document::TagOrigin` (the document and where the tag starts).
+`texl_core::document::locate(&undef)` gives the place in document terms: the
+URI, the text, the byte offset `pos` in it and the start of the tag. A
+function keeps the expression it was defined in, so an error inside a
+function imported from another document points into that document.
+`texl_core::document::members(&undef)` lists the details in document terms,
+as `undef.inspect` shows them in a template.
+
+A host that evaluates Swan code itself sets the current expression with
+`swan_core::expression::with_expression` around the evaluation. Any type
+that implements `Display` can be its origin; the host gets it back by
+downcasting (`origin as &dyn Any`).
 
 Each item of a document's `tags` (and of `Rendering::tags`) is a tag: its
 byte span in the source (`start`, `end`), the byte span of its text in the
@@ -334,14 +341,15 @@ let Value::Namespace(doc) = engine.render("/cart.texl", source).await else { unr
 let Value::Namespace(data) = doc.get("data") else { unreachable!() };
 let Value::Undefined(err) = data.get("total") else { unreachable!() };
 assert_eq!(err.describe(), "cannot multiply nothing by the text `\"4\"`");
-assert_eq!(&source[err.pos().unwrap()..][..1], "*");
-assert_eq!(err.source().unwrap().uri.as_deref(), Some("/cart.texl"));
+let place = texl_core::document::locate(&err).unwrap();
+assert_eq!(&source[place.pos..][..1], "*");
+assert_eq!(place.uri.as_deref(), Some("/cart.texl"));
 ```
 
 The bindings convert positions to their own unit with
-`Source::utf16_offset` (JavaScript) and `Source::char_offset` (Python);
-`texl_core::engine::convert_tag_positions` does it for the tags of a
-document.
+`texl_core::document::utf16_offset` (JavaScript) and `char_offset`
+(Python); `texl_core::engine::convert_tag_positions` does it for the tags of
+a document.
 
 ## Memory
 
@@ -364,8 +372,8 @@ cycle through it is never freed. See
 
 The rustdoc of the two crates (`cargo doc`, see above):
 
-- `texl_core`: `Engine`, `template::render` and `Rendering`, loaders and the
-  async helpers.
+- `texl_core`: `Engine`, `template::render` and `Rendering`, `document`
+  (`Document`, `TagOrigin`, `locate`), loaders and the async helpers.
 - `swan_core`: `Value`, `Undef`, `Namespace`, `Scope`, `Promise`,
-  `BuiltinFn`, `source`, the lexer, the parser, the evaluator and the cycle
+  `BuiltinFn`, `expression`, the lexer, the parser, the evaluator and the cycle
   collector.

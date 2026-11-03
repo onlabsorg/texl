@@ -45,7 +45,7 @@
 
 use std::rc::Rc;
 use crate::ast::Node;
-use crate::source;
+use crate::expression;
 use crate::value::{BuiltinFn, Namespace, Scope, Undef, Value};
 
 
@@ -254,7 +254,7 @@ pub fn eval(node: &Node, scope: &Scope) -> Value {
                     params: Box::new(names),
                     body: bin.rho.clone(),
                     closure: scope.clone(),
-                    source: source::current(),
+                    expression: expression::current(),
                 }
             }
         }
@@ -495,7 +495,7 @@ pub fn eval(node: &Node, scope: &Scope) -> Value {
             Value::Undefined(Undef::Termination{
                 expected: leaf.val,
                 pos: leaf.pos,
-                source: source::current(),
+                expression: expression::current(),
             })
         }
 
@@ -504,7 +504,7 @@ pub fn eval(node: &Node, scope: &Scope) -> Value {
             Value::Undefined(Undef::Token{
                 token: leaf.val.clone(),
                 pos: leaf.pos,
-                source: source::current(),
+                expression: expression::current(),
             })
         }
     }
@@ -571,7 +571,7 @@ fn eval_names(node: &Node) -> Value {
 
 
         // Any other value will return and undefined value
-        node => Value::Undefined(Undef::Name{ pos: node.position(), source: source::current() }),
+        node => Value::Undefined(Undef::Name{ pos: node.position(), expression: expression::current() }),
     }
 }
 
@@ -606,9 +606,9 @@ pub fn eval_apply(func: Value, arg: Value, pos: usize) -> Value {
     match func {
         Value::Builtin(ref f) => f.call(arg),
 
-        Value::Func { params, body, closure, source: func_source } => {
+        Value::Func { params, body, closure, expression: func_expression } => {
             let local_scope = closure.new_child();
-            source::with_source(func_source, || {
+            expression::with_expression(func_expression, || {
                 assignment_operation::eval(&local_scope, &params, &arg);
                 eval(&body, &local_scope)
             })
@@ -833,7 +833,7 @@ mod tests {
         assert_matches!(evaluate("(x, y) -> x+y"), Value::Func{params:_, body:_, closure:_, ..});
 
         // Invalid left-hand names.
-        assert_eq!(evaluate("(x, 12) -> 2*x"), invalid_names("function_definition", Value::Undefined(Undef::Name{pos:4, source:None}), 8));
+        assert_eq!(evaluate("(x, 12) -> 2*x"), invalid_names("function_definition", Value::Undefined(Undef::Name{pos:4, expression: None}), 8));
     }
 
     #[test]
@@ -954,7 +954,7 @@ mod tests {
         assert_eq!(evaluate("(a, b) = (1, 2), a + b"), Value::Numb(3.0));
 
         // Invalid left-hand names.
-        assert_eq!(evaluate("(x, 12) = (1, 2)"), invalid_names("assignment", Value::Undefined(Undef::Name{pos:4, source:None}), 8));
+        assert_eq!(evaluate("(x, 12) = (1, 2)"), invalid_names("assignment", Value::Undefined(Undef::Name{pos:4, expression: None}), 8));
     }
 
     #[test]
@@ -976,7 +976,7 @@ mod tests {
         );
 
         // Invalid left-hand names.
-        assert_eq!(evaluate("(x, 12) : (1, 2)"), invalid_names("labelling", Value::Undefined(Undef::Name{pos:4, source:None}), 8));
+        assert_eq!(evaluate("(x, 12) : (1, 2)"), invalid_names("labelling", Value::Undefined(Undef::Name{pos:4, expression: None}), 8));
     }
 
     #[test]

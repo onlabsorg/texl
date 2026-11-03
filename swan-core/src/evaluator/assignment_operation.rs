@@ -132,7 +132,7 @@ mod tests {
         // --- Invalid left-hand names (reported by the evaluator before binding) ---
         assert_eq!(
             evaluate("(x, 12) = (1, 2)"), 
-            Value::undef_binary("assignment", Value::Undefined(Undef::Name{pos:4, source:None}), Value::Nothing, 8),
+            Value::undef_binary("assignment", Value::Undefined(Undef::Name{pos:4, expression: None}), Value::Nothing, 8),
         );
     }
 }

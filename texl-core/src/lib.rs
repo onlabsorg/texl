@@ -44,7 +44,9 @@
 #![warn(missing_docs)]
 
 pub mod helpers;
+pub mod document;
 pub mod template;
 pub mod engine;
 
 pub use engine::{Engine, LoaderFn, loader_fn};
+pub use document::Document;

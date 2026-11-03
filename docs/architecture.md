@@ -43,15 +43,16 @@ loop, loaders.
    and calls `template::render`.
 2. **`template::render(source, &scope)`** (`texl-core/src/template.rs`)
    copies the text outside tags, and evaluates each tag in order in the same
-   scope, with the document's `Source` (URL and text) as the current source
-   (`swan_core::source`). When a tag's value is a promise, it awaits it. It
-   then appends the text form of the value, and records the tag (its spans
-   in the source and in the output, and its value). It returns a `Rendering`
-   `{source, text, data, tags}`.
-3. **The `Lexer`** (`swan-core/src/lexer.rs`) turns the tag's source into
-   tokens, without copying it. It is created with the offset of the
-   expression in the document (`Lexer::with_offset`), so every position is a
-   byte offset in the whole document.
+   scope, as a Swan `Expression` (`swan_core::expression`) whose origin, a
+   `TagOrigin` (`texl-core/src/document.rs`), holds the `Document` (URL and
+   text) and where the tag starts. When a tag's value is a promise, it
+   awaits it. It then appends the text form of the value, and records the
+   tag (its spans in the source and in the output, and its value). It
+   returns a `Rendering` `{document, text, data, tags}`.
+3. **The `Lexer`** (`swan-core/src/lexer.rs`) turns the tag's expression
+   into tokens, without copying it. Positions are byte offsets in the
+   expression; `texl_core::document::locate` turns them into offsets in the
+   document.
 4. **The `Parser`** (`swan-core/src/parser.rs`), a Pratt parser, builds an
    `ast::Node`. Operator binding powers are in its `lbp` table; the precedence
    levels are documented in `swan-core/src/token.rs`. Syntax errors become
@@ -60,7 +61,7 @@ loop, loaders.
    `evaluator/*_operation(s).rs`) returns a `Value`. It never fails: every
    error is a `Value::Undefined`.
 6. When the rendering is done, the engine builds the document namespace
-   `{uri, source, data, rendering}` (`data` is a snapshot of the document
+   `{uri, source, data, text, tags}` (`data` is a snapshot of the document
    scope) and runs the cycle collector (`swan_core::gc::collect`).
 
 An import (`texl.import(url)` in a tag) resolves the URL against the
@@ -81,7 +82,7 @@ The runtime values are in `swan-core/src/value.rs` and `value/`:
 | `Scope`     | A lexical environment: bindings plus a parent; a shared handle |
 | `Promise`   | A single-assignment value that never rejects; a shared handle |
 | `BuiltinFn` | A function implemented in Rust                               |
-| `Undef`     | The description of an error, carried by `Value::Undefined`: its kind, operands, position and source; `describe()` explains it in words |
+| `Undef`     | The description of an error, carried by `Value::Undefined`: its kind, operands, position and expression; `describe()` explains it in words |
 
 Everything is `Rc`-based and single-threaded. See
 [Swan and Texl in depth](language.md#scopes-and-names) for the scope layers.

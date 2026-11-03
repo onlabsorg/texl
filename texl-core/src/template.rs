@@ -67,13 +67,14 @@
 use swan_core::evaluator::eval;
 use swan_core::lexer::Lexer;
 use swan_core::parser::Parser;
-use swan_core::source::Source;
+use swan_core::expression::{self, Expression};
 use swan_core::value::{Namespace, Scope, Value};
 use std::cell::RefCell;
 use std::future::Future;
 use std::pin::Pin;
 use std::rc::Rc;
 use std::task::{Context, Poll, Waker};
+use crate::document::{Document, TagOrigin};
 
 
 
@@ -107,6 +108,7 @@ impl Future for WaitForValue {
         }
     }
 }
+
 
 
 /// Waits for `val` to become a non-promise value and returns it.
@@ -143,15 +145,16 @@ async fn resolve_promises(mut val: Value) -> Value {
 }
 
 
+
 /// One tag of a rendered template.
 ///
-/// Positions are byte offsets: `start` and `end` in the source of the
-/// template, `out_start` and `out_end` in the rendered text.
+/// Positions are byte offsets: `start` and `end` in the template,
+/// `out_start` and `out_end` in the rendered text.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Tag {
-    /// Where the tag starts in the source (at `<%`).
+    /// Where the tag starts in the template (at `<%`).
     pub start: usize,
-    /// Where the tag ends in the source (after `%>`).
+    /// Where the tag ends in the template (after `%>`).
     pub end: usize,
     /// Where the text of the tag starts in the rendered text.
     pub out_start: usize,
@@ -176,12 +179,14 @@ impl Tag {
     }
 }
 
+
+
 /// The result of [`render`].
 #[derive(Debug, Clone)]
 pub struct Rendering {
-    /// The source that was rendered. Undefined values made by the template
-    /// refer to it (see [`swan_core::source`]).
-    pub source: Rc<Source>,
+    /// The template that was rendered. Undefined values made by its tags
+    /// refer to it through their [`TagOrigin`] (see [`crate::document`]).
+    pub document: Rc<Document>,
     /// The rendered text.
     pub text: String,
     /// The bindings of the scope when the rendering ended: a snapshot,
@@ -201,8 +206,8 @@ impl Rendering {
     pub fn to_namespace(&self, convert: impl Fn(&str, usize) -> usize) -> Namespace {
         let tags = self.tags.iter().map(|tag| {
             let tag = Tag {
-                start: convert(&self.source.text, tag.start),
-                end: convert(&self.source.text, tag.end),
+                start: convert(&self.document.text, tag.start),
+                end: convert(&self.document.text, tag.end),
                 out_start: convert(&self.text, tag.out_start),
                 out_end: convert(&self.text, tag.out_end),
                 value: tag.value.clone(),
@@ -217,15 +222,18 @@ impl Rendering {
     }
 }
 
-/// Renders `source`, evaluating every `<% ... %>` expression against `scope`.
+
+
+/// Renders `document`, evaluating every `<% ... %>` expression against `scope`.
 ///
-/// `source` is the template text (`&str` or `String`, with no URI) or a
-/// [`Source`] (with the URI of the document, if it has one).
+/// `document` is the template text (`&str` or `String`, with no URI) or a
+/// [`Document`] (with the URI of the document, if it has one).
 ///
 /// For each tag, the expression text is lexed, parsed and evaluated with
-/// [`swan_core::evaluator::eval`], with `source` as the current source, so
-/// positions in undefined values are byte offsets in the whole template. If
-/// the result is a promise, it is awaited. The final value is converted to
+/// [`swan_core::evaluator::eval`], as a Swan [`Expression`] whose origin is
+/// a [`TagOrigin`]: positions in undefined values are byte offsets in the
+/// expression, and [`crate::document::locate`] turns them into offsets in
+/// the template. If the result is a promise, it is awaited. The final value is converted to
 /// text (see the [module documentation](self)) and appended to the output.
 /// Text outside tags is copied verbatim.
 ///
@@ -234,9 +242,9 @@ impl Rendering {
 ///
 /// Returns the [`Rendering`]: the text, the data (a snapshot of the scope
 /// bindings when the rendering ends) and the tags.
-pub async fn render(source: impl Into<Source>, scope: &Scope) -> Rendering {
-    let source = Rc::new(source.into());
-    let template: &str = &source.text;
+pub async fn render(document: impl Into<Document>, scope: &Scope) -> Rendering {
+    let document = Rc::new(document.into());
+    let template: &str = &document.text;
     let mut text = String::with_capacity(template.len());
     let mut tags = Vec::new();
     let mut cursor = 0;
@@ -252,12 +260,12 @@ pub async fn render(source: impl Into<Source>, scope: &Scope) -> Rendering {
             // Append literal text prior to the opening tag
             text.push_str(&template[cursor..tag_start]);
 
-            // Parse and evaluate the expression; positions are offsets in the template
+            // Parse and evaluate the expression; its origin locates it in the template
             let expr_src = &template[expr_start..expr_end];
-            let value = swan_core::source::with_source(Some(source.clone()), || {
-                let ast = Parser::new(Lexer::with_offset(expr_src, expr_start)).parse();
-                eval(&ast, scope)
-            });
+            let origin = TagOrigin { document: document.clone(), tag_start, expr_start };
+            let expr = Rc::new(Expression::new(expr_src, Some(Rc::new(origin))));
+            let ast = Parser::new(Lexer::new(expr_src)).parse();
+            let value = expression::with_expression(Some(expr), || eval(&ast, scope));
 
             // If the expression yielded a promise, wait for it to resolve
             let value = resolve_promises(value).await;
@@ -277,8 +285,9 @@ pub async fn render(source: impl Into<Source>, scope: &Scope) -> Rendering {
 
     // Append any trailing string fragment after the final tag
     text.push_str(&template[cursor..]);
-    Rendering { text, data: scope.namespace(), tags, source }
+    Rendering { text, data: scope.namespace(), tags, document }
 }
+
 
 
 /// Converts a Swan [`Value`] into its rendered text form.
@@ -330,6 +339,7 @@ fn value_to_string(val: Value) -> String {
         }
     }
 }
+
 
 
 #[cfg(test)]
