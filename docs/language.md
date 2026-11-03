@@ -52,10 +52,12 @@ Consequences:
 - **Errors are values.** `Undefined` is falsy, so `x | fallback` and
   `x ? a ; b` deal with it like with any other value. It renders as
   `[[Undefined]]`.
-- **Promises never fail.** A promise resolved with an `Undefined` value holds
-  `Nothing` instead, and so does a promise whose work fails: a document that
-  cannot be loaded, a rejected JavaScript promise, a Python coroutine that
-  raises.
+- **Promises never fail.** A promise has no failure state. An `Undefined`
+  value is not a failure: a promise resolved with one holds it, like any
+  other value, so `x ~> f` behaves as a later `f x` and an error reached
+  through a promise renders as `[[Undefined]]`. A promise whose work cannot
+  run holds `Nothing`: a document that cannot be loaded, a rejected
+  JavaScript promise, a Python coroutine that raises.
 - **Host functions must not throw.** A Rust built-in returns an `Undefined`
   (for example with `Value::undef_unary`) instead of panicking. The JavaScript
   and Python bindings turn an exception in a host function into `Nothing`.
@@ -214,7 +216,8 @@ properties:
 
 - **It resolves once.** Later resolutions are ignored.
 - **It never rejects.** There is no failure state (see
-  [Safe by failure](#safe-by-failure)).
+  [Safe by failure](#safe-by-failure)); an `Undefined` value is held like
+  any other value.
 - **Callbacks run synchronously.** A callback registered with `~>` runs when
   the promise resolves, on the stack of the code that resolves it, or at once
   if the promise is already resolved. `A ~> f` always returns a promise, even
@@ -405,9 +408,9 @@ collector traces them like any other value.
 
 Known limits:
 
-- **Promises drop errors.** A promise never holds an `Undefined` value: `~>`
-  resolves to `Nothing` when its function returns one, and so does a failed
-  import. The error is not visible after it went through a promise.
+- **Failed host work is `Nothing`.** A failed import, a rejected JavaScript
+  promise and a Python coroutine that raises resolve to `Nothing`, not to an
+  `Undefined` that says what went wrong.
 - **Unknown names are not errors.** A name that is not bound is `Nothing`,
   not `Undefined`, so a typo in a name renders as an empty text.
 - **Built-in errors point to the call, not further.** An error raised

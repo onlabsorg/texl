@@ -150,7 +150,10 @@ available to hosts too, but it cannot import documents.
   a failed `texl.import`) and of the functions a host adds now point to the
   call that produced them, where before they had no position. Rust
   programs that add their own functions write their errors slightly
-  differently (one argument less).
+  differently (one argument less). An error that passes through a promise
+  (a value that arrives later) is now kept and shown as `[[Undefined]]`
+  with its details; before, it was silently replaced by "nothing", so such
+  a tag rendered empty.
 - Available: browser/JavaScript, Python, Rust.
 - The `texl` command-line tool (`texl-cli`) has been removed from the
   repository; its last release was 0.2.0 (2026-10-25), and its binaries
@@ -186,8 +189,10 @@ with it.
 
 ## Known limitations
 
-- An error that passes through a promise is lost: the promise holds
-  "nothing" instead. An error raised inside a built-in function points to
+- When work that waits fails before producing a value (a document that
+  cannot be loaded, a failing JavaScript or Python function that waits),
+  the result is "nothing", not an error that says what went wrong. An
+  error raised inside a built-in function points to
   the call of that function, not to anything more precise, and errors a
   built-in function puts inside a list or namespace have no position. A
   misspelled name gives "nothing", not an error.

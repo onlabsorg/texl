@@ -17,8 +17,9 @@
 //! - **Tuple of promises:** `(P, Q) ~> F` chains `F` onto each promise and
 //!   yields a tuple of child promises.
 //! - **Undefined results:** a Swan promise never rejects. If a chained
-//!   function returns an `Undefined` value, the child promise resolves to
-//!   `Nothing` instead.
+//!   function returns an `Undefined` value, the child promise resolves to it,
+//!   like to any other value. An undefined target reaches `F` as it is:
+//!   `X ~> F` gives a promise of `F X`.
 //! - **Non-promise target:** a value that is not a promise is wrapped in an
 //!   already resolved promise, so `3 ~> F` is a promise of `F 3`.
 //!
@@ -212,15 +213,36 @@ mod tests {
 
     #[test]
     fn test_chain_with_undefined() {
-        // (h) Chaining a function that produces Undefined (becomes Nothing)
-        let src = r#"
-            p = promise.create(),
-            c = p ~> (x -> 1 / "a"),
-            promise.resolve p 5,
-            c
-        "#;
+        // (h) Chaining a function that produces Undefined: the child keeps it,
+        // with the position where it was made
+        let src = r#"p = promise.create(), c = p ~> (x -> 1 / "a"), promise.resolve p 5, c"#;
         let c = run(src);
-        assert_eq!(resolved(&c), Some(Value::Nothing));
+        match resolved(&c) {
+            Some(Value::Undefined(u)) => {
+                assert_eq!(u.describe(), "cannot divide the number `1` by the text `\"a\"`");
+                assert_eq!(u.pos(), Some(src.find('/').unwrap()));
+            }
+            other => panic!("expected an undefined value, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_chain_on_undefined_passes_it_on() {
+        // `x ~> f` is a later `f x`: an undefined target reaches `f` as it is
+        let c = run(r#"(1 - "a") ~> undef.inspect"#);
+        let Some(Value::Namespace(info)) = resolved(&c) else { panic!("{c:?}") };
+        assert_eq!(info.get("op"), Value::Text("subtraction".into()));
+    }
+
+    #[test]
+    fn test_chain_with_builtin_error_gets_the_position_of_the_tilde() {
+        // A built-in chained with `~>` fails at the `~>`, in its expression
+        let src = r#"p = promise.create(), c = p ~> math.sqrt, promise.resolve p (-1), c"#;
+        let c = run(src);
+        match resolved(&c) {
+            Some(Value::Undefined(u)) => assert_eq!(u.pos(), Some(src.find('~').unwrap())),
+            other => panic!("expected an undefined value, got {other:?}"),
+        }
     }
 
     #[test]

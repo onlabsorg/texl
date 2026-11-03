@@ -118,7 +118,7 @@ pub enum Value {
     /// A native Rust function callable from Swan.
     Builtin(BuiltinFn),
 
-    /// A promise. It resolves at most once and never rejects; an `Undefined` result resolves to `Nothing`.
+    /// A promise. It resolves at most once and never rejects; it may hold an `Undefined` value like any other.
     Promise(Promise),
 
     /// The result of an invalid operation, such as `"a" - 1`.

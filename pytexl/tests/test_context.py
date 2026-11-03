@@ -211,9 +211,11 @@ class PromiseTest(unittest.IsolatedAsyncioTestCase):
         await self.context.render("<% promise.resolve q 7 %>")
         self.assertEqual(await self.context.get("p"), 7)
 
-    async def test_promises_of_failed_operations_resolve_to_none(self):
+    async def test_promises_of_failed_operations_resolve_to_undefined(self):
         await self.context.render('<% p = promise.create(), d = p ~> (x -> x - 1), promise.resolve p "a" %>')
-        self.assertIsNone(await self.context.get("d"))
+        u = await self.context.get("d")
+        self.assertIsInstance(u, pytexl.Undefined)
+        self.assertEqual((u.op, u.lhv, u.rhv), ("subtraction", "a", 1))
 
 
 class FunctionTest(unittest.IsolatedAsyncioTestCase):

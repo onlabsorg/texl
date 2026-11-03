@@ -8,8 +8,8 @@
 //! Semantics:
 //! - **Resolve once.** The first call to [`Promise::resolve`] wins; later calls
 //!   are ignored.
-//! - **Never rejects.** There is no failure state. Resolving with
-//!   `Value::Undefined(_)` stores `Value::Nothing` instead.
+//! - **Never rejects.** There is no failure state. An undefined value is a
+//!   value like any other: resolving with `Value::Undefined(_)` stores it.
 //! - **Synchronous dispatch.** Callbacks run immediately on the caller's stack,
 //!   either inside `resolve` (if registered while pending) or inside `then`
 //!   (if the promise is already resolved). There is no event loop or scheduler
@@ -86,7 +86,7 @@ impl fmt::Debug for PromiseData {
 /// - **Resolve once.** The first call to `resolve` wins; later calls are
 ///   ignored.
 /// - **Never rejects.** There is no failure state. Resolving with
-///   [`Value::Undefined`] stores [`Value::Nothing`] instead.
+///   [`Value::Undefined`] stores it, as any other value.
 /// - **Synchronous dispatch.** Callbacks run on the caller's stack, inside
 ///   `resolve` (if registered while pending) or inside `then` (if already
 ///   resolved). There is no scheduler in this crate.
@@ -170,8 +170,8 @@ impl Promise {
     ///
     /// - Only the first call has any effect; if the promise is already resolved,
     ///   `v` is ignored and nothing runs.
-    /// - `Value::Undefined(_)` is replaced by `Value::Nothing`, so a promise never
-    ///   holds an undefined value.
+    /// - Any value is stored as it is, `Value::Undefined(_)` included: an
+    ///   undefined value is not a rejection.
     /// - Each queued callback is called in registration order with a clone of the
     ///   resolved value, and its result resolves the associated child promise.
     ///   Resolution therefore cascades down the chain synchronously.
@@ -185,12 +185,9 @@ impl Promise {
             return;
         }
 
-        // A swan promise never rejects; undefined values resolve to Nothing
-        let resolve_val = if matches!(v, Value::Undefined(_)) {
-            Value::Nothing
-        } else {
-            v
-        };
+        // A Swan promise never rejects, and an undefined value is not a
+        // rejection: it is stored like any other value (T9).
+        let resolve_val = v;
 
         inner.value = Some(resolve_val.clone());
 

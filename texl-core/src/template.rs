@@ -488,4 +488,14 @@ mod tests {
         let input = "<% x = 1 ) y = 2 %>|<% x %>|<% 2 + 1e3 ) 1 %>";
         assert_eq!(block_on(render(input, &scope)).text, "[[Undefined]]||[[Undefined]]");
     }
+
+    #[test]
+    /// An error that reaches a tag through a promise is shown, not dropped.
+    fn test_undefined_through_a_promise() {
+        let scope = create_test_scope();
+        let rendering = block_on(render(r#"<% 1 ~> (x -> x - "a") %>|<% (1 - "a") ~> (x -> x) %>"#, &scope));
+        assert_eq!(rendering.text, "[[Undefined]]|[[Undefined]]");
+        let Value::Undefined(u) = &rendering.tags[0].value else { panic!() };
+        assert_eq!(u.describe(), "cannot subtract the text `\"a\"` from the number `1`");
+    }
 }

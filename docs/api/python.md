@@ -687,8 +687,9 @@ class Promise:
 ```
 
 A Swan promise. Awaiting it returns its value, converted to a Python value.
-Promises never fail: a promise whose value would be undefined resolves to
-`None` instead, as in Swan. The `done` attribute is `True` once the promise has a value. Await a
+Promises never fail, as in Swan: a promise of an operation that fails
+resolves to an [`Undefined`](#undefined), and one whose work cannot run (a
+coroutine that raises, a failed load) to `None`. The `done` attribute is `True` once the promise has a value. Await a
 promise in a running event loop.
 
 ```python

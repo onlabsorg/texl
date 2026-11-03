@@ -222,6 +222,9 @@ async function testDebug() {
     check("cause is the undefined operand", nested.cause, nested.rhv);
     check("a root cause has no cause", nested.cause.cause, null);
     check("built-in errors have the position of the call", (await engine.render("d.texl", "<% math.sqrt(-1) %>")).tags[0].value.pos, 12);
+    const late = await engine.render("d.texl", '<% 1 ~> (x -> x - "a") %>');
+    check("errors through promises are rendered", late.text, "[[Undefined]]");
+    check("errors through promises keep their details", late.tags[0].value.op, "subtraction");
 
     const context = engine.createContext();
     context.set("back", u);

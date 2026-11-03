@@ -14,8 +14,7 @@
 //! # Semantics
 //!
 //! - Promises never reject. There is no error state.
-//! - If the resolving value is `Undefined`, the promise is resolved with
-//!   `Nothing` instead.
+//! - An `Undefined` resolving value is stored like any other value.
 //! - Tuples are stored as-is. They are not mapped over or flattened, so
 //!   `promise.resolve p (1, 2)` resolves `p` with the tuple `(1, 2)`.
 //! - If the first argument to `promise.resolve` is not a promise, the result is
@@ -62,8 +61,7 @@ fn promise_create(_arg: Value) -> Value {
 ///
 /// - If `p` is a `Value::Promise`, returns a builtin function that takes the
 ///   resolving value `v`, resolves `p` with it, and returns `Nothing`.
-///   An `Undefined` value `v` is stored as `Nothing`; tuples are stored
-///   unchanged.
+///   Any value is stored unchanged, `Undefined` and tuples included.
 /// - Otherwise returns `Undefined` (binary operation `promise.resolve`,
 ///   with `p` as left operand and `Nothing` as right operand).
 fn promise_resolve(p: Value) -> Value {
@@ -122,8 +120,8 @@ mod tests {
 
 
     #[test]
-    fn test_resolve_undefined_maps_to_nothing() {
-        // Swan promises resolve Undefined to Nothing
+    fn test_resolve_undefined_keeps_it() {
+        // An undefined value is a value like any other: the promise keeps it
         let scope = root_scope();
         let src = r#"
             p = promise.create(),
@@ -135,7 +133,12 @@ mod tests {
         let result = eval(&ast, &scope);
 
         if let Value::Promise(p) = result {
-            assert_eq!(p.0.borrow().value, Some(Value::Nothing));
+            match p.0.borrow().value.clone() {
+                Some(Value::Undefined(u)) => {
+                    assert_eq!(u.describe(), "cannot divide the number `1` by the text `\"abc\"`");
+                }
+                other => panic!("expected an undefined value, got {other:?}"),
+            }
         } else {
             panic!("expected Value::Promise");
         }

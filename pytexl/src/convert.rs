@@ -37,8 +37,10 @@ const MAX_SAFE_INTEGER: f64 = 9_007_199_254_740_991.0;
 
 /// A Swan promise. Await it to get its value, converted to a Python value.
 ///
-/// Promises never fail: an operation that cannot produce a value resolves to
-/// `None`. Await a promise inside a running asyncio event loop.
+/// Promises never fail: a promise of an operation that fails resolves to an
+/// `Undefined`, and one whose work cannot run (a coroutine that raises, a
+/// failed load) to `None`. Await a promise inside a running asyncio event
+/// loop.
 ///
 /// Example:
 ///     >>> context = pytexl.Engine().create_context()

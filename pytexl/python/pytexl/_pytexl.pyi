@@ -8,8 +8,10 @@ from . import Loader
 class Promise:
     """A Swan promise. Await it to get its value, converted to a Python value.
 
-    Promises never fail: an operation that cannot produce a value resolves to
-    ``None``. Await a promise inside a running asyncio event loop.
+    Promises never fail: a promise of an operation that fails resolves to an
+    :class:`Undefined`, and one whose work cannot run (a coroutine that
+    raises, a failed load) to ``None``. Await a promise inside a running
+    asyncio event loop.
     """
 
     @property

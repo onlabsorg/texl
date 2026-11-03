@@ -174,3 +174,23 @@ the call position to every built-in, or wrapping built-in errors in a new
 "call" error, were considered: the first changes every built-in and host
 function for the same result, the second adds a level that repeats the
 function name already in `op`.
+
+## T9 — 2026-11-03 — Promises keep undefined values
+
+A promise resolved with an `Undefined` value holds it, like any other
+value; it is no longer replaced with `Nothing`. Promises still never
+reject: there is no failure state. So `x ~> f` behaves as a later `f x`
+(an undefined `x` reaches `f`), a `~>` whose function fails resolves to
+the error, with its description and position, and a tag that waits for
+such a promise renders `[[Undefined]]`. The JavaScript and Python
+bindings resolve their promises to the `TexlUndefined` /
+`pytexl.Undefined` object. A promise whose work cannot run (a failed
+import, a rejected JavaScript promise, a Python coroutine that raises)
+still resolves to `Nothing`: there is no Swan error to keep.
+*Reason:* the replacement was justified as "a promise never rejects", but
+an undefined value is not a rejection: in Swan errors are values that flow
+on and are shown where they end up. Replacing it hid every error that went
+through a promise (a tag rendered empty instead of `[[Undefined]]`), made
+`x ~> f` differ from `f x`, and threw away the call position given to
+errors since T8. No part of the engine relies on it: a pending promise is
+told apart by having no value, not by an undefined one.
