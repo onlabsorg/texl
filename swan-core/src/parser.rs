@@ -5,6 +5,11 @@
 //! [`Node::Unclosed`] and [`Node::UnexpectedToken`] leaves, which evaluate to
 //! `Undefined` values. Comments are skipped.
 //!
+//! The whole source must be one expression: when tokens are left over after
+//! it (a stray `)`, an unknown character), [`Parser::parse`] returns the
+//! first syntax error of the source instead of the expression, so nothing is
+//! silently dropped.
+//!
 //! # Precedence
 //!
 //! A higher binding power binds tighter. Prefix operators (`+`, `-`, `!`,
@@ -241,6 +246,10 @@ pub struct Parser<'a> {
     peek_pos:   usize,
     /// Position just past the look-ahead token.
     peek_end:   usize,
+
+    /// The first syntax-error node built while parsing, reported by `parse`
+    /// when tokens are left over after the expression.
+    first_error: Option<Node>,
 }
 
 impl<'a> Parser<'a> {
@@ -264,6 +273,7 @@ impl<'a> Parser<'a> {
             peek_token,
             peek_pos,
             peek_end,
+            first_error: None,
         }
     }
 
@@ -306,6 +316,38 @@ impl<'a> Parser<'a> {
         // Keep advancing while the upcoming token is a comment.
         while matches!(self.peek_token, Token::Comment(_)) {
             self.advance();
+        }
+    }
+
+    /// Returns `node`, a syntax-error node, remembering it if it is the first.
+    fn syntax_error(&mut self, node: Node) -> Node {
+        if self.first_error.is_none() {
+            self.first_error = Some(node.clone());
+        }
+        node
+    }
+
+    /// A [`Node::UnexpectedToken`] for the current token.
+    fn unexpected_token(&mut self) -> Node {
+        let val = self.current_text();
+        self.syntax_error(Node::UnexpectedToken(Leaf { pos: self.current_pos, val }))
+    }
+
+    /// Consumes the token that should close a group opened with the bracket
+    /// matching `closer`, and returns `inner` if it does.
+    ///
+    /// Otherwise it is a syntax error: [`Node::Unclosed`] when the source ends
+    /// first, [`Node::UnexpectedToken`] for any other token (`(1 ] 2)`).
+    fn close_group(&mut self, inner: Node, closer: char) -> Node {
+        self.advance();
+        match (&self.current_token, closer) {
+            (Token::RightRoundBracket, ')')
+            | (Token::RightSquareBracket, ']')
+            | (Token::RightCurlyBracket, '}') => inner,
+            (Token::EndOfExpression, _) => {
+                self.syntax_error(Node::Unclosed(Leaf { pos: self.current_pos, val: closer }))
+            }
+            _ => self.unexpected_token(),
         }
     }
 
@@ -461,12 +503,7 @@ impl<'a> Parser<'a> {
                 } else {
                     let inner = self.parse_expr(0);
                     // Consume the matching `)`.
-                    self.advance();
-                    if matches!(self.current_token, Token::RightRoundBracket) {
-                        inner
-                    } else {
-                        Node::Unclosed(Leaf {pos:self.current_pos, val:')'})
-                    }
+                    self.close_group(inner, ')')
                 }
             }
 
@@ -481,12 +518,7 @@ impl<'a> Parser<'a> {
                     Node::Nothing(Leaf { pos: void_pos, val: () })
                 } else {
                     let inner = self.parse_expr(0);
-                    self.advance();
-                    if matches!(self.current_token, Token::RightSquareBracket) {
-                        inner
-                    } else {
-                        Node::Unclosed(Leaf {pos:self.current_pos, val:']'})
-                    }
+                    self.close_group(inner, ']')
                 };
                 Node::List(UnaryOp { pos, opd: Box::new(inner) })
             }
@@ -501,12 +533,7 @@ impl<'a> Parser<'a> {
                     Node::Nothing(Leaf { pos: void_pos, val: () })
                 } else {
                     let inner = self.parse_expr(0);
-                    self.advance();
-                    if matches!(self.current_token, Token::RightCurlyBracket) {
-                        inner
-                    } else {
-                        Node::Unclosed(Leaf {pos:self.current_pos, val:'}'})
-                    }
+                    self.close_group(inner, '}')
                 };
                 Node::Namespace(UnaryOp { pos, opd: Box::new(inner) })
             }
@@ -545,10 +572,7 @@ impl<'a> Parser<'a> {
             // -----------------------------------------------------------------
             // Anything else is unexpected at the start of an expression.
             // -----------------------------------------------------------------
-            _ => {
-                let val = self.current_text();
-                Node::UnexpectedToken( Leaf {pos, val})
-            }
+            _ => self.unexpected_token(),
         }
     }
 
@@ -653,7 +677,21 @@ impl<'a> Parser<'a> {
     pub fn parse(&mut self) -> Node {
         // Start with the lowest possible binding power so nothing is "held
         // back" — the entire input becomes one big expression.
-        self.parse_expr(0)
+        let node = self.parse_expr(0);
+
+        // The expression must use up the whole source. `parse_expr` stops at
+        // the first token that cannot continue it (a stray closing bracket,
+        // an unknown character); dropping the rest silently would turn
+        // `2 + 1e3 ) 1` into 1002. Report the first syntax error instead:
+        // an earlier one (`(1 ] 2)` leaves `2)` over, but the error is `]`)
+        // or else the first left-over token.
+        self.skip_comments();
+        if matches!(self.peek_token, Token::EndOfExpression) {
+            return node;
+        }
+        self.advance();
+        let stray = self.unexpected_token();
+        self.first_error.take().unwrap_or(stray)
     }
 }
 
@@ -962,5 +1000,58 @@ mod tests {
             })
         );
     }
-}
 
+    // -------------------------------------------------------------------------
+    // Syntax errors
+    // -------------------------------------------------------------------------
+
+    fn unexpected(pos: usize, val: &str) -> Node {
+        Node::UnexpectedToken(Leaf { pos, val: val.to_string() })
+    }
+
+    #[test]
+    fn test_left_over_tokens_are_an_error() {
+        // The expression stops at the stray token; the rest is not dropped.
+        assert_eq!(parse("2 + 1e3 ) 1"), unexpected(8, ")"));
+        assert_eq!(parse("1 ] 2"), unexpected(2, "]"));
+        assert_eq!(parse("1 } x = 5"), unexpected(2, "}"));
+        assert_eq!(parse("x = 1 ) y = 2"), unexpected(6, ")"));
+        assert_eq!(parse("1 @ 2"), unexpected(2, "@"));
+        assert_eq!(parse("1 )"), unexpected(2, ")"));
+    }
+
+    #[test]
+    fn test_left_over_tokens_after_comments() {
+        assert_eq!(parse("1 # c\n )"), unexpected(7, ")"));
+        assert_eq!(parse("1 # c\n"), Node::Numb(Leaf { pos: 0, val: 1.0 }));
+    }
+
+    #[test]
+    fn test_unclosed_group() {
+        assert_eq!(parse("(1, 2"), Node::Unclosed(Leaf { pos: 5, val: ')' }));
+        assert_eq!(
+            parse("[1"),
+            Node::List(UnaryOp {
+                pos: 0,
+                opd: Box::new(Node::Unclosed(Leaf { pos: 2, val: ']' })),
+            })
+        );
+    }
+
+    #[test]
+    fn test_wrong_token_closing_a_group() {
+        // Not "missing `)`": the error is the token found instead.
+        assert_eq!(parse("(1 @ 2)"), unexpected(3, "@"));
+        assert_eq!(parse("{a = 1 )"), Node::Namespace(UnaryOp {
+            pos: 0,
+            opd: Box::new(unexpected(7, ")")),
+        }));
+    }
+
+    #[test]
+    fn test_first_syntax_error_is_reported() {
+        // `]` ends the group early; the left-over `2)` must not hide it.
+        assert_eq!(parse("(1 ] 2)"), unexpected(3, "]"));
+        assert_eq!(parse("[(1 ] 2)]"), unexpected(4, "]"));
+    }
+}

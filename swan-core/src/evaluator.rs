@@ -1224,4 +1224,18 @@ mod tests {
         assert_eq!(run("!p"), Value::Bool(false));
         assert_eq!(run("(FALSE, p) ? 1"), Value::Numb(1.0));
     }
+
+    #[test]
+    fn left_over_tokens() {
+        // A stray token makes the whole expression undefined, instead of
+        // silently ending it (`2 + 1e3 ) 1` used to give 1002).
+        match evaluate("2 + 1e3 ) 1") {
+            Value::Undefined(undef) => {
+                assert!(matches!(&undef, Undef::Token { token, .. } if token == ")"));
+                assert_eq!(undef.describe(), "unexpected `)`");
+            }
+            other => panic!("expected Undefined, got {other:?}"),
+        }
+        assert!(matches!(evaluate("(1 @ 2)"), Value::Undefined(Undef::Token { .. })));
+    }
 }

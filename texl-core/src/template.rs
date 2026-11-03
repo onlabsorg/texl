@@ -480,4 +480,12 @@ mod tests {
         let result = block_on(fut).text;
         assert_eq!(result, "Value: 42!");
     }
+
+    #[test]
+    /// A stray token makes the whole tag undefined; nothing after it runs.
+    fn test_stray_token_in_tag() {
+        let scope = create_test_scope();
+        let input = "<% x = 1 ) y = 2 %>|<% x %>|<% 2 + 1e3 ) 1 %>";
+        assert_eq!(block_on(render(input, &scope)).text, "[[Undefined]]||[[Undefined]]");
+    }
 }

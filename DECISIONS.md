@@ -127,3 +127,20 @@ identifier would need an engine-wide table (against T1) and would point
 into the wrong version of a document re-rendered after an edit. A
 `members` hook on `Origin` was considered to avoid the override and not
 adopted, to keep the trait minimal.
+
+## T7 — 2026-11-03 — An expression must use up its whole source
+
+`Parser::parse` checks that the expression ends where the source ends. When
+tokens are left over (a stray `)`, `]` or `}`, an unknown character), the
+whole expression becomes the first syntax error found in the source, as a
+`Node::UnexpectedToken` (`Undef::Token`, "unexpected `)`"); the part parsed
+so far is dropped. A group closed by the wrong token, as in `(1 @ 2)`, is an
+unexpected token at that token, no longer "missing closing `)`";
+`Node::Unclosed` is kept for a source that ends before the group is closed.
+*Reason:* the parser stopped at the first token that could not continue the
+expression and silently ignored the rest, so `2 + 1e3 ) 1` gave 1002 and in
+`<% x = 1 ) y = 2 %>` the assignment of `y` never happened, with no error.
+A syntax error must not produce a value (T3: errors explain themselves
+where they occur). Reporting the first error, rather than the left-over
+token, points at the cause: in `(1 ] 2)` the left-over is the final `)`,
+but the mistake is the `]`.

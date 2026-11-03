@@ -140,7 +140,12 @@ available to hosts too, but it cannot import documents.
   indices. Since 2026-11-03, the Swan language no longer knows about
   documents (see "Architecture"); for templates and hosts nothing changes,
   except that inspecting an error in code built at run time with `parse`
-  gives its position within that code, with no document address.
+  gives its position within that code, with no document address. Also
+  since 2026-11-03, an expression followed by something that does not
+  belong to it (a stray `)` or an unknown symbol, as in `2 + 1e3 ) 1`) is
+  an error instead of silently ignoring the rest; such a tag used to show a
+  value, and now shows `[[Undefined]]` and sets no names. A bracket closed
+  by the wrong symbol is reported as that symbol, not as a missing bracket.
 - Available: browser/JavaScript, Python, Rust.
 - The `texl` command-line tool (`texl-cli`) has been removed from the
   repository; its last release was 0.2.0 (2026-10-25), and its binaries

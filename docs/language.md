@@ -37,6 +37,12 @@ Consequences:
 
 - **Each tag is parsed on its own.** A syntax error affects one tag only; the
   next tag starts clean.
+- **A tag is one whole expression.** Nothing in it is silently ignored: a
+  token left over after the expression (`<% 2 + 1e3 ) 1 %>`) makes the whole
+  tag `Undefined`, with the first syntax error of the tag (``unexpected `)` ``),
+  and none of it runs, assignments included. A group closed by the wrong
+  token, as in `(1 @ 2)`, is an unexpected token at that token; ``missing
+  closing `)` `` means the tag ended before the group was closed.
 - **An `Undefined` value records what went wrong.** Its payload (the Rust type
   `Undef`) has a kind (`UnaryOperation`, `BinaryOperation`, `Termination`,
   `Token`, `Name`, `Value`), the operation, the operands, a description in
