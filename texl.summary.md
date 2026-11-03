@@ -121,9 +121,10 @@ available to hosts too, but it cannot import documents.
 ## Status
 
 - MIT licensed; source at <https://github.com/onlabsorg/texl>.
-- Latest releases (2026-10-25): `texl-wasm` 0.4.0, `pytexl` 0.4.0. The Rust
-  crates (`swan-core` 0.2.0, `texl-core` 0.3.0) are used from the
-  repository; they are not on crates.io.
+- Latest releases (2026-10-25): `texl-wasm` 0.4.0, `pytexl` 0.4.0. Version
+  0.5.0 of both is set in the repository (2026-11-03) but not yet tagged or
+  published. The Rust crates (`swan-core` 0.3.0, `texl-core` 0.4.0) are used
+  from the repository; they are not on crates.io.
 - Version 0.4.0 changed how hosts use the engine: rendering text now needs a
   location, documents are no longer cached between renderings, imported
   documents no longer see the names of their importer, namespaces are
