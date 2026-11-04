@@ -292,7 +292,7 @@ dependencies = [
 
 [[package]]
 name = "pytexl"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "pyo3",
  "pyo3-build-config",
@@ -365,7 +365,7 @@ checksum = "6ce2be8dc25455e1f91df71bfa12ad37d7af1092ae736f3a6cd0e37bc7810596"
 
 [[package]]
 name = "swan-core"
-version = "0.3.0"
+version = "0.4.0"
 
 [[package]]
 name = "syn"
@@ -397,7 +397,7 @@ checksum = "adb6935a6f5c20170eeceb1a3835a49e12e19d792f6dd344ccc76a985ca5a6ca"
 
 [[package]]
 name = "texl-core"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "swan-core",
  "url",
@@ -405,7 +405,7 @@ dependencies = [
 
 [[package]]
 name = "texl-wasm"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "js-sys",
  "swan-core",

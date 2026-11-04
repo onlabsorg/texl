@@ -31,7 +31,7 @@ docs/
 <pre id="output"></pre>
 
 <script type="module">
-import init, { TexlEngine } from "https://cdn.jsdelivr.net/npm/@onlabsorg/texl@0.5.0/texl_wasm.js";
+import init, { TexlEngine } from "https://cdn.jsdelivr.net/npm/@onlabsorg/texl@0.6.0/texl_wasm.js";
 
 await init();
 const engine = new TexlEngine({ user: { name: "Ada", role: "editor" } });
