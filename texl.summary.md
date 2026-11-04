@@ -123,8 +123,8 @@ available to hosts too, but it cannot import documents.
 ## Status
 
 - MIT licensed; source at <https://github.com/onlabsorg/texl>.
-- Latest releases (2026-11-03): `texl-wasm` 0.5.0, `pytexl` 0.5.0. The Rust
-  crates (`swan-core` 0.3.0, `texl-core` 0.4.0) are used
+- Latest releases (2026-11-04): `texl-wasm` 0.6.0, `pytexl` 0.6.0. The Rust
+  crates (`swan-core` 0.4.0, `texl-core` 0.5.0) are used
   from the repository; they are not on crates.io.
 - Version 0.4.0 changed how hosts use the engine: rendering text now needs a
   location, documents are no longer cached between renderings, imported
@@ -161,8 +161,8 @@ available to hosts too, but it cannot import documents.
   directly from Python gives an error with no position. A document handed
   back to the engine by JavaScript or Python keeps correct expression
   positions; they used to go wrong in text with non-English characters.
-- Not yet released (in the repository since 2026-11-04): an error also gives
-  JavaScript and Python programs the source text it was made in, so they can
+- Version 0.6.0 (2026-11-04) changes the host interface again. An error also
+  gives JavaScript and Python programs the source text it was made in, so they can
   show the code around it. JavaScript programs now tell a tuple from a list:
   a tuple arrives as a `Tuple` (an array with its own class), and passing one
   back gives a tuple, where it used to become a list. Lists now follow the
@@ -184,7 +184,9 @@ available to hosts too, but it cannot import documents.
   fetches such a document gets an error in its own language: an exception in
   Python, a rejected promise in JavaScript, an error result in Rust; before,
   it got an empty result. A location that is not valid now gives a JavaScript
-  program a proper `Error` instead of a text.
+  program a proper `Error` instead of a text. An `Undefined` value made
+  deliberately with `undef.from` now describes itself like any other, as
+  "Custom undefined value: 5" instead of "undefined on purpose".
 - Available: browser/JavaScript, Python, Rust.
 - The `texl` command-line tool (`texl-cli`) has been removed from the
   repository; its last release was 0.2.0 (2026-10-25), and its binaries
