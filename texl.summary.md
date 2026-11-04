@@ -66,8 +66,10 @@ document and a little program that produces it.
   explains itself in plain words (for example "cannot subtract the number 1
   from the text "a""), points to the value that caused it, and records the
   document and the position where it was made, also when the error happens
-  inside a function imported from another document. An editor can thus
-  highlight each broken expression and say what is wrong with it. The
+  inside a function imported from another document. A host program can also
+  read that document's source from the error, to show the code around it. An
+  editor can thus highlight each broken expression and say what is wrong with
+  it. The
   default output, `[[Undefined]]`, is unchanged.
 - **Asynchronous by design.** Loading a document or fetching data may take
   time. Swan has a built-in `Promise` value (chained with `~>`) and rendering
@@ -121,9 +123,8 @@ available to hosts too, but it cannot import documents.
 ## Status
 
 - MIT licensed; source at <https://github.com/onlabsorg/texl>.
-- Latest releases (2026-10-25): `texl-wasm` 0.4.0, `pytexl` 0.4.0. Version
-  0.5.0 of both is set in the repository (2026-11-03) but not yet tagged or
-  published. The Rust crates (`swan-core` 0.3.0, `texl-core` 0.4.0) are used
+- Latest releases (2026-11-03): `texl-wasm` 0.5.0, `pytexl` 0.5.0. The Rust
+  crates (`swan-core` 0.3.0, `texl-core` 0.4.0) are used
   from the repository; they are not on crates.io.
 - Version 0.4.0 changed how hosts use the engine: rendering text now needs a
   location, documents are no longer cached between renderings, imported
@@ -131,9 +132,8 @@ available to hosts too, but it cannot import documents.
   immutable and no longer inherit names from where they were created,
   names a document binds with `bind` are now part of its data, and memory
   is now cleaned up after each rendering (see "Memory" below).
-- Not yet released (in the repository since 2026-11-01): the error details
-  and expression list described in "Finding errors". They change the host
-  interface: a document's rendered output is now called `text` instead of
+- Version 0.5.0 (2026-11-03) brought the error details and expression list
+  described in "Finding errors". They change the host interface: a document's rendered output is now called `text` instead of
   `rendering`, rendering in a context returns the text together with the
   context's names and the expression list, errors reach JavaScript as
   objects with their details instead of `undefined`, and error positions
@@ -161,6 +161,9 @@ available to hosts too, but it cannot import documents.
   directly from Python gives an error with no position. A document handed
   back to the engine by JavaScript or Python keeps correct expression
   positions; they used to go wrong in text with non-English characters.
+- Not yet released (in the repository since 2026-11-04): an error also gives
+  JavaScript and Python programs the source text it was made in, so they can
+  show the code around it.
 - Available: browser/JavaScript, Python, Rust.
 - The `texl` command-line tool (`texl-cli`) has been removed from the
   repository; its last release was 0.2.0 (2026-10-25), and its binaries

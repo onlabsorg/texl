@@ -217,3 +217,23 @@ converted twice and its positions were wrong in non-ASCII text. Marking
 converted documents was not chosen: the marker would have to survive plain
 JavaScript objects and Python dicts. A host object that has exactly the five
 members of a document is treated as one, in both directions.
+
+## T11 — 2026-11-04 — Undefined values show hosts their source
+
+The `TexlUndefined` object and `pytexl.Undefined` have a `source` member: the
+text `pos` is an index of, which is the whole document for a value made by a
+tag and the code itself for code run by `parse`. So `source[pos]` is where the
+error is, in the host's string units, and it is `null` / `None` exactly when
+`pos` is. `undef.inspect` in Swan and `Undefined.inspect()` in Python do not
+list it; Rust hosts already have it as the `text` of `document::locate`.
+*Reason:* a host could not show the code around an error unless it kept every
+source itself, and could not do so at all for imported documents and `parse`d
+code, whereas the value already holds the text. The whole text rather than a
+chunk around the error, because how much to show is up to the host. Leaving it
+out of `inspect` keeps these dumps short and readable. Both bindings make the
+string only when it is read, since a document can be large and every nested
+`cause` has its own object: a Python property, and in JavaScript the one
+accessor of the frozen object (T5 converts the other members up front). The
+JavaScript getters are one shared function bound to the object's key in the
+table of T5; a closure per object would have to be freed by hand, and one
+that held the object would keep it from being collected.

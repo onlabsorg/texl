@@ -445,6 +445,7 @@ class TagsTest(unittest.IsolatedAsyncioTestCase):
         # The assignment renders nothing; the error is in `data`, with its place in the source
         u = doc.data["y"]
         self.assertEqual(source[u.pos], "-")
+        self.assertEqual(u.source, source)
         self.assertEqual(u.uri, "mem://host/main.texl")
         # The same value through the second tag has the same position
         self.assertEqual(tag.value.pos, u.pos)
@@ -458,6 +459,7 @@ class TagsTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(lib_doc["tags"][0]["start"], 2)
         u = doc.tags[1].value
         self.assertEqual(u.uri, "mem://host/lib.texl")
+        self.assertEqual(u.source, lib)
         self.assertEqual(lib[u.pos], "-")
 
     async def test_context_rendering(self):

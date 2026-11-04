@@ -127,7 +127,7 @@ Everything is `Rc`-based and single-threaded. See
   become built-ins, JavaScript promises become Swan promises. Positions
   (undefined values, document tags) are converted to UTF-16 code units.
 - `src/undefined.rs`: undefined values as frozen plain objects
-  (`TexlUndefined`). A private `WeakMap` gives the Swan value back when the
+  (`TexlUndefined`), with a getter for their source text. A private `WeakMap` gives the Swan value back when the
   object returns to Swan; a `FinalizationRegistry` frees it when JavaScript
   collects the object.
 

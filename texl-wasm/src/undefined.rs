@@ -4,20 +4,23 @@
 //! in the TypeScript types) with every detail already converted: `type`,
 //! `description`, the operands (`op`, `val`, `lhv`, `rhv`), `expected`,
 //! `token`, `pos` (in UTF-16 code units, a JS string index), `uri` and
-//! `cause`. Members that do not apply are `null`.
+//! `cause`. Members that do not apply are `null`. Only `source`, the text
+//! `pos` indexes, is not converted up front: it can be a whole document, so
+//! it is a getter that makes the string each time it is read.
 //!
 //! The object holds no wasm memory, so it needs no `free()`. To give the
 //! original value back to Swan when the object is passed back (to
 //! `context.set`, or as the result of a JS function), a module-private
 //! `WeakMap` maps each object to a key in a table of Swan values; a
 //! `FinalizationRegistry` removes the entry when JS collects the object.
-//! Nothing outside this module can make an object that converts to an
+//! The getters are one shared function bound to that key, so they do not
+//! keep the object alive. Nothing outside this module can make an object that converts to an
 //! undefined value, and the lookup runs no JS code.
 
 use std::cell::RefCell;
 use std::collections::HashMap;
 
-use js_sys::{FinalizationRegistry, Object, Reflect, WeakMap};
+use js_sys::{FinalizationRegistry, Function, Object, Reflect, WeakMap};
 use swan_core::value::{Undef, Value};
 use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsCast;
@@ -32,6 +35,8 @@ struct Registry {
     keys: WeakMap,
     /// Removes the entry of a collected object from `undefs`.
     finalizer: FinalizationRegistry,
+    /// Gives the source of the entry whose key is its argument: see [`source_of`].
+    source_getter: Function,
     undefs: HashMap<u32, Undef>,
     next: u32,
 }
@@ -56,14 +61,25 @@ fn with_registry<R>(f: impl FnOnce(&mut Registry) -> R) -> R {
             });
             let finalizer = FinalizationRegistry::new(cleanup.as_ref().unchecked_ref());
             cleanup.forget(); // lives as long as the module
-            Registry { keys: WeakMap::new(), finalizer, undefs: HashMap::new(), next: 0 }
+            let getter = Closure::<dyn Fn(f64) -> JsValue>::new(source_of);
+            let source_getter = getter.as_ref().unchecked_ref::<Function>().clone();
+            getter.forget(); // lives as long as the module
+            Registry { keys: WeakMap::new(), finalizer, source_getter, undefs: HashMap::new(), next: 0 }
         });
         f(reg)
     })
 }
 
+/// The source of the undefined value with this key in the registry, `null`
+/// if it has none or its object has been collected.
+fn source_of(key: f64) -> JsValue {
+    with_registry(|reg| reg.undefs.get(&(key as u32)).cloned())
+        .and_then(|undef| locate(&undef))
+        .map_or(JsValue::NULL, |loc| JsValue::from_str(&loc.text))
+}
+
 /// The members of every `TexlUndefined`, `null` when they do not apply.
-const MEMBERS: [&str; 9] = ["op", "val", "lhv", "rhv", "expected", "token", "pos", "uri", "cause"];
+const MEMBERS: [&str; 10] = ["op", "val", "lhv", "rhv", "expected", "token", "pos", "source", "uri", "cause"];
 
 /// Converts an undefined value to a `TexlUndefined` object.
 pub fn undefined_to_js(undef: &Undef) -> JsValue {
@@ -74,18 +90,17 @@ pub fn undefined_to_js(undef: &Undef) -> JsValue {
     for name in MEMBERS {
         set(name, &JsValue::NULL);
     }
-    // The members in document terms (`pos` in the document, `uri`)
+    // The members in document terms (`uri`)
     for (name, value) in members(undef) {
         match name {
-            "type" | "description" => {}
-            "pos" => {
-                // A position that cannot be located in a document or expression stays `null`
-                if let Some(loc) = locate(undef) {
-                    set("pos", &JsValue::from_f64(utf16_offset(&loc.text, loc.pos) as f64));
-                }
-            }
+            "type" | "description" | "pos" => {}
             _ => set(name, &swan_value_to_js(&value)),
         }
+    }
+    // A position that cannot be located in a document or expression stays `null`
+    let location = locate(undef);
+    if let Some(loc) = &location {
+        set("pos", &JsValue::from_f64(utf16_offset(&loc.text, loc.pos) as f64));
     }
 
     // `cause` is the object of the first undefined operand (or tuple item), already converted
@@ -106,15 +121,22 @@ pub fn undefined_to_js(undef: &Undef) -> JsValue {
         }
     }
 
-    Object::freeze(&obj);
-    with_registry(|reg| {
+    let (key, source_getter) = with_registry(|reg| {
         let key = reg.next;
         reg.next = reg.next.wrapping_add(1);
         reg.undefs.insert(key, undef.clone());
         let key = JsValue::from_f64(key as f64);
         reg.keys.set(&obj, &key);
         reg.finalizer.register(&obj, &key);
+        (key, reg.source_getter.clone())
     });
+    if location.is_some() {
+        let descriptor = Object::new();
+        let _ = Reflect::set(&descriptor, &JsValue::from_str("get"), &source_getter.bind1(&JsValue::NULL, &key));
+        let _ = Reflect::set(&descriptor, &JsValue::from_str("enumerable"), &JsValue::TRUE);
+        Object::define_property(&obj, &JsValue::from_str("source"), &descriptor);
+    }
+    Object::freeze(&obj);
     obj.into()
 }
 

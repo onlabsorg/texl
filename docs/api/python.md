@@ -274,8 +274,8 @@ document tells you where each one is. Its `tags` list has one
 nothing, such as assignments. Each tag has its span in the source (`start`,
 `end`), the span of its text in the output (`out_start`, `out_end`), and its
 `value`. An [`Undefined`](#undefined) says what went wrong (`description`),
-where (`uri`, `pos`) and why (`cause`, the operand that was already
-undefined).
+where (`uri`, `source`, `pos`) and why (`cause`, the operand that was
+already undefined).
 
 ```python
 engine = pytexl.Engine({"price": 12.5})
@@ -292,7 +292,8 @@ source[err.pos]        # '*'
 
 Positions are in code points, so they index Python strings directly. `pos`
 is in the source of the code that made the value: for an error in a function
-imported from another document, `uri` is that document's URL.
+imported from another document, `uri` is that document's URL and `source` its
+text, so a host can show the code around an error.
 
 ## Contexts
 
@@ -729,6 +730,7 @@ class Undefined:
     lhv: Any
     rhv: Any
     pos: int | None
+    source: str | None
     uri: str | None
     expected: str | None
     token: str | None
@@ -754,13 +756,15 @@ The operands are [converted](#globals-and-context-values) to Python values,
 so an operand that is itself undefined is an `Undefined` too; `cause` is the
 first of them (or the first undefined item of a tuple operand), so following
 `cause` leads to the root cause. `pos` is the position of the error in the
-source of the code that made it, in code points, and `uri` is the URL of
-that document. An error of a built-in or host function is at the call that
-returned it. Both are `None` for values made on purpose (`undef.from`) and
-for a built-in function called directly from Python, and
-`uri` is `None` for a template rendered in a context. `inspect()` returns `type`,
-`description` and the attributes that apply, as a dict. `repr` shows the
-type, the position and the description.
+source of the code that made it, in code points; `source` is that text (the
+whole document, or the code run by `parse`), so `source[pos]` is where the
+error is, and `uri` is the URL of that document. An error of a built-in or
+host function is at the call that returned it. All three are `None` for
+values made on purpose (`undef.from`) and for a built-in function called
+directly from Python, and `uri` is `None` for a template rendered in a
+context. `inspect()` returns `type`, `description` and the attributes that
+apply except `source`, as a dict. `repr` shows the type, the position and the
+description.
 
 An `Undefined` is falsy. Two `Undefined` objects are equal when they have the
 same type and attributes, whatever their position. Passed back to Swan, an

@@ -190,8 +190,8 @@ order, including the tags that render nothing, such as assignments. Each tag
 has its span in the source (`start`, `end`), the span of its text in the
 output (`out_start`, `out_end`), and its `value`. An undefined value is a
 [`TexlUndefined`](#texlundefined): it says what went wrong (`description`),
-where (`uri`, `pos`) and why (`cause`, the operand that was already
-undefined).
+where (`uri`, `source`, `pos`) and why (`cause`, the operand that was
+already undefined).
 
 ```js
 import init, { TexlEngine, isUndefined } from "@onlabsorg/texl";
@@ -212,7 +212,8 @@ source.slice(err.pos, err.pos + 1);            // "*"
 
 Positions are UTF-16 code units, so they index JavaScript strings directly.
 `pos` is in the source of the code that made the value: for an error in a
-function imported from another document, `uri` is that document's URL.
+function imported from another document, `uri` is that document's URL and
+`source` its text, so a host can show the code around an error.
 
 ## Memory
 
@@ -609,6 +610,7 @@ interface TexlUndefined {
     readonly expected: string | null;
     readonly token: string | null;
     readonly pos: number | null;
+    readonly source: string | null;
     readonly uri: string | null;
     readonly cause: TexlUndefined | null;
 }
@@ -616,7 +618,8 @@ interface TexlUndefined {
 
 A Swan undefined value: the result of an invalid operation, such as
 `"a" - 1`. It is a frozen plain object, with the members of `undef.inspect`
-in Swan; those that do not apply are `null`. Passing it back to Swan (with
+in Swan and `source`; those that do not apply are `null`. Everything but
+`source` is converted when the object is made. Passing it back to Swan (with
 `context.set`, or as the result of a JavaScript function) gives the original
 undefined value.
 
@@ -630,6 +633,7 @@ undefined value.
 | `expected`    | The missing closing bracket of a `"Termination"` error.      |
 | `token`       | The misplaced token of a `"Token"` error.                    |
 | `pos`         | Where the error is in the source of the code that made it, in UTF-16 code units; for an error of a built-in or host function, the call that returned it. `null` for values made on purpose (`undef.from`) and when the error has no known place in any source. |
+| `source`      | The text `pos` is an index of: the whole document, or the code run by `parse`. `null` when `pos` is. A getter: the string is made each time it is read, so keep it in a variable to read it many times. |
 | `uri`         | The URL of the document the error is in. `null` when `pos` is, and for templates rendered in a context. |
 | `cause`       | The first operand (or tuple item) that is itself undefined: following `cause` leads to the root cause. |
 

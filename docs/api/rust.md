@@ -329,7 +329,8 @@ URI, the text, the byte offset `pos` in it and the start of the tag. A
 function keeps the expression it was defined in, so an error inside a
 function imported from another document points into that document.
 `texl_core::document::members(&undef)` lists the details in document terms,
-as `undef.inspect` shows them in a template.
+as `undef.inspect` shows them in a template. The bindings give the same text
+as `source`, next to `pos`, so a host can show the code around an error.
 
 A host that evaluates Swan code itself sets the current expression with
 `swan_core::expression::with_expression` around the evaluation. Any type

@@ -201,6 +201,8 @@ class UndefinedTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((u.op, u.lhv, u.rhv), ("subtraction", "hello", 1))
         self.assertEqual(u.pos, 16)  # the position of "-" in '<% u = ("hello" - 1) %>'
         self.assertIsNone(u.uri)  # a context has no URI
+        self.assertEqual(u.source, '<% u = ("hello" - 1) %>')
+        self.assertEqual(u.source[u.pos], "-")
         self.assertEqual(u.description, 'cannot subtract the number `1` from the text `"hello"`')
         self.assertEqual(u.inspect(), {
             "type": "BinaryOperation", "description": u.description,
@@ -232,6 +234,7 @@ class UndefinedTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(termination.inspect(), {
             "type": "Termination", "description": "missing closing `)`", "expected": ")", "pos": 6,
         })
+        self.assertEqual((termination.source, termination.uri), ("(1 + 2", None))  # the parsed text
         assignment = await self.undefined('(parse "1 = 2") {}')
         self.assertEqual((assignment.type, assignment.op), ("BinaryOperation", "assignment"))
         self.assertEqual(assignment.lhv.inspect(), {"type": "Name", "description": "expected a name", "pos": 0})
@@ -240,7 +243,7 @@ class UndefinedTest(unittest.IsolatedAsyncioTestCase):
 
     async def test_attributes_that_do_not_apply_are_none(self):
         u = await self.undefined("undef.from 1")
-        for name in ("op", "lhv", "rhv", "pos", "uri", "expected", "token", "cause"):
+        for name in ("op", "lhv", "rhv", "pos", "source", "uri", "expected", "token", "cause"):
             with self.subTest(name=name):
                 self.assertIsNone(getattr(u, name))
 

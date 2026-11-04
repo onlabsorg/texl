@@ -34,7 +34,8 @@ Swan values come back as ``None`` (``Nothing``), ``bool``, ``int`` (integral
 numbers) or ``float``, ``str``, ``list``, ``tuple``, ``dict`` (namespaces),
 :class:`Promise`, :class:`Function` and :class:`Undefined`. An
 :class:`Undefined` keeps the details of the error that produced it: a
-description in plain words, its cause, and where it is (``uri``, ``pos``).
+description in plain words, its cause, and where it is (``uri``, ``source``,
+``pos``).
 
 Positions are in code points, so they index Python strings directly: the
 ``pos`` of an :class:`Undefined` and the spans of a :class:`Tag`.

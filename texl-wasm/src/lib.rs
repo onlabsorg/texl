@@ -111,6 +111,8 @@ export interface TexlUndefined {
     readonly token: string | null;
     /** Where the error is in the source of the code that made it, in UTF-16 code units (for an error of a built-in or host function, the call that returned it); `null` for values made on purpose (`undef.from`). */
     readonly pos: number | null;
+    /** The text `pos` is an index of: the whole document, or the code run by `parse`; `null` when `pos` is. A getter: the string is made each time it is read. */
+    readonly source: string | null;
     /** The URL of the document the error is in; `null` when `pos` is, and for contexts. */
     readonly uri: string | null;
     /** The first operand that is itself undefined: following `cause` leads to the root cause. */

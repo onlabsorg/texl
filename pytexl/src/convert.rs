@@ -139,11 +139,12 @@ impl Function {
 /// undefined is an `Undefined`, and `cause` is the first of them, so
 /// following `cause` leads to the root cause. `pos` is the position of the
 /// error in the source of the code that made it, in code points (a Python
-/// string index); `uri` is the URL of that document. An error of a built-in
-/// or host function is at the call that returned it. Both are `None` for
-/// values made on purpose (`undef.from`), and `uri` is `None` for a template
-/// rendered in a context. An `Undefined` is falsy, and passing it back to
-/// Swan gives the original undefined value.
+/// string index); `source` is that source, so `source[pos]` is where the
+/// error is, and `uri` is the URL of that document. An error of a built-in
+/// or host function is at the call that returned it. All three are `None`
+/// for values made on purpose (`undef.from`), and `uri` is `None` for a
+/// template rendered in a context. An `Undefined` is falsy, and passing it
+/// back to Swan gives the original undefined value.
 ///
 /// Attributes:
 ///     type (str): The kind of error.
@@ -153,6 +154,7 @@ impl Function {
 ///     lhv (Any): The left operand of a binary operation.
 ///     rhv (Any): The right operand of a binary operation.
 ///     pos (int | None): The position of the error in the source, in code points.
+///     source (str | None): The text `pos` is an index of: the whole document, or the code run by `parse`.
 ///     uri (str | None): The URL of the document the error is in.
 ///     expected (str | None): The missing closing bracket.
 ///     token (str | None): The misplaced token.
@@ -239,6 +241,12 @@ impl Undefined {
     #[getter]
     fn pos(&self) -> Option<usize> {
         char_pos(&self.inner)
+    }
+
+    /// str | None: The text ``pos`` is an index of: the whole document, or the code run by ``parse``.
+    #[getter]
+    fn source(&self) -> Option<String> {
+        locate(&self.inner).map(|loc| loc.text.to_string())
     }
 
     /// str | None: The URL of the document the error is in.
