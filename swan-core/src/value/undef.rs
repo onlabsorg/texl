@@ -312,6 +312,10 @@ fn describe_binary(op: &str, lhv: &Value, rhv: &Value) -> String {
         "order"       => format!("cannot compare {l} with {r}"),
         "application" => format!("cannot apply {l} to {r}"),
         "subcontexting" => format!("cannot look up names in {l}: `.` needs a namespace"),
+        "document.load" => match (lhv, rhv) {
+            (Value::Text(url), Value::Text(reason)) => format!("cannot load `{url}`: {reason}"),
+            _ => format!("`{op}` is not defined for {l} and {r}"),
+        },
         "assignment" | "labelling" | "function_definition" => match lhv {
             Value::Namespace(_) => format!(
                 "cannot bind names with `{}` here: the scope is read-only",

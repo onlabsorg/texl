@@ -81,7 +81,7 @@ impl NativeEngine {
     }
 
     /// Returns a promise of the source of the document at `uri` (resolved against the base
-    /// URL), or of None if it cannot be fetched.
+    /// URL), or of an Undefined holding the reason if it cannot be fetched.
     ///
     /// Raises:
     ///     ValueError: If `uri` cannot be resolved to a URL.
@@ -90,20 +90,20 @@ impl NativeEngine {
         let engine = self.engine.clone();
         Ok(Promise {
             inner: runtime::promise_of(async move {
-                engine.fetch(&url).await.map_or(Value::Nothing, |source| Value::Text(source.into()))
+                engine.fetch(&url).await.map_or_else(|undefined| undefined, |source| Value::Text(source.into()))
             }),
         })
     }
 
     /// Returns a promise of the document at `uri` (resolved against the base URL), as a
-    /// dict, or of None if it cannot be loaded.
+    /// dict, or of an Undefined holding the reason if it cannot be loaded.
     ///
     /// Raises:
     ///     ValueError: If `uri` cannot be resolved to a URL.
     fn load(&self, uri: &str) -> PyResult<Promise> {
         let url = self.resolve(uri)?;
         let engine = self.engine.clone();
-        Ok(Promise { inner: runtime::promise_of(async move { engine.load(&url).await }) })
+        Ok(Promise { inner: runtime::promise_of(async move { engine.load(&url).await.unwrap_or_else(|undefined| undefined) }) })
     }
 
     /// Returns a promise of `source` rendered as the document at `uri` (resolved against
@@ -169,15 +169,15 @@ fn py_loader(loader: Py<PyAny>) -> LoaderFn {
     loader_fn(move |uri| {
         let called = Python::attach(|py| loader.bind(py).call1((uri.as_str(),)).map(Bound::unbind));
         async move {
-            let result = called.map_err(|e| format!("{uri}: {e}"))?;
+            let result = called.map_err(|e| e.to_string())?;
             let is_awaitable = Python::attach(|py| result.bind(py).hasattr("__await__").unwrap_or(false));
             let source = if is_awaitable {
-                AwaitPy::new(result).await.map_err(|e| format!("{uri}: {e}"))?
+                AwaitPy::new(result).await.map_err(|e| e.to_string())?
             } else {
                 result
             };
             Python::attach(|py| source.bind(py).extract::<String>())
-                .map_err(|_| format!("{uri}: the loader did not return a string"))
+                .map_err(|_| "the loader did not return a string".to_string())
         }
     })
 }

@@ -54,7 +54,7 @@ extern "C" {
 extern "C" {
     /// JavaScript's `String(value)`, which throws for some objects.
     #[wasm_bindgen(catch, js_name = String)]
-    fn js_string(value: &JsValue) -> Result<String, JsValue>;
+    pub(crate) fn js_string(value: &JsValue) -> Result<String, JsValue>;
 }
 
 /// The `Undefined` of what JS threw or rejected with, an `Error` or any other value.

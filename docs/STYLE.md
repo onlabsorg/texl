@@ -94,8 +94,8 @@ Signature notation:
 
 | API                 | Notation                                     | Example                                        |
 |---------------------|----------------------------------------------|------------------------------------------------|
-| JavaScript          | TypeScript                                   | `load(uri: string): Promise<TexlDocument \| null>` |
-| Python              | Python, with type hints                      | `async def load(uri: str) -> Document \| None` |
+| JavaScript          | TypeScript                                   | `load(uri: string): Promise<TexlDocument>` |
+| Python              | Python, with type hints                      | `async def load(uri: str) -> Document` |
 | Rust                | Rust (rustdoc shows it)                      |                                                |
 
 Rust doc comments follow the rustdoc conventions: a one-line summary, then

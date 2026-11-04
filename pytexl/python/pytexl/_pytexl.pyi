@@ -9,8 +9,8 @@ class Promise:
     """A Swan promise. Await it to get its value, converted to a Python value.
 
     Promises never fail: a promise of an operation that fails resolves to an
-    :class:`Undefined` (a coroutine that raises too), and a failed load to
-    ``None``. Await a promise inside a running asyncio event loop.
+    :class:`Undefined`, as do a coroutine that raises and a failed import. Await
+    a promise inside a running asyncio event loop.
     """
 
     @property

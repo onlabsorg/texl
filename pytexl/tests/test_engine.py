@@ -141,9 +141,12 @@ class FetchTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(await engine.fetch("mem://doc"), "<% 1 + 1 %>")
         self.assertEqual(requested, ["mem://doc", "mem://doc"])
 
-    async def test_fetch_of_a_missing_document_gives_none(self):
-        self.assertIsNone(await pytexl.Engine().fetch(FIXTURES / "missing.texl"))
-        self.assertIsNone(await pytexl.Engine().fetch("ftp://example.com/doc.texl"))
+    async def test_fetch_of_a_missing_document_raises(self):
+        with self.assertRaises(pytexl.LoadError):
+            await pytexl.Engine().fetch(FIXTURES / "missing.texl")
+        with self.assertRaises(pytexl.LoadError) as caught:
+            await pytexl.Engine().fetch("ftp://example.com/doc.texl")
+        self.assertEqual(caught.exception.reason, "no loader for this URL")
 
     async def test_fetch_resolves_uris_like_load(self):
         engine = pytexl.Engine(base_url=FIXTURES)
@@ -209,11 +212,14 @@ class LoadTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(doc.data["x"], 6)
         self.assertIn("texl", doc.data)
 
-    async def test_load_of_a_missing_document_gives_none(self):
-        self.assertIsNone(await pytexl.Engine().load(FIXTURES / "missing.texl"))
+    async def test_load_of_a_missing_document_raises(self):
+        with self.assertRaises(pytexl.LoadError):
+            await pytexl.Engine().load(FIXTURES / "missing.texl")
 
-    async def test_load_of_an_unknown_scheme_gives_none(self):
-        self.assertIsNone(await pytexl.Engine().load("ftp://example.com/doc.texl"))
+    async def test_load_of_an_unknown_scheme_raises(self):
+        with self.assertRaises(pytexl.LoadError) as caught:
+            await pytexl.Engine().load("ftp://example.com/doc.texl")
+        self.assertEqual(caught.exception.reason, "no loader for this URL")
 
     async def test_load_resolves_relative_uris_against_the_base_url(self):
         engine = pytexl.Engine(base_url=FIXTURES)
@@ -260,9 +266,10 @@ class LoadTest(unittest.IsolatedAsyncioTestCase):
     async def test_load_fetches_http_documents(self):
         with FileServer() as server:
             doc = await pytexl.Engine().load(server.origin + "/partials/counted.texl")
-            missing = await pytexl.Engine().load(server.origin + "/missing.texl")
+            with self.assertRaises(pytexl.LoadError) as caught:
+                await pytexl.Engine().load(server.origin + "/missing.texl")
         self.assertEqual(doc.text, "counted.texl has been evaluated 1 time(s)\n")
-        self.assertIsNone(missing)
+        self.assertIn("404", caught.exception.reason)
 
     async def test_document_data_functions_can_be_called(self):
         doc = await pytexl.Engine().load(FIXTURES / "lib" / "format.texl")
@@ -311,7 +318,7 @@ class LoaderTest(unittest.IsolatedAsyncioTestCase):
         engine.add_loader("mem", loader)
         self.assertEqual((await engine.load("mem://a")).text, "from a future")
 
-    async def test_failing_loaders_give_none(self):
+    async def test_failing_loaders_raise(self):
         async def async_failure(uri):
             raise OSError("boom")
 
@@ -325,8 +332,9 @@ class LoaderTest(unittest.IsolatedAsyncioTestCase):
         engine.add_loader("none", lambda uri: None)
         for uri in ("sync://a", "async://a", "numb://a", "none://a"):
             with self.subTest(uri=uri):
-                self.assertIsNone(await engine.load(uri))
-        self.assertEqual(await render(engine, '[<% texl.import("sync://a") %>]'), "[]")
+                with self.assertRaises(pytexl.LoadError):
+                    await engine.load(uri)
+        self.assertEqual(await render(engine, '[<% texl.import("sync://a") %>]'), "[[[Undefined]]]")
 
     async def test_failed_loads_are_retried(self):
         attempts = []
@@ -339,7 +347,8 @@ class LoaderTest(unittest.IsolatedAsyncioTestCase):
 
         engine = pytexl.Engine()
         engine.add_loader("mem", flaky)
-        self.assertIsNone(await engine.load("mem://a"))
+        with self.assertRaises(pytexl.LoadError):
+            await engine.load("mem://a")
         self.assertEqual((await engine.load("mem://a")).text, "second attempt")
 
 
@@ -416,9 +425,38 @@ class ImportTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(doc["text"], "lib")
         self.assertEqual(doc["data"]["double"](21), 42)
 
-    async def test_import_of_a_missing_document_gives_nothing(self):
+    async def test_import_of_a_missing_document_gives_undefined(self):
         out = await render(pytexl.Engine(base_url=FIXTURES), '[<% texl.import("/nowhere/missing.texl") %>]', "main.texl")
-        self.assertEqual(out, "[]")
+        self.assertEqual(out, "[[[Undefined]]]")
+
+    async def test_a_failed_import_says_why(self):
+        def failure(uri):
+            raise ValueError("boom")
+
+        engine = pytexl.Engine()
+        engine.add_loader("sync", failure)
+        doc = await engine.render("mem://main", 'é <% x = texl.import "sync://a" %><% x %>')
+        x = await doc.data["x"]
+        self.assertIsInstance(x, pytexl.Undefined)
+        self.assertEqual(x.op, "document.load")
+        self.assertEqual(x.lhv, "sync://a")
+        self.assertEqual(x.rhv, "ValueError: boom")
+        self.assertEqual(x.description, "cannot load `sync://a`: ValueError: boom")
+        self.assertEqual(x.uri, "mem://main")
+        self.assertEqual(x.pos, doc.source.index('"'))
+
+    async def test_fetch_and_load_raise_the_reason(self):
+        def failure(uri):
+            raise ValueError("boom")
+
+        engine = pytexl.Engine()
+        engine.add_loader("sync", failure)
+        for call in (engine.fetch("sync://a"), engine.load("sync://a#top")):
+            with self.assertRaises(pytexl.LoadError) as caught:
+                await call
+            self.assertEqual(str(caught.exception), "cannot load `sync://a`: ValueError: boom")
+            self.assertEqual(caught.exception.uri, "sync://a")
+            self.assertEqual(caught.exception.reason, "ValueError: boom")
 
     async def test_contexts_cannot_import(self):
         context = pytexl.Engine().create_context()

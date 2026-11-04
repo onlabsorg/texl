@@ -177,6 +177,14 @@ available to hosts too, but it cannot import documents.
   same holds for functions that wait for their result and for rejected or
   cancelled promises passed to a template. Such a tag now shows
   `[[Undefined]]` instead of rendering empty.
+  A document that cannot be loaded now says why. An import of it in a template
+  gives an `Undefined` value holding the document's location and the reason,
+  so the tag shows `[[Undefined]]` instead of rendering empty, and a fallback
+  must now be written with `|` instead of `;`. A host program that loads or
+  fetches such a document gets an error in its own language: an exception in
+  Python, a rejected promise in JavaScript, an error result in Rust; before,
+  it got an empty result. A location that is not valid now gives a JavaScript
+  program a proper `Error` instead of a text.
 - Available: browser/JavaScript, Python, Rust.
 - The `texl` command-line tool (`texl-cli`) has been removed from the
   repository; its last release was 0.2.0 (2026-10-25), and its binaries
@@ -212,12 +220,10 @@ with it.
 
 ## Known limitations
 
-- A document that cannot be loaded gives "nothing", not an error that says
-  what went wrong. An
-  error raised inside a built-in function points to
-  the call of that function, not to anything more precise, and errors a
-  built-in function puts inside a list or namespace have no position. A
-  misspelled name gives "nothing", not an error.
+- An error raised inside a built-in function points to the call of that
+  function, not to anything more precise, and errors a built-in function puts
+  inside a list or namespace have no position. A misspelled name gives
+  "nothing", not an error.
 - The memory cleaner only sees Swan's own memory. Swan values kept inside
   a host's own functions, and loops of references that pass through both
   Swan and JavaScript or Python objects, are not cleaned up.

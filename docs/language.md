@@ -56,8 +56,8 @@ Consequences:
   value is not a failure: a promise resolved with one holds it, like any
   other value, so `x ~> f` behaves as a later `f x` and an error reached
   through a promise renders as `[[Undefined]]`. A rejected JavaScript promise
-  and a Python coroutine that raises hold an `Undefined` too. A document that
-  cannot be loaded gives `Nothing`.
+  and a Python coroutine that raises hold an `Undefined` too, as does the
+  import of a document that cannot be loaded.
 - **Host functions must not throw.** A Rust built-in returns an `Undefined`
   (for example with `Value::undef_unary`) instead of panicking. The JavaScript
   and Python bindings turn an exception in a host function into an `Undefined`
@@ -282,7 +282,11 @@ full URLs against a base URL instead.
 The engine reads nothing by itself. A *loader* is an async function from a
 URL to the source text, registered per scheme (`add_loader("https", ...)`) or
 for paths without a scheme (`add_default_loader`). `Engine::fetch(url)` calls
-the matching loader; a missing loader or a loader error gives `None`.
+the matching loader. All loading goes through it. A missing loader or a loader
+error gives an `Undefined` of the operation `document.load`, with the URL in
+`lhv` and the reason in `rhv`. `Engine::fetch` and `Engine::load` return it as
+their `Err`, the JavaScript and Python hosts raise it as an error, and
+`texl.import` gives it to the template.
 
 ### One cache per rendering (decision D17)
 
@@ -294,8 +298,10 @@ rendering and drops it at the end:
   stores the promise as soon as an import starts, so concurrent imports of the
   same document share one load. `a.texl` and `a.texl#top` are the same
   document.
-- **A failed load** resolves the import to `Nothing` and removes the entry, so
-  a later import of the same URL in the same rendering tries again.
+- **A failed load** resolves the import to that `Undefined`, placed at the
+  import, and removes the entry, so a later import of the same URL in the same
+  rendering tries again. A fallback is written with `|`:
+  `texl.import("a.texl") ~> (d -> d.text | "no text")`.
 - **Across renderings** nothing is kept: the next rendering loads every
   document again and sees its current content. A host that wants a cache wraps
   its loaders.
@@ -422,8 +428,6 @@ collector traces them like any other value.
 
 Known limits:
 
-- **A failed import is `Nothing`.** It resolves to `Nothing`, not to an
-  `Undefined` that says what went wrong.
 - **Unknown names are not errors.** A name that is not bound is `Nothing`,
   not `Undefined`, so a typo in a name renders as an empty text.
 - **Built-in errors point to the call, not further.** An error raised

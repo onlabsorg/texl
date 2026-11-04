@@ -43,7 +43,7 @@ fn main() {
         ("mem://app/lib/math.texl".to_string(), "<% inc = n -> n + 1, add2 = twice inc %>".to_string()),
     ]));
     engine.add_loader("mem", loader_fn(move |uri| {
-        let source = docs.get(&uri).cloned().ok_or(format!("{uri}: not found"));
+        let source = docs.get(&uri).cloned().ok_or("not found".to_string());
         async move { source }
     }));
 
@@ -80,7 +80,7 @@ leaked scopes: 0
   into a closure, so it keeps everything the closure refers to.
 - **The loader.** `loader_fn` turns an async function from a URL to
   `Result<String, String>` into a loader. Its `Err` is a failed load, which
-  makes the import resolve to `Nothing`.
+  makes the import resolve to an `Undefined` holding the URL and the message.
 - **The leak check.** `Scope::live_count` counts the scopes alive on the
   thread. The first `root_scope()` creates the built-ins scope, which is never
   freed, so the count is taken after it. `Engine::render` already runs the

@@ -63,9 +63,7 @@ rendering, source and data:
 
 ```js
 const doc = await engine.load("templates/report.texl");
-if (doc) {
-    document.querySelector("#report").textContent = doc.text;
-}
+document.querySelector("#report").textContent = doc.text;
 ```
 
 A relative URL is resolved against the engine's base URL, which is the URL of
@@ -81,8 +79,20 @@ are resolved against the URL of the document:
 
 Documents are fetched with `fetch`, so the usual browser rules apply: a
 document on another origin must allow it with CORS headers. A response with an
-error status counts as a failed load: `load` gives `null`, and `texl.import`
-gives `Nothing`.
+error status counts as a failed load. The promises of `fetch` and `load` then
+reject with an `Error` whose `name` is `"LoadError"`, with the URL in `uri` and
+the reason in `reason`, such as `"HTTP status 404"`:
+
+```js
+try {
+    const doc = await engine.load("templates/report.texl");
+} catch (err) {
+    console.log(err.message);  // cannot load `https://example.com/templates/report.texl`: HTTP status 404
+}
+```
+
+In a template, `texl.import` gives an [undefined value](#texlundefined) instead,
+with the operation `"document.load"`, the URL in `lhv` and the reason in `rhv`.
 
 ## Rendering a source
 
@@ -333,7 +343,7 @@ engine.set("today", new Date().toISOString().slice(0, 10));
 #### `engine.fetch(uri)`
 
 ```ts
-fetch(uri: string): Promise<string | null>
+fetch(uri: string): Promise<string>
 ```
 
 Fetches the source of the document at `uri`, without rendering it. Nothing is
@@ -343,9 +353,9 @@ cached: every call fetches again.
 |----------|-----------------------------------------------------|
 | `uri`    | The URL of the document, resolved against `baseUrl`. |
 
-Returns a promise of the source, or of `null` if it cannot be fetched. The
-promise rejects, with a string message, only if `uri` cannot be resolved to a
-URL.
+Returns a promise of the source. The promise rejects with an `Error` if `uri`
+cannot be resolved to a URL, or with a [`LoadError`](#loading-documents) if the
+document cannot be fetched.
 
 ```js
 const source = await engine.fetch("templates/report.texl");
@@ -366,8 +376,8 @@ URL itself gives `Undefined` (an [import cycle](../language.md#import-cycles)).
 | `uri`    | The URL of the document, resolved against `baseUrl`. |
 | `source` | The template source.                                |
 
-Returns a promise of the [document](#texldocument). The promise rejects, with
-a string message, only if `uri` cannot be resolved to a URL.
+Returns a promise of the [document](#texldocument). The promise rejects with an
+`Error` only if `uri` cannot be resolved to a URL.
 
 ```js
 const doc = await engine.render("draft.texl", "2 + 2 = <% 2 + 2 %>");
@@ -377,7 +387,7 @@ doc.text;                                 // "2 + 2 = 4"
 #### `engine.load(uri)`
 
 ```ts
-load(uri: string): Promise<TexlDocument | null>
+load(uri: string): Promise<TexlDocument>
 ```
 
 Fetches and renders the document at `uri`: [`fetch`](#enginefetchuri)
@@ -387,13 +397,13 @@ followed by [`render`](#enginerenderuri-source).
 |----------|-----------------------------------------------------|
 | `uri`    | The URL of the document, resolved against `baseUrl`. |
 
-Returns a promise of the [document](#texldocument), or of `null` if it cannot
-be loaded. The promise rejects, with a string message, only if `uri` cannot be
-resolved to a URL.
+Returns a promise of the [document](#texldocument). The promise rejects with an
+`Error` if `uri` cannot be resolved to a URL, or with a
+[`LoadError`](#loading-documents) if the document cannot be loaded.
 
 ```js
 const doc = await engine.load("templates/report.texl");
-console.log(doc?.text ?? "not found");
+console.log(doc.text);
 ```
 
 #### `engine.createContext(vars)`

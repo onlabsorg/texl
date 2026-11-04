@@ -9,7 +9,7 @@
 //! import init, { TexlEngine } from "./pkg/texl_wasm.js";
 //! await init();
 //! const engine = new TexlEngine({ reader: "Ada" });          // globals, optional base URL
-//! const doc = await engine.load("docs/main.texl");           // {uri, source, data, text, tags} or null
+//! const doc = await engine.load("docs/main.texl");           // {uri, source, data, text, tags}
 //! const draft = await engine.render("docs/draft.texl", "Hello <% reader %>!");
 //! ```
 //!
@@ -150,6 +150,18 @@ pub struct TexlEngine {
     base_url: Option<Url>,
 }
 
+/// The `Error` a promise of `fetch` or `load` rejects with, from the `Undefined` of the
+/// failed load: its description is the message, its operands the `uri` and the `reason`.
+fn load_error(undefined: &Value) -> JsValue {
+    let details = swan_value_to_js(undefined);
+    let get = |name: &str| Reflect::get(&details, &JsValue::from_str(name)).unwrap_or(JsValue::UNDEFINED);
+    let error = js_sys::Error::new(&get("description").as_string().unwrap_or_default());
+    error.set_name("LoadError");
+    let _ = Reflect::set(&error, &JsValue::from_str("uri"), &get("lhv"));
+    let _ = Reflect::set(&error, &JsValue::from_str("reason"), &get("rhv"));
+    error.into()
+}
+
 #[wasm_bindgen]
 impl TexlEngine {
     /// Creates an engine.
@@ -205,10 +217,12 @@ impl TexlEngine {
 
     /// Fetches and renders the document at `uri`: `fetch` followed by `render`.
     ///
-    /// The promise rejects only if `uri` cannot be resolved to a URL.
+    /// The promise rejects with an `Error` if `uri` cannot be resolved to a URL or the
+    /// document cannot be loaded. For a failed load, the `name` of the error is
+    /// `"LoadError"`, and it has the URL in `uri` and the reason in `reason`.
     #[wasm_bindgen(
-        unchecked_return_type = "Promise<TexlDocument | null>",
-        return_description = "The document, or `null` if it cannot be loaded."
+        unchecked_return_type = "Promise<TexlDocument>",
+        return_description = "The document."
     )]
     pub fn load(
         &self,
@@ -218,8 +232,8 @@ impl TexlEngine {
         let engine = self.engine.clone();
         let url = loader::resolve_document_url(uri, self.base_url.as_ref());
         wasm_bindgen_futures::future_to_promise(async move {
-            let url = url.map_err(|e| JsValue::from_str(&e))?;
-            Ok(swan_value_to_js(&engine.load(&url).await))
+            let url = url.map_err(|e| JsValue::from(js_sys::Error::new(&e)))?;
+            Ok(swan_value_to_js(&engine.load(&url).await.map_err(|undefined| load_error(&undefined))?))
         })
     }
 
@@ -229,7 +243,7 @@ impl TexlEngine {
     /// itself gives an undefined value (a cycle). A source with no real location, such as an
     /// unsaved buffer, can use any URL, for example one next to the documents it imports.
     ///
-    /// The promise rejects only if `uri` cannot be resolved to a URL.
+    /// The promise rejects with an `Error` only if `uri` cannot be resolved to a URL.
     #[wasm_bindgen(unchecked_return_type = "Promise<TexlDocument>", return_description = "The document.")]
     pub fn render(
         &self,
@@ -241,7 +255,7 @@ impl TexlEngine {
         let engine = self.engine.clone();
         let url = loader::resolve_document_url(uri, self.base_url.as_ref());
         wasm_bindgen_futures::future_to_promise(async move {
-            let url = url.map_err(|e| JsValue::from_str(&e))?;
+            let url = url.map_err(|e| JsValue::from(js_sys::Error::new(&e)))?;
             Ok(swan_value_to_js(&engine.render(&url, &source).await))
         })
     }
@@ -249,10 +263,12 @@ impl TexlEngine {
     /// Fetches the source of the document at `uri`, without rendering it. Nothing is
     /// cached: every call fetches again.
     ///
-    /// The promise rejects only if `uri` cannot be resolved to a URL.
+    /// The promise rejects with an `Error` if `uri` cannot be resolved to a URL or the
+    /// document cannot be fetched. For a failed load, the `name` of the error is
+    /// `"LoadError"`, and it has the URL in `uri` and the reason in `reason`.
     #[wasm_bindgen(
-        unchecked_return_type = "Promise<string | null>",
-        return_description = "The source, or `null` if it cannot be fetched."
+        unchecked_return_type = "Promise<string>",
+        return_description = "The source."
     )]
     pub fn fetch(
         &self,
@@ -262,8 +278,8 @@ impl TexlEngine {
         let engine = self.engine.clone();
         let url = loader::resolve_document_url(uri, self.base_url.as_ref());
         wasm_bindgen_futures::future_to_promise(async move {
-            let url = url.map_err(|e| JsValue::from_str(&e))?;
-            Ok(engine.fetch(&url).await.map_or(JsValue::NULL, |source| JsValue::from_str(&source)))
+            let url = url.map_err(|e| JsValue::from(js_sys::Error::new(&e)))?;
+            Ok(JsValue::from_str(&engine.fetch(&url).await.map_err(|undefined| load_error(&undefined))?))
         })
     }
 

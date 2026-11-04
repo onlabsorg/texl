@@ -82,7 +82,15 @@ async function testSample() {
     check("load gives the document URI", doc?.uri, new URL("fixtures/sample.texl", location.href).href);
     check("load gives the document source", typeof doc?.source, "string");
     check("load gives the document data", doc?.data?.title, "Texl Sample Document");
-    check("load of a missing document gives null", await engine.load("fixtures/missing.texl"), null);
+    {
+        const url = new URL("fixtures/missing.texl", location.href).href;
+        const failed = await engine.load("fixtures/missing.texl").catch((err) => err);
+        check("load of a missing document rejects with an Error", failed instanceof Error, true);
+        check("a failed load is a LoadError", failed.name, "LoadError");
+        check("a failed load gives its message", failed.message, `cannot load \`${url}\`: HTTP status 404`);
+        check("a failed load gives its URL", failed.uri, url);
+        check("a failed load gives the reason", failed.reason, "HTTP status 404");
+    }
 }
 
 async function testEngine() {
@@ -115,13 +123,25 @@ async function testEngine() {
         (await page.render("fixtures/self.texl", '[<% texl.import("self.texl#top") %>]')).text,
         "[[[Undefined]]]");
     check(
-        "unreachable documents give Nothing",
+        "unreachable documents give Undefined",
         (await page.render("fixtures/new.texl", '[<% texl.import("/nowhere.texl") %>]')).text,
-        "[]");
+        "[[[Undefined]]]");
+    {
+        const failed = await (await page.render("fixtures/new.texl", '<% x = texl.import("/nowhere.texl") %>')).data.x;
+        check("a failed import is undefined", isUndefined(failed), true);
+        check("a failed import names its operation", failed.op, "document.load");
+        check("a failed import gives its URL", failed.lhv, new URL("/nowhere.texl", location.href).href);
+        check("a failed import gives the reason", failed.rhv, "HTTP status 404");
+    }
 
     const source = await page.fetch(counted);
     check("fetch gives the source", source, await fetch(counted).then((r) => r.text()));
-    check("fetch of a missing document gives null", await page.fetch("fixtures/missing.texl"), null);
+    {
+        const failed = await page.fetch("fixtures/missing.texl").catch((err) => err);
+        check("fetch of a missing document rejects with an Error", failed instanceof Error, true);
+        check("a failed fetch is a LoadError", failed.name, "LoadError");
+        check("a failed fetch gives the reason", failed.reason, "HTTP status 404");
+    }
     check(
         "load is fetch followed by render",
         (await page.load(counted)).text,
@@ -129,11 +149,11 @@ async function testEngine() {
 
     for (const method of ["fetch", "load"]) {
         let rejected = false;
-        try { await page[method]("http://[bad"); } catch { rejected = true; }
+        try { await page[method]("http://[bad"); } catch (err) { rejected = err instanceof Error; }
         check(`${method} rejects an invalid URI`, rejected, true);
     }
     let rejected = false;
-    try { await page.render("http://[bad", ""); } catch { rejected = true; }
+    try { await page.render("http://[bad", ""); } catch (err) { rejected = err instanceof Error; }
     check("render rejects an invalid URI", rejected, true);
 
     let threw = false;

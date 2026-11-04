@@ -102,7 +102,7 @@ With `site/parts/welcome.texl` containing `Welcome, <% reader %>!` and a line
 break, and a file `secret.txt` next to `site`:
 
 ```python
-source = '<% texl.import("parts/welcome.texl") ~> (d -> d.text) %><% texl.import("../secret.txt") ~> (d -> d.source ; "(refused)") %>'
+source = '<% texl.import("parts/welcome.texl") ~> (d -> d.text) %><% texl.import("../secret.txt") ~> (d -> d.source | "(refused)") %>'
 doc = await safe.render("page.texl", source)
 print(doc.text)
 ```
@@ -112,6 +112,6 @@ Welcome, Ada!
 (refused)
 ```
 
-The refused import resolves to `Nothing`, like any failed load, and the `;`
-gives the fallback. What else a template can reach is described in
+The refused import resolves to an `Undefined`, like any failed load, and the
+`|` gives the fallback. What else a template can reach is described in
 [Determinism and sandboxing](../language.md#determinism-and-sandboxing).

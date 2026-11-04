@@ -223,7 +223,7 @@ different relative path, return the same promise.
   first == again                 -> TRUE
   counted.texl has been evaluated 1 time(s)
 
-A document that cannot be loaded gives Nothing:
+A document that cannot be loaded gives an Undefined:
 
   missing.texl                   -> (not found)
 

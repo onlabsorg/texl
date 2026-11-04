@@ -60,8 +60,7 @@ and data:
 from pathlib import Path
 
 doc = await engine.load(Path("templates/report.texl"))
-if doc:
-    Path("report.md").write_text(doc.text)
+Path("report.md").write_text(doc.text)
 ```
 
 A path is resolved against the current working directory. A string is a URL,
@@ -96,9 +95,20 @@ against its URL in the same way, so `"/lib/format.texl"` in
 `https://example.com/docs/report.texl` fetches
 `https://example.com/lib/format.texl`.
 
-A document that cannot be read counts as a failed load: `load` gives `None`,
-and `texl.import` gives `Nothing`. A response with an HTTP error status is a
-failed load too.
+A document that cannot be read counts as a failed load, and so does a response
+with an HTTP error status. `fetch` and `load` then raise a
+[`LoadError`](#loaderror):
+
+```python
+try:
+    doc = await engine.load("templates/report.texl")
+except pytexl.LoadError as err:
+    print(err.reason)
+```
+
+In a template, `texl.import` gives an [`Undefined`](#undefined) instead, with
+the operation `"document.load"`, the URL in `lhv` and the text of the exception
+in `rhv`.
 
 ## Rendering a source
 
@@ -454,7 +464,7 @@ engine.set_default_loader(lambda path: (root / path.lstrip("/")).read_text())
 #### `engine.fetch(uri)`
 
 ```python
-async def fetch(uri: str | os.PathLike[str]) -> str | None
+async def fetch(uri: str | os.PathLike[str]) -> str
 ```
 
 Reads the source of the document at `uri`, without rendering it. Nothing is
@@ -464,8 +474,8 @@ cached: every call runs the loader again.
 |----------|----------------------------------------------------------------------|
 | `uri`    | The URL of the document, resolved against `base_url`. A path is resolved against the current working directory instead. |
 
-Returns the source, or `None` if it cannot be read. Raises `ValueError` if
-`uri` cannot be resolved to a URL.
+Returns the source. Raises `ValueError` if `uri` cannot be resolved to a URL, and
+[`LoadError`](#loaderror) if the document cannot be read.
 
 ```python
 source = await engine.fetch(Path("templates/report.texl"))
@@ -499,7 +509,7 @@ doc.tags               # [Tag(start=8, end=19, out_start=8, out_end=9, value=4)]
 #### `engine.load(uri)`
 
 ```python
-async def load(uri: str | os.PathLike[str]) -> Document | None
+async def load(uri: str | os.PathLike[str]) -> Document
 ```
 
 Reads and renders the document at `uri`: [`fetch`](#enginefetchuri) followed
@@ -509,12 +519,12 @@ by [`render`](#enginerenderuri-source).
 |----------|----------------------------------------------------------------------|
 | `uri`    | The URL of the document, resolved like the `uri` of [`fetch`](#enginefetchuri). |
 
-Returns the [document](#document), or `None` if it cannot be loaded. Raises
-`ValueError` if `uri` cannot be resolved to a URL.
+Returns the [document](#document). Raises `ValueError` if `uri` cannot be
+resolved to a URL, and [`LoadError`](#loaderror) if the document cannot be loaded.
 
 ```python
 doc = await engine.load("templates/report.texl")
-print(doc.text if doc else "not found")
+print(doc.text)
 ```
 
 #### `engine.create_context(vars)`
@@ -697,8 +707,8 @@ class Promise:
 
 A Swan promise. Awaiting it returns its value, converted to a Python value.
 Promises never fail, as in Swan: a promise of an operation that fails
-resolves to an [`Undefined`](#undefined), as does a coroutine that raises, and
-a failed load to `None`. The `done` attribute is `True` once the promise has a value. Await a
+resolves to an [`Undefined`](#undefined), as do a coroutine that raises and a
+failed import. The `done` attribute is `True` once the promise has a value. Await a
 promise in a running event loop.
 
 ```python
@@ -786,6 +796,27 @@ err = context.get("err")
 err.type               # 'UnaryOperation'
 err.description        # '`text.size` is not defined for the number `1`'
 err.inspect()          # {'type': 'UnaryOperation', 'description': '`text.size` is not defined for the number `1`', 'op': 'text.size', 'val': 1}
+```
+
+### `LoadError`
+
+```python
+class LoadError(Exception):
+    uri: str
+    reason: str
+```
+
+Raised by [`engine.fetch`](#enginefetchuri) and [`engine.load`](#engineloaduri)
+when a document cannot be loaded. `uri` is its normalized URL, and `reason` is the
+text of the loader's exception, or `"no loader for this URL"`. Its message is
+the description of the failure.
+
+```python
+try:
+    await engine.load("mem://missing")
+except pytexl.LoadError as err:
+    str(err)           # "cannot load `mem://missing`: no loader for this URL"
+    err.reason         # 'no loader for this URL'
 ```
 
 ### `collect`

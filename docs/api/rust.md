@@ -95,7 +95,7 @@ async fn main() {
         let path = std::fs::canonicalize("report.texl").unwrap();
         let url = Url::from_file_path(&path).unwrap();
         match engine.load(url.as_str()).await {
-            Value::Namespace(doc) => match doc.get("text") {
+            Ok(Value::Namespace(doc)) => match doc.get("text") {
                 Value::Text(text) => print!("{text}"),
                 _ => unreachable!("a document's text is always text"),
             },
@@ -111,12 +111,14 @@ async fn main() {
   normalizes them into absolute paths, such as `/docs/report.texl`.
 
 Each method does one thing: `Engine::fetch(url)` returns the source of a
-document through its loader (`None` if no loader matches or the loader
-fails), `Engine::render(url, source)` renders it, and `Engine::load(url)` is
-`fetch` followed by `render`. `load` returns the document namespace, or
-`Nothing` if the document cannot be fetched. Load a document by an absolute
-URI, so that the imports inside it resolve against its location. The same
-loaders serve `texl.import` in templates.
+document through its loader, or `Err` with an `Undefined` value (operation
+`document.load`, the URL in `lhv`, the reason in `rhv`) if no loader matches or
+the loader fails, `Engine::render(url, source)` renders it, and
+`Engine::load(url)` is `fetch` followed by `render`. `load` returns `Ok` with the
+document namespace, or `Err` with that `Undefined` if the document cannot be
+fetched. Load a document by an absolute URI, so that the imports inside it resolve against its location. The same
+loaders serve `texl.import` in templates, where a failed load gives the
+same `Undefined`.
 
 `Value` has no `Display` implementation: match on the variant to get the
 text, as above.

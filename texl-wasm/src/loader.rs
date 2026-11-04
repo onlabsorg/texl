@@ -29,17 +29,17 @@ extern "C" {
 
 /// Fetches the document at the absolute `url`. Non-2xx responses are errors.
 pub async fn load_http(url: String) -> Result<String, String> {
-    let fail = |err: JsValue| format!("{url}: {}", err.as_string().unwrap_or_else(|| format!("{err:?}")));
+    let fail = |err: JsValue| crate::convert::js_string(&err).unwrap_or_else(|_| "unknown error".to_string());
 
     let response: Response = JsFuture::from(fetch(&url).map_err(fail)?)
         .await
         .map_err(fail)?
         .unchecked_into();
     if !response.ok() {
-        return Err(format!("{url}: HTTP status {}", response.status()));
+        return Err(format!("HTTP status {}", response.status()));
     }
     let text = JsFuture::from(response.text().map_err(fail)?).await.map_err(fail)?;
-    text.as_string().ok_or_else(|| format!("{url}: the response is not text"))
+    text.as_string().ok_or_else(|| "the response is not text".to_string())
 }
 
 /// Resolves the URI of a document loaded by the host against `base` (the page URL, by default).

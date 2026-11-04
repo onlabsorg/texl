@@ -235,9 +235,9 @@ different relative path, return the same promise.
   first == again                 -> <% first = texl.import("partials/counted.texl"), again = texl.import("./partials/../partials/counted.texl"), first == again %>
   <% first ~> (doc -> text.trim_tail doc.text) %>
 
-A document that cannot be loaded gives Nothing:
+A document that cannot be loaded gives an Undefined:
 
-  missing.texl                   -> <% texl.import("missing.texl") ~> (doc -> doc ; "(not found)") %>
+  missing.texl                   -> <% texl.import("missing.texl") ~> (doc -> doc | "(not found)") %>
 
 
 13. How values render

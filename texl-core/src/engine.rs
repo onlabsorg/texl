@@ -46,7 +46,7 @@
 //! Every document has a `texl` namespace containing `texl.import`. Templates
 //! call `texl.import(uri)` to import another document: it fetches the
 //! document and renders it the same way. It returns a promise of the document
-//! namespace (or of `Nothing`, if the document cannot be loaded). Relative
+//! namespace, or of an `Undefined` if the document cannot be loaded. Relative
 //! URIs resolve against the URL of the importing document.
 //!
 //! - Each document renders in its own scope from [`Engine::create_scope`],
@@ -79,7 +79,7 @@
 //! engine.add_default_loader(loader_fn(|uri| async move {
 //!     match uri.as_str() {
 //!         "/greeting.texl" => Ok("Hello <% reader %>!".to_string()),
-//!         _ => Err(format!("{uri}: not found")),
+//!         _ => Err("not found".to_string()),
 //!     }
 //! }));
 //!
@@ -117,8 +117,9 @@ use crate::template;
 /// The engine calls it with the normalized URL of the document, without
 /// fragment: a full URL (`https://host/dir/doc.texl`) for scheme loaders, or
 /// an absolute, percent-encoded path (`/dir/doc.texl`) for the default loader.
-/// The future resolves to the template source, or to an error message. The
-/// engine discards the message: a failed load gives `Nothing`.
+/// The future resolves to the template source, or to an error message, which
+/// need not repeat the URL. A failed load gives an `Undefined` holding the URL
+/// and the message (see [`Engine::fetch`]).
 ///
 /// The engine does not cache sources. A host that wants to can wrap its
 /// loaders.
@@ -246,7 +247,11 @@ impl Engine {
     /// of its scheme, or to the default loader if it has none. Nothing is
     /// cached: every call runs the loader.
     ///
-    /// Returns `None` if no loader matches the URL or the loader fails.
+    /// Returns the source. If no loader matches the URL or the loader fails, the
+    /// error is an `Undefined` value of the operation `document.load`, with the
+    /// normalized URL in `lhv` and the reason in `rhv`: the loader's message, or
+    /// `"no loader for this URL"`. [`Engine::load`] returns the same error, and
+    /// `texl.import` gives this value to the template.
     ///
     /// # Examples
     ///
@@ -256,8 +261,8 @@ impl Engine {
     /// let engine = Engine::new(None);
     /// engine.add_loader("mem", loader_fn(|uri| async move { Ok(format!("source of {uri}")) }));
     ///
-    /// assert_eq!(block_on(engine.fetch("mem://doc#part")), Some("source of mem://doc".to_string()));
-    /// assert_eq!(block_on(engine.fetch("ftp://host/doc")), None);
+    /// assert_eq!(block_on(engine.fetch("mem://doc#part")), Ok("source of mem://doc".to_string()));
+    /// assert!(block_on(engine.fetch("ftp://host/doc")).is_err());
     /// # use std::{future::Future, pin::pin, task::{Context, Poll, Waker}};
     /// # fn block_on<F: Future>(fut: F) -> F::Output {
     /// #     let mut cx = Context::from_waker(Waker::noop());
@@ -268,13 +273,19 @@ impl Engine {
     /// #     }
     /// # }
     /// ```
-    pub async fn fetch(&self, url: &str) -> Option<String> {
+    pub async fn fetch(&self, url: &str) -> Result<String, Value> {
         let url = normalize_url(url);
         let loader = match Url::parse(&url) {
             Ok(parsed) => self.loaders.borrow().get(parsed.scheme()).cloned(),
             Err(_) => self.default_loader.borrow().clone(),
-        }?;
-        loader(&url).await.ok()
+        };
+        let source = match loader {
+            Some(loader) => loader(&url).await,
+            None => Err("no loader for this URL".to_string()),
+        };
+        source.map_err(|reason| {
+            Value::undef_binary("document.load", Value::Text(url.as_str().into()), Value::Text(reason.into()))
+        })
     }
 
     /// Renders `source` as the document at `url`.
@@ -307,7 +318,7 @@ impl Engine {
     /// engine.add_default_loader(loader_fn(|uri| async move {
     ///     match uri.as_str() {
     ///         "/docs/name.texl" => Ok("Ada".to_string()),
-    ///         _ => Err(format!("{uri}: not found")),
+    ///         _ => Err("not found".to_string()),
     ///     }
     /// }));
     ///
@@ -347,10 +358,10 @@ impl Engine {
     ///
     /// # Returns
     ///
-    /// - The document namespace `{uri, source, data, text, tags}` (see the
-    ///   [module documentation](self)).
-    /// - `Nothing` if no loader matches the URL or the loader fails. The
-    ///   document is not rendered.
+    /// - `Ok` with the document namespace `{uri, source, data, text, tags}` (see
+    ///   the [module documentation](self)).
+    /// - `Err` with the `Undefined` of [`Engine::fetch`] if no loader matches the
+    ///   URL or the loader fails. The document is not rendered.
     ///
     /// # Examples
     ///
@@ -361,7 +372,7 @@ impl Engine {
     /// let engine = Engine::new(None);
     /// engine.add_loader("mem", loader_fn(|_uri| async { Ok("<% x = 1 %>x is <% x %>".to_string()) }));
     ///
-    /// let Value::Namespace(doc) = block_on(engine.load("mem://doc")) else { panic!() };
+    /// let Ok(Value::Namespace(doc)) = block_on(engine.load("mem://doc")) else { panic!() };
     /// assert_eq!(doc.get("text"), Value::Text("x is 1".into()));
     /// assert_eq!(doc.get("uri"), Value::Text("mem://doc".into()));
     /// # use std::{future::Future, pin::pin, task::{Context, Poll, Waker}};
@@ -374,11 +385,9 @@ impl Engine {
     /// #     }
     /// # }
     /// ```
-    pub async fn load(&self, url: &str) -> Value {
-        match self.fetch(url).await {
-            Some(source) => self.render(url, &source).await,
-            None => Value::Nothing,
-        }
+    pub async fn load(&self, url: &str) -> Result<Value, Value> {
+        let source = self.fetch(url).await?;
+        Ok(self.render(url, &source).await)
     }
 
     /// Creates a new scope with the built-ins and the globals of the engine.
@@ -497,11 +506,11 @@ impl Engine {
         let promise = doc.clone();
         let task = Box::pin(async move {
             let result = match engine.fetch(&url).await {
-                Some(source) => engine.render_document(&imports, &url, &source).await,
-                None => {
+                Ok(source) => engine.render_document(&imports, &url, &source).await,
+                Err(undefined) => {
                     // A failed load is not cached: a later import tries again
                     imports.borrow_mut().docs.remove(&url);
-                    Value::Nothing
+                    undefined
                 }
             };
             imports.borrow_mut().resolved(&url);
@@ -728,11 +737,11 @@ mod tests {
         }));
 
         // HTTP scheme routed to the 'http' loader
-        let http_ns = unwrap_namespace(block_on(engine.load("http://example.com/doc.texl")));
+        let http_ns = unwrap_namespace(block_on(engine.load("http://example.com/doc.texl")).unwrap());
         assert_eq!(http_ns.get("source"), Value::Text("HTTP source for http://example.com/doc.texl".into()));
 
         // Scheme-less URL routed to the default loader
-        let file_ns = unwrap_namespace(block_on(engine.load("/local/file.texl")));
+        let file_ns = unwrap_namespace(block_on(engine.load("/local/file.texl")).unwrap());
         assert_eq!(file_ns.get("source"), Value::Text("Default source for /local/file.texl".into()));
     }
 
@@ -740,10 +749,10 @@ mod tests {
     fn test_engine_fetch_returns_the_source_or_none() {
         let (engine, requested) = engine_with_docs(&[("/a.texl", "A"), ("http://example.com/b.texl", "B")]);
 
-        assert_eq!(block_on(engine.fetch("a.texl#part")), Some("A".to_string()));
-        assert_eq!(block_on(engine.fetch("http://example.com/b.texl")), Some("B".to_string()));
-        assert_eq!(block_on(engine.fetch("/missing.texl")), None);
-        assert_eq!(block_on(engine.fetch("ftp://example.com/c.texl")), None);
+        assert_eq!(block_on(engine.fetch("a.texl#part")), Ok("A".to_string()));
+        assert_eq!(block_on(engine.fetch("http://example.com/b.texl")), Ok("B".to_string()));
+        assert!(block_on(engine.fetch("/missing.texl")).is_err());
+        assert!(block_on(engine.fetch("ftp://example.com/c.texl")).is_err());
         assert_eq!(*requested.borrow(), vec!["/a.texl", "http://example.com/b.texl", "/missing.texl"]);
     }
 
@@ -756,7 +765,7 @@ mod tests {
             Ok("Result is <% result = 10 * multiplier, result %>".to_string())
         }));
 
-        let load_result = block_on(engine.load("/math.texl"));
+        let load_result = block_on(engine.load("/math.texl")).unwrap();
         let ns = unwrap_namespace(load_result);
 
         assert_eq!(ns.get("uri"), Value::Text("/math.texl".into()));
@@ -772,7 +781,7 @@ mod tests {
         let main = format!(r#"<% x = 2 %>main <% texl.import("lib.texl") {RENDERING} %>"#);
         let (engine, _) = engine_with_docs(&[("/a/main.texl", &main), ("/a/lib.texl", "lib")]);
 
-        let loaded = unwrap_namespace(block_on(engine.load("/a/main.texl")));
+        let loaded = unwrap_namespace(block_on(engine.load("/a/main.texl")).unwrap());
         let source = block_on(engine.fetch("/a/main.texl")).unwrap();
         let rendered = unwrap_namespace(block_on(engine.render("/a/main.texl", &source)));
 
@@ -784,12 +793,14 @@ mod tests {
     }
 
     #[test]
-    fn test_engine_load_of_a_missing_document_returns_nothing() {
+    fn test_engine_load_of_a_missing_document_returns_an_error() {
         let (engine, requested) = engine_with_docs(&[]);
 
-        assert_eq!(block_on(engine.load("/missing.texl")), Value::Nothing);
+        assert!(matches!(block_on(engine.load("/missing.texl")), Err(Value::Undefined(_))));
         // Missing loader: no loader is called at all
-        assert_eq!(block_on(engine.load("ftp://example.com/file.texl")), Value::Nothing);
+        let v = block_on(engine.load("ftp://example.com/file.texl"));
+        let Err(Value::Undefined(u)) = v else { panic!("{v:?}") };
+        assert_eq!(u.describe(), "cannot load `ftp://example.com/file.texl`: no loader for this URL");
         assert_eq!(*requested.borrow(), vec!["/missing.texl"]);
     }
 
@@ -807,7 +818,7 @@ mod tests {
         assert_eq!(rendering(block_on(engine.render("/main.texl", &main))), "first");
         *source.borrow_mut() = "second".to_string();
         assert_eq!(rendering(block_on(engine.render("/main.texl", &main))), "second");
-        assert_eq!(rendering(block_on(engine.load("/lib.texl"))), "second");
+        assert_eq!(rendering(block_on(engine.load("/lib.texl")).unwrap()), "second");
     }
 
     #[test]
@@ -815,7 +826,7 @@ mod tests {
         let main = format!(r#"Main loads <% texl.import("/shared.texl") {RENDERING} %> twice: <% texl.import("/shared.texl") {RENDERING} %>"#);
         let (engine, requested) = engine_with_docs(&[("/main.texl", &main), ("/shared.texl", "Shared!")]);
 
-        let doc = block_on(engine.load("/main.texl"));
+        let doc = block_on(engine.load("/main.texl")).unwrap();
 
         assert_eq!(rendering(doc), "Main loads Shared! twice: Shared!");
         assert_eq!(*requested.borrow(), vec!["/main.texl", "/shared.texl"]);
@@ -853,7 +864,7 @@ mod tests {
         let b = r#"<% x = texl.import("a.texl") %>b"#;
         let (engine, _) = engine_with_docs(&[("/a.texl", a), ("/b.texl", b)]);
 
-        let b_doc = data(block_on(engine.load("/a.texl"))).get("b");
+        let b_doc = data(block_on(engine.load("/a.texl")).unwrap()).get("b");
 
         assert_eq!(rendering(b_doc.clone()), "b");
         assert!(matches!(data(b_doc).get("x"), Value::Undefined(_)));
@@ -880,7 +891,7 @@ mod tests {
         let lib = r#"<% secret %><% bind "leak" 2 %>"#;
         let (engine, _) = engine_with_docs(&[("/main.texl", &main), ("/lib.texl", lib)]);
 
-        assert_eq!(rendering(block_on(engine.load("/main.texl"))), "[][]");
+        assert_eq!(rendering(block_on(engine.load("/main.texl")).unwrap()), "[][]");
     }
 
     #[test]
@@ -1029,7 +1040,7 @@ mod tests {
             ("/docs/parts/note.texl", "note"),
         ]);
 
-        let doc = block_on(engine.load("docs/main.texl"));
+        let doc = block_on(engine.load("docs/main.texl")).unwrap();
 
         assert_eq!(rendering(doc), "[main [header [footer note]]]");
         assert_eq!(
@@ -1062,7 +1073,7 @@ mod tests {
             ("http://example.com/site/lib/util.texl?v=1", "util"),
         ]);
 
-        let doc = block_on(engine.load("http://example.com/site/pages/main.texl"));
+        let doc = block_on(engine.load("http://example.com/site/pages/main.texl")).unwrap();
 
         assert_eq!(rendering(doc), "util");
         assert_eq!(
@@ -1113,8 +1124,40 @@ mod tests {
         let main = format!(r#"[<% texl.import("missing.texl") {RENDERING} %>][<% texl.import("missing.texl") {RENDERING} %>]"#);
         let (engine, requested) = engine_with_docs(&[]);
 
-        assert_eq!(rendering(block_on(engine.render("/main.texl", &main))), "[][]");
+        assert_eq!(rendering(block_on(engine.render("/main.texl", &main))), "[[[Undefined]]][[[Undefined]]]");
         assert_eq!(*requested.borrow(), vec!["/missing.texl", "/missing.texl"]);
+    }
+
+    #[test]
+    fn test_engine_failed_imports_give_undefined() {
+        let engine = Engine::new(None);
+        engine.add_default_loader(loader_fn(|_uri| async { Err("not found".to_string()) }));
+
+        // The loader failed: the value says why, and points to the import
+        let source = r#"x <% texl.import "missing.texl" %>"#;
+        let doc = block_on(engine.render("/dir/main.texl", source));
+        assert_eq!(rendering(doc.clone()), "x [[Undefined]]");
+        let Value::Undefined(u) = tags(&doc)[0].get("value") else { panic!() };
+        assert_eq!(u.describe(), "cannot load `/dir/missing.texl`: not found");
+        let loc = document::locate(&u).unwrap();
+        assert_eq!(loc.uri.as_deref(), Some("/dir/main.texl"));
+        assert_eq!(loc.pos, source.find('"').unwrap());
+
+        // No loader matches the URL
+        let doc = block_on(engine.render("/main.texl", r#"<% texl.import "ftp://host/doc" %>"#));
+        let Value::Undefined(u) = tags(&doc)[0].get("value") else { panic!() };
+        assert_eq!(u.describe(), "cannot load `ftp://host/doc`: no loader for this URL");
+
+        // `|` gives a fallback, and `~>` callbacks receive the value
+        let source = r#"<% texl.import "a.texl" ~> (d -> d | "fallback") %>,<% texl.import "b.texl" ~> (d -> d.text | "no text") %>"#;
+        assert_eq!(rendering(block_on(engine.render("/main.texl", source))), "fallback,no text");
+
+        // `fetch` and `load` return the same value as their error, with no position
+        let Err(fetched) = block_on(engine.fetch("/missing.texl")) else { panic!() };
+        assert_eq!(block_on(engine.load("/missing.texl")), Err(fetched.clone()));
+        let Value::Undefined(u) = fetched else { panic!() };
+        assert_eq!(u.describe(), "cannot load `/missing.texl`: not found");
+        assert_eq!(u.pos(), None);
     }
 
     // --- Tags and undefined values ---

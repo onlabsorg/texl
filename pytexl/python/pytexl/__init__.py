@@ -57,9 +57,36 @@ from . import _pytexl
 from ._pytexl import Function, NativeContext, NativeEngine, Promise, Undefined
 
 __all__ = [
-    "Context", "Document", "Engine", "Function", "Loader", "Promise", "Rendering", "Tag", "Undefined",
+    "Context", "Document", "Engine", "Function", "LoadError", "Loader", "Promise", "Rendering", "Tag", "Undefined",
     "collect", "loaders", "normalize",
 ]
+
+class LoadError(Exception):
+    """A document cannot be loaded: raised by :meth:`Engine.fetch` and
+    :meth:`Engine.load`.
+
+    Its message is the description of the failure, such as ``cannot load
+    `mem://a`: KeyError: 'mem://a'``. A template that imports the document gets
+    an :class:`Undefined` with the same details instead.
+
+    Attributes:
+        uri: The normalized URL of the document.
+        reason: Why it cannot be loaded: the text of the loader's exception, or
+            ``"no loader for this URL"``.
+    """
+
+    def __init__(self, message: str, uri: str, reason: str) -> None:
+        super().__init__(message)
+        self.uri = uri
+        self.reason = reason
+
+
+def _loaded(result: Any) -> Any:
+    """Returns the result of a native load, or raises the failure it holds."""
+    if isinstance(result, Undefined):
+        raise LoadError(result.description, result.lhv, result.rhv)
+    return result
+
 
 #: A document loader: takes a URI and returns the source, or an awaitable of it.
 Loader = Callable[[str], Union[str, Awaitable[str]]]
@@ -266,7 +293,7 @@ class Engine(_ThreadBound):
         """
         self._native.set_default_loader(loader)
 
-    async def fetch(self, uri: str | os.PathLike[str]) -> str | None:
+    async def fetch(self, uri: str | os.PathLike[str]) -> str:
         """Returns the source of a document, without rendering it.
 
         Nothing is cached: every call runs the loader again.
@@ -277,15 +304,16 @@ class Engine(_ThreadBound):
                 working directory and converted to a ``file://`` URL.
 
         Returns:
-            The source, or ``None`` if it cannot be loaded.
+            The source.
 
         Raises:
+            LoadError: If the document cannot be loaded.
             ValueError: If ``uri`` cannot be resolved to a URL.
 
         Example:
             >>> source = await engine.fetch("templates/report.texl")
         """
-        return await self._native.fetch(_uri(uri))
+        return _loaded(await self._native.fetch(_uri(uri)))
 
     async def render(self, uri: str | os.PathLike[str], source: str) -> Document:
         """Renders a source as the document at a URL, without loading it.
@@ -316,7 +344,7 @@ class Engine(_ThreadBound):
         """
         return _document(await self._native.render(_uri(uri), source))
 
-    async def load(self, uri: str | os.PathLike[str]) -> Document | None:
+    async def load(self, uri: str | os.PathLike[str]) -> Document:
         """Loads and renders a document: :meth:`fetch` followed by :meth:`render`.
 
         Args:
@@ -324,17 +352,17 @@ class Engine(_ThreadBound):
                 :meth:`fetch`.
 
         Returns:
-            The document, or ``None`` if it cannot be loaded.
+            The document.
 
         Raises:
+            LoadError: If the document cannot be loaded.
             ValueError: If ``uri`` cannot be resolved to a URL.
 
         Example:
             >>> doc = await engine.load("templates/report.texl")
-            >>> print(doc.text if doc else "not found")
+            >>> print(doc.text)
         """
-        doc = await self._native.load(_uri(uri))
-        return None if doc is None else _document(doc)
+        return _document(_loaded(await self._native.load(_uri(uri))))
 
     def create_context(self, vars: Mapping[str, Any] | None = None) -> Context:
         """Creates a context: a scope that keeps its names across renders.

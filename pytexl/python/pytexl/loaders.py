@@ -2,7 +2,9 @@
 
 A loader is a callable that takes the URI of a document and returns its source
 as a string, or an awaitable of it. It raises an exception if the document
-cannot be read, and the engine then treats the document as missing.
+cannot be read: ``Engine.fetch`` and ``Engine.load`` then raise a ``LoadError``,
+and ``texl.import`` gives an ``Undefined``, both holding the URL and the text of
+the exception.
 
 Every :class:`pytexl.Engine` starts with the loaders of this module:
 

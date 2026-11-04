@@ -294,3 +294,31 @@ needed since `Undef::Value` has no position, and the operation kinds would have
 to name an operation and an operand that say nothing about the failure. Only
 the text is kept, not the exception object: Swan values cannot hold host
 objects, and the conversion keeps Swan values host-independent.
+
+## T15 — 2026-11-04 — A failed load says why (supersedes part of T14)
+
+A document cannot be loaded when the loader fails or no loader matches the URL.
+All loading goes through `Engine::fetch`, which then makes an `Undefined`: one
+binary operation, `document.load`, with the normalized URL in `lhv` and the
+reason in `rhv`. Loader messages no longer repeat the URL. Each caller gets this
+failure in its own form:
+
+- In Rust, `Engine::fetch` returns `Ok(source)` or `Err(undefined)`, and
+  `Engine::load` returns `Ok(document)` or `Err(undefined)`.
+- In Python, `fetch` returns a string and `load` a `Document`, or they raise
+  `pytexl.LoadError`, with `uri` and `reason`.
+- In JavaScript, `fetch` resolves to a string and `load` to a `TexlDocument`, or
+  they reject with an `Error` named `LoadError`, with `uri` and `reason`.
+- In a template, `texl.import` returns a promise of the document or of the
+  `Undefined`, placed at the import (T10). This replaces `Nothing`.
+
+A failed load is still not cached. JavaScript's `fetch`, `load` and `render` also
+reject with an `Error`, not a string, for a URI that cannot be resolved to a URL.
+*Reason:* `Nothing` is a valid result, so a broken link rendered as an empty
+text, and a host could not tell why a load failed; this is the problem T14 solved
+for host functions. Templates have no exceptions, so errors are values there. A
+host calls `fetch` and `load` as ordinary functions of its own language, so it
+gets that language's way of failing, as for a URI it cannot resolve. An operation
+fits since it has a real operand, the URL, as `import.cycle` does, and keeps the
+URL and the reason apart. `HostError` would not cover a URL with no loader, and
+would leave the URL inside a host's wording.
