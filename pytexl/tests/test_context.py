@@ -84,12 +84,12 @@ class PythonFunctionTest(unittest.IsolatedAsyncioTestCase):
     async def test_functions_can_be_mapped(self):
         self.assertEqual(await self.render("<% (1, 2, 3) => square %>", square=lambda x: x * x), "1, 4, 9")
 
-    async def test_exceptions_give_nothing(self):
+    async def test_exceptions_give_undefined(self):
         def fail(x):
             raise RuntimeError("boom")
 
-        self.assertEqual(await self.render("[<% fail 1 %>]", fail=fail), "[]")
-        self.assertEqual(await self.render("[<% one 1 2 %>]", one=lambda: 1), "[]")
+        self.assertEqual(await self.render("[<% fail 1 %>]", fail=fail), "[[[Undefined]]]")
+        self.assertEqual(await self.render("[<% one 1 %>]", one=lambda: 1), "[[[Undefined]]]")
 
     async def test_async_functions_are_awaited(self):
         async def slow_double(x):
@@ -99,11 +99,11 @@ class PythonFunctionTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(await self.render("<% slow_double 21 %>", slow_double=slow_double), "42")
         self.assertEqual(await self.render("<% slow_double 1 ~> (x -> x + 1) %>"), "3")
 
-    async def test_failing_async_functions_give_nothing(self):
+    async def test_failing_async_functions_give_undefined(self):
         async def fail():
             raise RuntimeError("boom")
 
-        self.assertEqual(await self.render("[<% fail() %>]", fail=fail), "[]")
+        self.assertEqual(await self.render("[<% fail() %>]", fail=fail), "[[[Undefined]]]")
 
     async def test_host_functions_receive_swan_functions(self):
         self.assertEqual(await self.render("<% apply(x -> x + 1, 41) %>", apply=lambda f, x: f(x)), "42")
@@ -149,14 +149,17 @@ class AwaitableTest(unittest.IsolatedAsyncioTestCase):
         self.context.set("nested", outer())
         self.assertEqual((await self.context.render("<% nested %>")).text, "inner")
 
-    async def test_failed_and_cancelled_futures_give_nothing(self):
+    async def test_failed_and_cancelled_futures_give_undefined(self):
         failed = self.loop.create_future()
         failed.set_exception(RuntimeError("boom"))
         cancelled = self.loop.create_future()
         cancelled.cancel()
         self.context.set("failed", failed)
         self.context.set("cancelled", cancelled)
-        self.assertEqual((await self.context.render("[<% failed %>][<% cancelled %>]")).text, "[][]")
+        rendering = await self.context.render("<% failed %>|<% cancelled %>")
+        self.assertEqual(rendering.text, "[[Undefined]]|[[Undefined]]")
+        self.assertEqual(rendering.tags[0].value.error, "RuntimeError: boom")
+        self.assertEqual(rendering.tags[1].value.error, "CancelledError")
 
 
 class AwaitableOutsideLoopTest(unittest.TestCase):

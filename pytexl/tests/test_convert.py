@@ -241,9 +241,37 @@ class UndefinedTest(unittest.IsolatedAsyncioTestCase):
         token = (await self.undefined("1 + )")).cause
         self.assertEqual((token.type, token.token, token.description), ("Token", ")", "unexpected `)`"))
 
+    async def test_exception_of_a_host_function(self):
+        def fail(x):
+            raise ValueError("boom")
+
+        context = pytexl.Engine({"fail": fail}).create_context()
+        u = (await context.render("<% fail 1 %>")).tags[0].value
+        self.assertIsInstance(u, pytexl.Undefined)
+        self.assertEqual(u.type, "HostError")
+        self.assertEqual(u.error, "ValueError: boom")
+        self.assertEqual(u.description, "host error: ValueError: boom")
+        self.assertEqual(u.pos, 8)  # the argument of `fail`
+        self.assertEqual((await context.render("<% (undef.inspect (fail 1)).error %>")).text, "ValueError: boom")
+        self.assertEqual((await context.render('<% fail 1 | "fallback" %>')).text, "fallback")
+
+    async def test_exception_without_a_message(self):
+        def fail():
+            raise ValueError()
+
+        u = (await pytexl.Engine({"fail": fail}).create_context().render("<% fail() %>")).tags[0].value
+        self.assertEqual(u.error, "ValueError")
+
+    async def test_exception_of_an_async_function_has_the_position_of_the_call(self):
+        async def fail(x):
+            raise ValueError("boom")
+
+        u = (await pytexl.Engine({"fail": fail}).create_context().render("<% fail 1 %>")).tags[0].value
+        self.assertEqual((u.type, u.error, u.pos), ("HostError", "ValueError: boom", 8))
+
     async def test_attributes_that_do_not_apply_are_none(self):
         u = await self.undefined("undef.from 1")
-        for name in ("op", "lhv", "rhv", "pos", "source", "uri", "expected", "token", "cause"):
+        for name in ("op", "lhv", "rhv", "pos", "source", "uri", "expected", "token", "error", "cause"):
             with self.subTest(name=name):
                 self.assertIsNone(getattr(u, name))
 

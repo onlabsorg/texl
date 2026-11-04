@@ -92,9 +92,10 @@ asyncio.run(main())
 
 ## Going further
 
-- If `rate` raises an exception, its promise resolves to `Nothing`, and so
-  `usd` is `Nothing`: the dollar column shows `$[[Undefined]]` instead of the
-  program stopping. Test for it with `usd ; ...` to show a fallback.
+- If `rate` raises an exception, its promise resolves to an `Undefined` that
+  holds the error, and so `usd` is undefined: the dollar column shows
+  `$[[Undefined]]` instead of the program stopping. Test for it with
+  `usd | ...` to show a fallback.
 - `doc.data` holds the names the report bound (`fmt`, `row`, `usd`, and
   `texl`), converted to Python values; `doc.data["row"]` is a callable
   `pytexl.Function`.

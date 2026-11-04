@@ -1338,6 +1338,16 @@ mod tests {
     }
 
     #[test]
+    fn host_errors_get_the_position_of_the_call() {
+        let fail = Value::Builtin(crate::value::BuiltinFn::new("fail", |_| Value::undef_host_error("Error: boom")));
+        let u = undef(evaluate_with("fail 1", vec![("fail", fail)]));
+        assert_eq!(u.kind(), "HostError");
+        assert_eq!(u.describe(), "host error: Error: boom");
+        assert_eq!(u.pos(), Some(5));
+        assert!(u.members().contains(&("error", Value::Text("Error: boom".into()))));
+    }
+
+    #[test]
     fn host_function_errors_get_the_position_of_the_call() {
         let fail = Value::Builtin(crate::value::BuiltinFn::new("fail", |arg| Value::undef_unary("fail", arg)));
         let u = undef(evaluate_with("1 + fail 2", vec![("fail", fail)]));

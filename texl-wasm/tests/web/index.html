@@ -169,9 +169,24 @@ async function testContext() {
     context.set("later", new Promise((r) => setTimeout(() => r(42), 10)));
     check("JS promises are awaited", (await context.render("<% later %>")).text, "42");
     context.set("bad", Promise.reject(new Error("boom")));
-    check("rejected promises give Nothing", (await context.render("[<% bad %>]")).text, "[]");
+    check("rejected promises give Undefined", (await context.render("<% bad %>")).text, "[[Undefined]]");
     context.set("badFn", async () => { throw new Error("boom"); });
-    check("throwing async functions give Nothing", (await context.render("[<% badFn(1) %>]")).text, "[]");
+    const badAsync = (await context.render("<% badFn(1) %>")).tags[0].value;
+    check("throwing async functions give Undefined", badAsync.error, "Error: boom");
+    check("their error has the position of the call", badAsync.pos, 8);
+    context.set("throwing", () => { throw new TypeError("boom"); });
+    const thrown = (await context.render("<% throwing(1) %>")).tags[0].value;
+    check("throwing functions give Undefined", isUndefined(thrown), true);
+    check("their error has a type", thrown.type, "HostError");
+    check("their error is the one thrown", thrown.error, "TypeError: boom");
+    check("their error is described", thrown.description, "host error: TypeError: boom");
+    check("their error has the position of the call", thrown.pos, 11);
+    context.set("throwsText", () => { throw "plain"; });
+    check("any thrown value is an error", (await context.render("<% throwsText() %>")).tags[0].value.error, "plain");
+    context.set("throwsOdd", () => { throw Object.create(null); });
+    check("a thrown value without a text is an error", (await context.render("<% throwsOdd() %>")).tags[0].value.error, "unknown error");
+    context.set("badResult", () => ({ get x() { throw new Error("getter"); } }));
+    check("a result that throws when read is an error", (await context.render("<% badResult() %>")).tags[0].value.error, "Error: getter");
 
     await context.render("<% r = asyncDouble(a) %>");
     const r = context.get("r");

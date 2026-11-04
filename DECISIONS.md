@@ -276,3 +276,21 @@ host's types rather than as a round trip through Swan, which would lose function
 and copy promises. It stops at class instances in JavaScript, which it leaves
 alone rather than turning into plain objects, since that is conversion and not
 normalization.
+
+## T14 — 2026-11-04 — Host errors are undefined values (supersedes part of T9)
+
+A Python or JavaScript function called from Swan that raises an exception or
+throws gives an `Undefined` instead of `Nothing`. So does a rejected JavaScript
+promise and a Python awaitable that raises or is cancelled, which T9 made
+`Nothing`. It is a new kind of undefined value, `Undef::HostError`, of type
+`HostError`, with the text of the error in the member `error`
+(`"ValueError: boom"`, `"Error: boom"`) and the position of the call, placed as
+for other built-ins (T8, T10). A failed import and a failed load still give
+`Nothing`, and a loader that raises is still a failed load.
+*Reason:* `Nothing` is the empty tuple, a valid result, so a bug in a host
+function silently rendered as an empty text. T9 kept `Nothing` because "there
+is no Swan error to keep"; the host's message is that error. A new kind was
+needed since `Undef::Value` has no position, and the operation kinds would have
+to name an operation and an operand that say nothing about the failure. Only
+the text is kept, not the exception object: Swan values cannot hold host
+objects, and the conversion keeps Swan values host-independent.

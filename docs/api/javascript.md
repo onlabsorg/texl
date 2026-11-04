@@ -123,7 +123,7 @@ The objects you pass to the engine and to contexts become Swan values:
 | string                              | `Text`                                         |
 | [`Tuple`](#tuple)                   | `Tuple`                                        |
 | other array                         | `List` (see below)                             |
-| Promise, or any object with a `then` method | `Promise`; a rejection resolves to `Nothing` |
+| Promise, or any object with a `then` method | `Promise`; a rejection resolves to an `Undefined` |
 | function                            | `Func` (see below)                             |
 | a [`TexlUndefined`](#texlundefined) | the original `Undefined`                       |
 | other object                        | `Namespace` of its own enumerable properties   |
@@ -166,8 +166,11 @@ const engine = new TexlEngine({
 
 The return value is converted to a Swan value, so a function returns several
 values as a `Tuple`, and a list as an array. If the function throws, the
-result is `Nothing`. An `async` function, or a function that returns a
-promise, gives a Swan promise, and the tag waits for it:
+result is an `Undefined` of type `"HostError"`, whose `error` is the text of
+what was thrown, such as `"Error: boom"`; the thrown object itself is not kept.
+An `async` function, or a function that returns a promise, gives a Swan
+promise, and the tag waits for it; if it rejects, the promise resolves to the
+same kind of `Undefined`:
 
 ```js
 const engine = new TexlEngine({
@@ -678,6 +681,7 @@ interface TexlUndefined {
     readonly rhv: any;
     readonly expected: string | null;
     readonly token: string | null;
+    readonly error: string | null;
     readonly pos: number | null;
     readonly source: string | null;
     readonly uri: string | null;
@@ -701,6 +705,7 @@ undefined value.
 | `lhv`, `rhv`  | The operands of a binary operation.                          |
 | `expected`    | The missing closing bracket of a `"Termination"` error.      |
 | `token`       | The misplaced token of a `"Token"` error.                    |
+| `error`       | The text of what a host function threw or a host promise rejected with, such as `"Error: boom"`, of a `"HostError"`. |
 | `pos`         | Where the error is in the source of the code that made it, in UTF-16 code units; for an error of a built-in or host function, the call that returned it. `null` for values made on purpose (`undef.from`) and when the error has no known place in any source. |
 | `source`      | The text `pos` is an index of: the whole document, or the code run by `parse`. `null` when `pos` is. A getter: the string is made each time it is read, so keep it in a variable to read it many times. |
 | `uri`         | The URL of the document the error is in. `null` when `pos` is, and for templates rendered in a context. |
@@ -714,6 +719,7 @@ undefined value.
 | `"Token"`           | a token is in the wrong place                    |
 | `"Name"`            | a name was expected                              |
 | `"Value"`           | made on purpose, by `undef.from`                 |
+| `"HostError"`       | a host function threw, or a host promise rejected, with `error` |
 
 ```js
 const doc = await engine.render("doc.texl", '<% 2 * ("a" - 1) %>');

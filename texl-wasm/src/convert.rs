@@ -8,8 +8,8 @@
 //! | string                         | `Text`                                   |
 //! | [`Tuple`]                      | `Tuple` (normalized)                     |
 //! | other array                    | `List` (normalized)                      |
-//! | Promise or other thenable      | `Promise` (a rejection gives `Nothing`)  |
-//! | function                       | `Func` taking one argument               |
+//! | Promise or other thenable      | `Promise` (a rejection gives `Undefined`) |
+//! | function                       | `Func` taking one argument (a throw gives `Undefined`) |
 //! | `TexlUndefined` (from Swan)    | the original `Undefined`                 |
 //! | other object                   | `Namespace` of its own enumerable keys   |
 //!
@@ -48,6 +48,24 @@ extern "C" {
     // lib.rs can declare the class. It is never called.
     #[wasm_bindgen(js_name = Tuple, reexport, skip_typescript)]
     fn tuple_class_export();
+}
+
+#[wasm_bindgen]
+extern "C" {
+    /// JavaScript's `String(value)`, which throws for some objects.
+    #[wasm_bindgen(catch, js_name = String)]
+    fn js_string(value: &JsValue) -> Result<String, JsValue>;
+}
+
+/// The `Undefined` of what JS threw or rejected with, an `Error` or any other value.
+fn host_error(thrown: &JsValue) -> Value {
+    Value::undef_host_error(js_string(thrown).unwrap_or_else(|_| "unknown error".to_string()))
+}
+
+/// The Swan value of `result`, the outcome of JS code: the `Undefined` of the error
+/// if it threw, or if reading the value threw (a getter, say).
+fn outcome_to_swan(result: Result<JsValue, JsValue>) -> Value {
+    result.and_then(js_to_swan_value).unwrap_or_else(|thrown| host_error(&thrown))
 }
 
 /// Appends each item of `items`, converted to JS, to `arr`.
@@ -119,11 +137,7 @@ pub fn js_to_swan_value(val: JsValue) -> Result<Value, JsValue> {
         let js_promise = js_sys::Promise::resolve(&val);
         wasm_bindgen_futures::spawn_local(async move {
             let result = wasm_bindgen_futures::JsFuture::from(js_promise).await;
-            let v = match result {
-                Ok(v)  => js_to_swan_value(v).unwrap_or(Value::Nothing),
-                Err(_) => Value::Nothing, // Swan promises never reject
-            };
-            sp.resolve(v);
+            sp.resolve(outcome_to_swan(result)); // Swan promises never reject
         });
         Ok(Value::Promise(swan_promise))
     } else if val.is_function() {
@@ -134,10 +148,7 @@ pub fn js_to_swan_value(val: JsValue) -> Result<Value, JsValue> {
 
         let builtin = BuiltinFn::new("js_callback", move |arg: Value| {
             let js_arg = swan_value_to_js(&arg);
-            match js_fn.call1(&JsValue::NULL, &js_arg) {
-                Ok(res) => js_to_swan_value(res).unwrap_or(Value::Nothing),
-                Err(_) => Value::Nothing,
-            }
+            outcome_to_swan(js_fn.call1(&JsValue::NULL, &js_arg))
         });
 
         Ok(Value::Builtin(builtin))

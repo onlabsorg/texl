@@ -346,7 +346,10 @@ impl Graph {
                     self.value(rhv, edges);
                 }
                 Undef::Value(val) => self.value(val, edges),
-                Undef::Termination { .. } | Undef::Token { .. } | Undef::Name { .. } => {}
+                Undef::Termination { .. }
+                | Undef::Token { .. }
+                | Undef::Name { .. }
+                | Undef::HostError { .. } => {}
             },
             Value::Nothing | Value::Bool(_) | Value::Numb(_) | Value::Text(_) | Value::Name(_) => {}
         }

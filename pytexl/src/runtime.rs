@@ -159,6 +159,12 @@ pub fn asyncio(py: Python<'_>) -> PyResult<&Bound<'_, PyAny>> {
         .map(|m| m.bind(py))
 }
 
+/// The text of a Python exception, such as `ValueError: boom`, or `ValueError` if it has no
+/// message.
+pub fn error_text(err: &PyErr) -> String {
+    err.to_string().trim_end_matches(": ").to_string()
+}
+
 /// The state shared by an [`AwaitPy`] future and the done callback of its asyncio future.
 enum AwaitState {
     /// Not polled yet: holds the awaitable.
@@ -166,8 +172,8 @@ enum AwaitState {
     /// Waiting for the asyncio future, which is kept alive here: the loop only holds weak
     /// references to its tasks.
     Waiting { _future: Py<PyAny>, waker: Waker },
-    /// Completed: the result, or `None` if the awaitable raised or was cancelled.
-    Done(Option<Py<PyAny>>),
+    /// Completed: the result, or the error if the awaitable raised or was cancelled.
+    Done(Result<Py<PyAny>, String>),
 }
 
 /// A Rust future that awaits a Python awaitable (a coroutine, a future or a task).
@@ -186,12 +192,12 @@ impl AwaitPy {
 }
 
 impl Future for AwaitPy {
-    type Output = Option<Py<PyAny>>;
+    type Output = Result<Py<PyAny>, String>;
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         let mut state = self.state.borrow_mut();
         match &mut *state {
-            AwaitState::Done(result) => Poll::Ready(result.take()),
+            AwaitState::Done(result) => Poll::Ready(std::mem::replace(result, Err(String::new()))),
             AwaitState::Waiting { waker, .. } => {
                 waker.clone_from(cx.waker());
                 Poll::Pending
@@ -211,10 +217,7 @@ impl Future for AwaitPy {
                 match started {
                     Ok(()) => Poll::Pending,
                     // Not awaitable, or no running loop
-                    Err(_) => {
-                        *self.state.borrow_mut() = AwaitState::Done(None);
-                        Poll::Ready(None)
-                    }
+                    Err(err) => Poll::Ready(Err(error_text(&err))),
                 }
             }
         }
@@ -232,10 +235,8 @@ struct DoneCallback {
 impl DoneCallback {
     fn __call__(&mut self, future: &Bound<'_, PyAny>) {
         let Some(state) = self.state.take() else { return };
-        let result = match future.call_method0("cancelled").and_then(|c| c.is_truthy()) {
-            Ok(false) => future.call_method0("result").ok().map(Bound::unbind),
-            _ => None,
-        };
+        // `result` raises the exception of the future, or `CancelledError`
+        let result = future.call_method0("result").map(Bound::unbind).map_err(|err| error_text(&err));
         let previous = std::mem::replace(&mut *state.borrow_mut(), AwaitState::Done(result));
         if let AwaitState::Waiting { waker, .. } = previous {
             waker.wake();

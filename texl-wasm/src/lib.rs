@@ -120,6 +120,8 @@ export interface TexlUndefined {
     readonly expected: string | null;
     /** The misplaced token of a `"Token"` error. */
     readonly token: string | null;
+    /** The error of a `"HostError"`, as the host words it, such as `"Error: boom"`. */
+    readonly error: string | null;
     /** Where the error is in the source of the code that made it, in UTF-16 code units (for an error of a built-in or host function, the call that returned it); `null` for values made on purpose (`undef.from`). */
     readonly pos: number | null;
     /** The text `pos` is an index of: the whole document, or the code run by `parse`; `null` when `pos` is. A getter: the string is made each time it is read. */

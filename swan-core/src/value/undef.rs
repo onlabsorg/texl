@@ -85,6 +85,17 @@ pub enum Undef {
     /// An undefined value created explicitly, for example by the Swan
     /// built-in `undef.from`. It wraps an arbitrary value.
     Value(Box<Value>),
+
+    /// The host failed: a host function raised an exception, or a host
+    /// promise was rejected.
+    HostError {
+        /// The error as the host words it, such as `"ValueError: boom"`.
+        error: String,
+        /// Source position of the call, `None` if unknown.
+        pos: Option<usize>,
+        /// The expression `pos` refers to.
+        expression: Option<Rc<Expression>>,
+    },
 }
 
 impl PartialEq for Undef {
@@ -114,6 +125,10 @@ impl PartialEq for Undef {
              Undef::Value(val2)) => {
                 val1 == val2
             }
+            (Undef::HostError{error:error1, ..},
+             Undef::HostError{error:error2, ..}) => {
+                error1 == error2
+            }
             _ => false,
         }
     }
@@ -132,6 +147,7 @@ impl Undef {
             Undef::Token { .. } => "Token",
             Undef::Name { .. } => "Name",
             Undef::Value(_) => "Value",
+            Undef::HostError { .. } => "HostError",
         }
     }
 
@@ -145,7 +161,8 @@ impl Undef {
             | Undef::BinaryOperation { pos, .. }
             | Undef::Termination { pos, .. }
             | Undef::Token { pos, .. }
-            | Undef::Name { pos, .. } => *pos,
+            | Undef::Name { pos, .. }
+            | Undef::HostError { pos, .. } => *pos,
             Undef::Value(_) => None,
         }
     }
@@ -161,7 +178,8 @@ impl Undef {
             | Undef::BinaryOperation { pos, expression, .. }
             | Undef::Termination { pos, expression, .. }
             | Undef::Token { pos, expression, .. }
-            | Undef::Name { pos, expression } => {
+            | Undef::Name { pos, expression }
+            | Undef::HostError { pos, expression, .. } => {
                 if pos.is_none() {
                     *pos = Some(at);
                     *expression = in_expression;
@@ -178,7 +196,8 @@ impl Undef {
             | Undef::BinaryOperation { expression, .. }
             | Undef::Termination { expression, .. }
             | Undef::Token { expression, .. }
-            | Undef::Name { expression, .. } => expression.as_ref(),
+            | Undef::Name { expression, .. }
+            | Undef::HostError { expression, .. } => expression.as_ref(),
             Undef::Value(_) => None,
         }
     }
@@ -211,7 +230,7 @@ impl Undef {
 
     /// The details of the value, by member name, as `undef.inspect` shows
     /// them: `type`, `description`, the variant's fields (`op`, `val`,
-    /// `lhv`, `rhv`, `expected`, `token`), `pos` (a byte offset in the
+    /// `lhv`, `rhv`, `expected`, `token`, `error`), `pos` (a byte offset in the
     /// expression, absent when there is no position) and `origin` (the
     /// expression's origin as text, when it has one). Operands are returned
     /// as they are, not inspected.
@@ -229,6 +248,9 @@ impl Undef {
             }
             Undef::Token { token, .. } => {
                 members.push(("token", Value::Text(token.as_str().into())));
+            }
+            Undef::HostError { error, .. } => {
+                members.push(("error", Value::Text(error.as_str().into())));
             }
             _ => {}
         }
@@ -261,6 +283,7 @@ impl Undef {
             Undef::Token { token, .. } => format!("unexpected `{token}`"),
             Undef::Name { .. } => "expected a name".to_string(),
             Undef::Value(val) => format!("undefined on purpose, from {}", a_value(val)),
+            Undef::HostError { error, .. } => format!("host error: {error}"),
         }
     }
 }
@@ -377,6 +400,15 @@ fn a_type(val: &Value) -> String {
 
 
 impl Value {
+
+    /// Builds `Undefined` for a failure of the host, with no position: the
+    /// helper for the bindings, for a host function that raises an exception
+    /// or a host promise that is rejected. The evaluator gives the value the
+    /// position of the call when the function returns it.
+    #[inline]
+    pub fn undef_host_error(error: impl Into<String>) -> Value {
+        Value::Undefined(Undef::HostError { error: error.into(), pos: None, expression: None })
+    }
 
     /// Builds `Undefined` for operation `op` (usually a built-in function's
     /// name, such as `"math.sqrt"`) applied to `val`, with no position: the

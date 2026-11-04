@@ -9,8 +9,8 @@
 //! | `list`                                    | `List`                                      |
 //! | `tuple`                                   | `Tuple`                                     |
 //! | mapping (`dict`, ...)                     | `Namespace` of its string keys              |
-//! | awaitable (coroutine, future, task)       | `Promise` (an exception gives `Nothing`)    |
-//! | callable                                  | `Func`                                      |
+//! | awaitable (coroutine, future, task)       | `Promise` (an exception gives `Undefined`)  |
+//! | callable                                  | `Func` (an exception gives `Undefined`)     |
 //! | [`Promise`], [`Function`], [`Undefined`]  | the Swan value they wrap                    |
 //! | anything else                             | `Nothing`                                   |
 //!
@@ -133,6 +133,7 @@ impl Function {
 /// `"Token"`            `token`, `pos`                    a token is in the wrong place
 /// `"Name"`             `pos`                             a name was expected
 /// `"Value"`            `val`                             made on purpose, by `undef.from`
+/// `"HostError"`        `error`, `pos`                    a host function or awaitable raised `error`
 /// ===================  ================================  ==========================================
 ///
 /// Operands are converted to Python values; an operand that is itself
@@ -158,6 +159,7 @@ impl Function {
 ///     uri (str | None): The URL of the document the error is in.
 ///     expected (str | None): The missing closing bracket.
 ///     token (str | None): The misplaced token.
+///     error (str | None): The exception of a host function or awaitable, such as ``"ValueError: boom"``.
 ///     cause (Undefined | None): The first operand that is itself undefined.
 ///
 /// Example:
@@ -265,6 +267,12 @@ impl Undefined {
     #[getter]
     fn token(&self, py: Python<'_>) -> Py<PyAny> {
         self.member(py, "token")
+    }
+
+    /// str | None: The exception of a host function or awaitable, such as ``"ValueError: boom"``.
+    #[getter]
+    fn error(&self, py: Python<'_>) -> Py<PyAny> {
+        self.member(py, "error")
     }
 
     /// Undefined | None: The first operand that is itself undefined, the cause of this error.
@@ -376,8 +384,8 @@ pub fn py_to_swan(obj: &Bound<'_, PyAny>) -> Value {
         let awaitable = obj.clone().unbind();
         Value::Promise(runtime::promise_of(async move {
             match AwaitPy::new(awaitable).await {
-                Some(result) => Python::attach(|py| py_to_swan(result.bind(py))),
-                None => Value::Nothing,
+                Ok(result) => Python::attach(|py| py_to_swan(result.bind(py))),
+                Err(error) => Value::undef_host_error(error),
             }
         }))
     } else if obj.is_callable() {
@@ -388,7 +396,7 @@ pub fn py_to_swan(obj: &Bound<'_, PyAny>) -> Value {
 }
 
 /// Wraps a Python callable as a Swan function. See [`Function`] for the argument convention,
-/// which is the same in this direction. An exception gives `Nothing`.
+/// which is the same in this direction. An exception gives an `Undefined`.
 fn py_function(func: Py<PyAny>) -> BuiltinFn {
     BuiltinFn::new("python", move |arg| {
         Python::attach(|py| {
@@ -397,13 +405,9 @@ fn py_function(func: Py<PyAny>) -> BuiltinFn {
                 Value::Tuple(items) => items.iter().map(|item| swan_to_py(py, item)).collect(),
                 other => vec![swan_to_py(py, other)],
             };
-            let args = match PyTuple::new(py, args) {
-                Ok(args) => args,
-                Err(_) => return Value::Nothing,
-            };
-            match func.bind(py).call1(args) {
+            match PyTuple::new(py, args).and_then(|args| func.bind(py).call1(args)) {
                 Ok(result) => py_to_swan(&result),
-                Err(_) => Value::Nothing,
+                Err(err) => Value::undef_host_error(runtime::error_text(&err)),
             }
         })
     })

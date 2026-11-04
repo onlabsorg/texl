@@ -174,7 +174,7 @@ The values you pass to the engine and to contexts become Swan values:
 | `list`                                      | `List`                                        |
 | `tuple`                                     | `Tuple`                                       |
 | `dict`, or any other mapping                | `Namespace` of its string keys                |
-| awaitable: coroutine, future or task        | `Promise`; an exception resolves to `Nothing` |
+| awaitable: coroutine, future or task        | `Promise`; an exception resolves to an `Undefined` |
 | function, or any other callable             | `Func` (see below)                            |
 | [`Promise`](#promise), [`Function`](#function), [`Undefined`](#undefined) | the Swan value they wrap |
 | anything else                               | `Nothing`                                     |
@@ -218,8 +218,11 @@ engine = pytexl.Engine({
 ```
 
 The return value is converted to a Swan value. If the function raises an
-exception, the result is `Nothing`. An `async` function, or a function that
-returns an awaitable, gives a Swan promise, and the tag waits for it:
+exception, the result is an `Undefined` of type `"HostError"`, whose `error` is
+the text of the exception, such as `"ValueError: boom"`; the exception object
+itself is not kept. An `async` function, or a function that returns an
+awaitable, gives a Swan promise, and the tag waits for it; if it raises or is
+cancelled, the promise resolves to the same kind of `Undefined`:
 
 ```python
 async def weather(city):
@@ -694,8 +697,8 @@ class Promise:
 
 A Swan promise. Awaiting it returns its value, converted to a Python value.
 Promises never fail, as in Swan: a promise of an operation that fails
-resolves to an [`Undefined`](#undefined), and one whose work cannot run (a
-coroutine that raises, a failed load) to `None`. The `done` attribute is `True` once the promise has a value. Await a
+resolves to an [`Undefined`](#undefined), as does a coroutine that raises, and
+a failed load to `None`. The `done` attribute is `True` once the promise has a value. Await a
 promise in a running event loop.
 
 ```python
@@ -739,6 +742,7 @@ class Undefined:
     uri: str | None
     expected: str | None
     token: str | None
+    error: str | None
     cause: Undefined | None
     def inspect(self) -> dict[str, Any]
 ```
@@ -756,6 +760,7 @@ attributes that do not apply are `None`.
 | `"Token"`           | `token`, `pos`            | a token is in the wrong place              |
 | `"Name"`            | `pos`                     | a name was expected                        |
 | `"Value"`           | `val`                     | made on purpose, by `undef.from`           |
+| `"HostError"`       | `error`, `pos`            | a host function or awaitable raised `error` |
 
 The operands are [converted](#globals-and-context-values) to Python values,
 so an operand that is itself undefined is an `Undefined` too; `cause` is the

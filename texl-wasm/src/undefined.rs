@@ -3,7 +3,7 @@
 //! A Swan undefined value becomes a plain, frozen JS object (`TexlUndefined`
 //! in the TypeScript types) with every detail already converted: `type`,
 //! `description`, the operands (`op`, `val`, `lhv`, `rhv`), `expected`,
-//! `token`, `pos` (in UTF-16 code units, a JS string index), `uri` and
+//! `token`, `error`, `pos` (in UTF-16 code units, a JS string index), `uri` and
 //! `cause`. Members that do not apply are `null`. Only `source`, the text
 //! `pos` indexes, is not converted up front: it can be a whole document, so
 //! it is a getter that makes the string each time it is read.
@@ -79,7 +79,7 @@ fn source_of(key: f64) -> JsValue {
 }
 
 /// The members of every `TexlUndefined`, `null` when they do not apply.
-const MEMBERS: [&str; 10] = ["op", "val", "lhv", "rhv", "expected", "token", "pos", "source", "uri", "cause"];
+const MEMBERS: [&str; 11] = ["op", "val", "lhv", "rhv", "expected", "token", "error", "pos", "source", "uri", "cause"];
 
 /// Converts an undefined value to a `TexlUndefined` object.
 pub fn undefined_to_js(undef: &Undef) -> JsValue {

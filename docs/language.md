@@ -55,12 +55,13 @@ Consequences:
 - **Promises never fail.** A promise has no failure state. An `Undefined`
   value is not a failure: a promise resolved with one holds it, like any
   other value, so `x ~> f` behaves as a later `f x` and an error reached
-  through a promise renders as `[[Undefined]]`. A promise whose work cannot
-  run holds `Nothing`: a document that cannot be loaded, a rejected
-  JavaScript promise, a Python coroutine that raises.
+  through a promise renders as `[[Undefined]]`. A rejected JavaScript promise
+  and a Python coroutine that raises hold an `Undefined` too. A document that
+  cannot be loaded gives `Nothing`.
 - **Host functions must not throw.** A Rust built-in returns an `Undefined`
   (for example with `Value::undef_unary`) instead of panicking. The JavaScript
-  and Python bindings turn an exception in a host function into `Nothing`.
+  and Python bindings turn an exception in a host function into an `Undefined`
+  of type `HostError`, whose `error` member holds the host's message.
 
 There is one exception to the rule: infinite recursion overflows the stack and
 stops the host program (see [Limits](#limits-and-performance)).
@@ -359,7 +360,7 @@ cannot subtract the number `1` from the text `"a"`
 ```
 
 `undef.inspect` returns `type`, `description`, the members of the kind
-(`op`, `val`, `lhv`, `rhv`, `expected`, `token`), `pos` and `uri`; `pos` and
+(`op`, `val`, `lhv`, `rhv`, `expected`, `token`, `error`), `pos` and `uri`; `pos` and
 `uri` are absent when unknown. In a document, `pos` is a byte offset in the
 document. This is Texl's `undef.inspect`, which the engine binds in every
 scope it creates; Swan's own `undef.inspect` (in `parse`d code, or in a scope
@@ -421,8 +422,7 @@ collector traces them like any other value.
 
 Known limits:
 
-- **Failed host work is `Nothing`.** A failed import, a rejected JavaScript
-  promise and a Python coroutine that raises resolve to `Nothing`, not to an
+- **A failed import is `Nothing`.** It resolves to `Nothing`, not to an
   `Undefined` that says what went wrong.
 - **Unknown names are not errors.** A name that is not bound is `Nothing`,
   not `Undefined`, so a typo in a name renders as an empty text.

@@ -171,7 +171,12 @@ available to hosts too, but it cannot import documents.
   in a list passed to a template is removed and the later items move down one
   position, and a tuple in such a list is spread into it. JavaScript and Python
   also get a `normalize` function that does this without going through a
-  template.
+  template. A JavaScript or Python function that fails while a template calls
+  it now gives an `Undefined` value holding the host's error message, at the
+  position of the call, where before the result was silently "nothing"; the
+  same holds for functions that wait for their result and for rejected or
+  cancelled promises passed to a template. Such a tag now shows
+  `[[Undefined]]` instead of rendering empty.
 - Available: browser/JavaScript, Python, Rust.
 - The `texl` command-line tool (`texl-cli`) has been removed from the
   repository; its last release was 0.2.0 (2026-10-25), and its binaries
@@ -207,9 +212,8 @@ with it.
 
 ## Known limitations
 
-- When work that waits fails before producing a value (a document that
-  cannot be loaded, a failing JavaScript or Python function that waits),
-  the result is "nothing", not an error that says what went wrong. An
+- A document that cannot be loaded gives "nothing", not an error that says
+  what went wrong. An
   error raised inside a built-in function points to
   the call of that function, not to anything more precise, and errors a
   built-in function puts inside a list or namespace have no position. A

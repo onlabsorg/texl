@@ -172,7 +172,7 @@ fn py_loader(loader: Py<PyAny>) -> LoaderFn {
             let result = called.map_err(|e| format!("{uri}: {e}"))?;
             let is_awaitable = Python::attach(|py| result.bind(py).hasattr("__await__").unwrap_or(false));
             let source = if is_awaitable {
-                AwaitPy::new(result).await.ok_or_else(|| format!("{uri}: the loader failed"))?
+                AwaitPy::new(result).await.map_err(|e| format!("{uri}: {e}"))?
             } else {
                 result
             };
