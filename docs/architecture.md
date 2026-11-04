@@ -123,8 +123,9 @@ Everything is `Rc`-based and single-threaded. See
 - `src/loader.rs`: the `http`/`https` loader, which uses the global `fetch`,
   and the resolution of URIs against the base URL (`location.href` by
   default). Every document has a full URL.
-- `src/convert.rs`: JavaScript ↔ Swan value conversion. JavaScript functions
-  become built-ins, JavaScript promises become Swan promises. Positions
+- `src/convert.rs`: JavaScript ↔ Swan value conversion, and the exported
+  `Tuple` class. JavaScript functions become built-ins, JavaScript promises
+  become Swan promises. Positions
   (undefined values, document tags) are converted to UTF-16 code units.
 - `src/undefined.rs`: undefined values as frozen plain objects
   (`TexlUndefined`), with a getter for their source text. A private `WeakMap` gives the Swan value back when the

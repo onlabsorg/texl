@@ -142,9 +142,17 @@ pub enum Value {
 
 impl Value {
 
-    /// Builds a `List` from `items`.
-    #[inline]
+    /// Builds a normalized `List` from `items`.
+    ///
+    /// A list holds no tuples and no `Nothing`, as with Swan's `[X]`: the items
+    /// of a tuple are spread into the list and `Nothing` items are dropped.
     pub fn list(items: Vec<Value>) -> Value {
+        let normalized = !items.iter().any(|item| matches!(item, Value::Tuple(_) | Value::Nothing));
+        let items = if normalized {
+            items
+        } else {
+            items.iter().flat_map(Value::items).collect()
+        };
         Value::List(Rc::new(items))
     }
     
@@ -596,6 +604,16 @@ mod boolean_conversion_tests {
         assert!(bool::from(Value::Text("hello".into())));
         assert!(!bool::from(Value::list(vec![])));
         assert!(bool::from(Value::list(vec![Value::Numb(1.0)])));
+    }
+
+    #[test]
+    fn test_list_is_normalized() {
+        let n = Value::Numb;
+        let tuple = Value::Tuple(Rc::new(vec![n(1.0), Value::Nothing, n(2.0)]));
+        let inner = Value::list(vec![n(3.0)]);
+        let list = Value::list(vec![tuple, Value::Nothing, inner.clone()]);
+        assert_eq!(list, Value::List(Rc::new(vec![n(1.0), n(2.0), inner])));
+        assert_eq!(Value::list(vec![Value::Nothing]), Value::List(Rc::new(vec![])));
     }
 
     #[test]

@@ -58,7 +58,7 @@ from ._pytexl import Function, NativeContext, NativeEngine, Promise, Undefined
 
 __all__ = [
     "Context", "Document", "Engine", "Function", "Loader", "Promise", "Rendering", "Tag", "Undefined",
-    "collect", "loaders",
+    "collect", "loaders", "normalize",
 ]
 
 #: A document loader: takes a URI and returns the source, or an awaitable of it.
@@ -462,6 +462,53 @@ def collect() -> int:
         0
     """
     return _pytexl.collect()
+
+
+def normalize(value: Any) -> Any:
+    """Gives a value the form Swan would give it, without passing it to an engine.
+
+    A tuple is flattened and loses its ``None`` items; with one item left it is
+    that item, with none it is ``None``. A list spreads its tuple items and loses
+    its ``None`` items. This goes through nested lists, tuples and mappings; a
+    mapping becomes a ``dict``, and keeps its members even when they are ``None``.
+    Anything else, such as a function or an awaitable, is returned as it is. The
+    value passed is not changed.
+
+    Args:
+        value: Any value.
+
+    Returns:
+        The normalized value.
+
+    Example:
+        >>> pytexl.normalize([1, None, (2, 3), [None]])
+        [1, 2, 3, []]
+        >>> pytexl.normalize((1, (2, None), None))
+        (1, 2)
+        >>> pytexl.normalize((None, 7))
+        7
+    """
+    if isinstance(value, tuple):
+        items = _normalized_items(value)
+        if not items:
+            return None
+        return items[0] if len(items) == 1 else tuple(items)
+    if isinstance(value, list):
+        return _normalized_items(value)
+    if isinstance(value, Mapping):
+        return {key: normalize(item) for key, item in value.items()}
+    return value
+
+
+def _normalized_items(items: list[Any] | tuple[Any, ...]) -> list[Any]:
+    """Normalizes the items of a list or tuple: tuples spread, ``None`` dropped."""
+    result: list[Any] = []
+    for item in map(normalize, items):
+        if isinstance(item, tuple):
+            result.extend(item)
+        elif item is not None:
+            result.append(item)
+    return result
 
 
 def _uri(uri: str | os.PathLike[str]) -> str:

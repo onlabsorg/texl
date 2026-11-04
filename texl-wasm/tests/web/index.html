@@ -36,7 +36,7 @@
 <pre id="expected" hidden></pre>
 
 <script type="module">
-import init, { TexlEngine, collect, isUndefined } from "../../pkg/texl_wasm.js";
+import init, { TexlEngine, Tuple, collect, isUndefined, normalize } from "../../pkg/texl_wasm.js";
 
 const checks = document.getElementById("checks");
 let failures = 0;
@@ -250,6 +250,90 @@ async function testDebug() {
     check("context renderings have tags", [rendering.tags[1].start, rendering.tags[1].value].join(), "13,2");
 }
 
+async function testTuples() {
+    const received = [];
+    const engine = new TexlEngine({
+        pair: Tuple.of(1, 2),
+        items: [1, 2],
+        mixed: [Tuple.of(1, 2), [3, 4]],
+        receive: (arg) => { received.push(arg); return arg; },
+        makeTuple: () => Tuple.of("a", "b"),
+        makeArray: () => ["a", "b"],
+        later: async () => Tuple.of(5, 6),
+    });
+    const context = engine.createContext();
+    const type = async (expr) => (await context.render(`<% ${expr} %>`)).text;
+
+    check("a Swan tuple is a Tuple", (await context.render("<% t = (1, 2) %>")).data.t instanceof Tuple, true);
+    check("a Tuple is an Array", Array.isArray(Tuple.of(1, 2)), true);
+    check("a Swan list is not a Tuple", (await context.render("<% l = [1, 2] %>")).data.l instanceof Tuple, false);
+    check("a Swan list is an Array", Array.isArray(context.get("l")), true);
+    check("a Tuple reads like an array", Array.from(context.get("t")).join(), "1,2");
+
+    check("a Tuple becomes a Swan tuple", await type("pair"), "1, 2");
+    check("Swan sees a Tuple as a tuple", await type("pair + pair"), "2, 4");
+    check("an array becomes a Swan list", await type("items 1"), "2");
+    check("a JS function can return a Tuple", await type("makeTuple()"), "a, b");
+    check("a JS function can return a list", await type("makeArray() 1"), "b");
+
+    context.set("t2", Tuple.of(1, 2));
+    check("context.set keeps a Tuple", context.get("t2") instanceof Tuple, true);
+    context.set("l2", [1, 2]);
+    check("context.set keeps a list", context.get("l2") instanceof Tuple, false);
+    check("a tuple round-trips", context.get("t") instanceof Tuple, true);
+    check("a Tuple in an array is spread", (await context.render("<% m = mixed %>")).data.m.length, 3);
+    check("a list in a list stays a list", Array.isArray(context.get("m")[2]), true);
+
+    await context.render("<% receive(1, 2) %><% receive [1, 2] %>");
+    check("a call with several arguments passes a Tuple", received[0] instanceof Tuple, true);
+    check("a call with a list passes an array", received[1] instanceof Tuple, false);
+    const [a, b] = received[0];
+    check("a Tuple argument destructures", a + b, 3);
+    check("a promised Tuple becomes a tuple", (await context.render("<% later() %>")).tags[0].value instanceof Tuple, true);
+
+    context.set("one", Tuple.of(7));
+    check("a Tuple of one item is that item", context.get("one"), 7);
+    context.set("none", new Tuple());
+    check("an empty Tuple is Nothing", context.get("none"), null);
+    check("array methods keep the class", Tuple.of(1, 2).map((x) => x) instanceof Tuple, true);
+    context.set("flat", Tuple.of(1, Tuple.of(2, 3), null, 4));
+    check("a Tuple is flattened and drops null", context.get("flat").join(), "1,2,3,4");
+    context.set("gaps", [1, null, 2, undefined, new Tuple()]);
+    check("an array drops null and undefined", JSON.stringify(context.get("gaps")), "[1,2]");
+    context.set("deep", { a: [[null, 1]], n: null });
+    check("nested arrays are normalized", JSON.stringify(context.get("deep").a), "[[1]]");
+    check("null members of an object are kept", context.get("deep").n, null);
+}
+
+async function testNormalize() {
+    const show = (v) => JSON.stringify(v);
+    check("normalize flattens a Tuple", show(normalize(Tuple.of(1, Tuple.of(2, 3), null))), "[1,2,3]");
+    check("normalize keeps the Tuple class", normalize(Tuple.of(1, 2)) instanceof Tuple, true);
+    check("normalize of one item gives that item", normalize(Tuple.of(null, 7)), 7);
+    check("normalize of no items gives null", normalize(new Tuple()), null);
+    check("normalize of undefined gives null", normalize(undefined), null);
+    check("normalize spreads Tuples in arrays", show(normalize([Tuple.of(1, 2), [3, null], null])), "[1,2,[3]]");
+    check("normalize keeps arrays as arrays", normalize([1, 2]) instanceof Tuple, false);
+    check("normalize goes through plain objects", show(normalize({ a: [null, 1], t: Tuple.of(2), n: null })), '{"a":[1],"t":2,"n":null}');
+    const input = [1, null];
+    normalize(input);
+    check("normalize leaves its argument as it was", input.length, 2);
+    const fn = () => 1, promise = Promise.resolve(1), date = new Date();
+    check("normalize returns functions as they are", normalize(fn), fn);
+    check("normalize returns promises as they are", normalize(promise), promise);
+    check("normalize returns class instances as they are", normalize(date), date);
+
+    const context = new TexlEngine().createContext();
+    await context.render('<% u = 1 + "a" %>');
+    const u = context.get("u");
+    check("the value is undefined", isUndefined(u), true);
+    check("normalize returns undefined values as they are", normalize(u), u);
+    for (const value of [Tuple.of(1, [null, Tuple.of(2, 3)], null), [Tuple.of(), [Tuple.of(4)], 5], { a: [null], b: { c: Tuple.of(null, 1) } }]) {
+        context.set("v", value);
+        check(`normalize gives what comes back from Swan: ${show(value)}`, show(normalize(value)), show(context.get("v")));
+    }
+}
+
 const status = document.getElementById("status");
 try {
     await init();
@@ -258,6 +342,8 @@ try {
     await testContext();
     await testCollect();
     await testDebug();
+    await testTuples();
+    await testNormalize();
 } catch (err) {
     failures++;
     check(`unexpected error: ${err}`, false, true);

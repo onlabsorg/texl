@@ -6,15 +6,17 @@
 //! | boolean                        | `Bool`                                   |
 //! | number                         | `Numb`                                   |
 //! | string                         | `Text`                                   |
-//! | array                          | `List`                                   |
+//! | [`Tuple`]                      | `Tuple` (normalized)                     |
+//! | other array                    | `List` (normalized)                      |
 //! | Promise or other thenable      | `Promise` (a rejection gives `Nothing`)  |
 //! | function                       | `Func` taking one argument               |
 //! | `TexlUndefined` (from Swan)    | the original `Undefined`                 |
 //! | other object                   | `Namespace` of its own enumerable keys   |
 //!
-//! In the other direction, `Nothing` becomes `null`, lists and tuples become
-//! arrays, namespaces become plain objects (own bindings only), promises
-//! become JS Promises, functions become `undefined`, and undefined values
+//! In the other direction, `Nothing` becomes `null`, lists become arrays,
+//! tuples become [`Tuple`] objects, namespaces become plain objects (own
+//! bindings only), promises become JS Promises, functions become `undefined`,
+//! and undefined values
 //! become `TexlUndefined` objects (see [`crate::undefined`]). Positions are
 //! converted to UTF-16 code units (JS string indices): the `pos` of an
 //! undefined value, and the tag spans of a document namespace (see
@@ -28,6 +30,41 @@ use swan_core::value::{BuiltinFn, Namespace, Promise, Value};
 
 use crate::undefined::{js_to_undefined, undefined_to_js};
 use wasm_bindgen::prelude::*;
+
+#[wasm_bindgen(inline_js = "export class Tuple extends Array {}")]
+extern "C" {
+    /// The JavaScript class of Swan tuples, exported by the package. It is an
+    /// `Array` subclass with nothing added, so it reads like any array, and
+    /// `instanceof` tells it from a list.
+    #[wasm_bindgen(extends = Array)]
+    pub type Tuple;
+
+    #[wasm_bindgen(constructor)]
+    fn new() -> Tuple;
+
+    // Exports the class from the package. This is on a function because
+    // `reexport` on a type always declares `Tuple: unknown` in TypeScript,
+    // while on a function it honors `skip_typescript`, so that `TS_TYPES` in
+    // lib.rs can declare the class. It is never called.
+    #[wasm_bindgen(js_name = Tuple, reexport, skip_typescript)]
+    fn tuple_class_export();
+}
+
+/// Appends each item of `items`, converted to JS, to `arr`.
+fn push_items(arr: &Array, items: &[Value]) {
+    for item in items {
+        arr.push(&swan_value_to_js(item));
+    }
+}
+
+/// Converts each item of the JS array `arr` to a Swan value.
+fn array_items(arr: &Array) -> Result<Vec<Value>, JsValue> {
+    let mut items = Vec::with_capacity(arr.length() as usize);
+    for i in 0..arr.length() {
+        items.push(js_to_swan_value(arr.get(i))?);
+    }
+    Ok(items)
+}
 
 /// True for native Promises and any other "thenable" (object with a callable `then`).
 fn is_thenable(val: &JsValue) -> bool {
@@ -70,13 +107,11 @@ pub fn js_to_swan_value(val: JsValue) -> Result<Value, JsValue> {
         Ok(Value::Text(s.into()))
     } else if let Some(undef) = js_to_undefined(&val) {
         Ok(Value::Undefined(undef))
+    } else if val.is_instance_of::<Tuple>() {
+        // Before the array test, since a Tuple is also an array
+        Ok(Value::tuple(array_items(&Array::from(&val))?))
     } else if Array::is_array(&val) {
-        let arr = Array::from(&val);
-        let mut items = Vec::with_capacity(arr.length() as usize);
-        for i in 0..arr.length() {
-            items.push(js_to_swan_value(arr.get(i))?);
-        }
-        Ok(Value::list(items))
+        Ok(Value::list(array_items(&Array::from(&val))?))
     } else if is_thenable(&val) {
         let swan_promise = Promise::new();
         let sp = swan_promise.clone();
@@ -119,6 +154,68 @@ pub fn js_to_swan_value(val: JsValue) -> Result<Value, JsValue> {
 }
 
 // ----------------------------------------------------------------------------
+// Normalization
+// ----------------------------------------------------------------------------
+
+/// True for an object made by `{...}` or `Object.create(null)`.
+fn is_plain_object(val: &JsValue) -> bool {
+    if !val.is_object() {
+        return false;
+    }
+    let proto = Object::get_prototype_of(val);
+    proto.is_null() || Object::get_prototype_of(&proto).is_null()
+}
+
+/// The normalized items of `arr`: tuples spread, `null` and `undefined` dropped.
+fn normalized_items(arr: &Array) -> Result<Vec<JsValue>, JsValue> {
+    let mut items = Vec::with_capacity(arr.length() as usize);
+    for i in 0..arr.length() {
+        let item = normalize(arr.get(i))?;
+        if item.is_instance_of::<Tuple>() {
+            items.extend(Array::from(&item).iter());
+        } else if !item.is_null() {
+            items.push(item);
+        }
+    }
+    Ok(items)
+}
+
+/// Gives a JS value the form Swan would give it: see `normalize` in lib.rs.
+pub fn normalize(val: JsValue) -> Result<JsValue, JsValue> {
+    if val.is_null() || val.is_undefined() {
+        Ok(JsValue::NULL)
+    } else if js_to_undefined(&val).is_some() {
+        Ok(val)
+    } else if val.is_instance_of::<Tuple>() {
+        let mut items = normalized_items(&Array::from(&val))?;
+        Ok(match items.len() {
+            0 => JsValue::NULL,
+            1 => items.remove(0),
+            _ => {
+                let tuple = Tuple::new();
+                items.iter().for_each(|item| { tuple.push(item); });
+                tuple.into()
+            }
+        })
+    } else if Array::is_array(&val) {
+        let arr = Array::new();
+        normalized_items(&Array::from(&val))?.iter().for_each(|item| { arr.push(item); });
+        Ok(arr.into())
+    } else if is_thenable(&val) || !is_plain_object(&val) {
+        Ok(val)
+    } else {
+        // Members are kept, also when they are `null`
+        let obj = Object::new();
+        let keys = Object::keys(val.unchecked_ref::<Object>());
+        for i in 0..keys.length() {
+            let key = keys.get(i);
+            Reflect::set(&obj, &key, &normalize(Reflect::get(&val, &key)?)?)?;
+        }
+        Ok(obj.into())
+    }
+}
+
+// ----------------------------------------------------------------------------
 // Swan -> JS Conversion
 // ----------------------------------------------------------------------------
 
@@ -131,17 +228,13 @@ pub fn swan_value_to_js(val: &Value) -> JsValue {
         Value::Text(s) => JsValue::from_str(s),
         Value::List(items) => {
             let arr = Array::new();
-            for item in items.iter() {
-                arr.push(&swan_value_to_js(item));
-            }
+            push_items(&arr, items);
             arr.into()
         }
         Value::Tuple(items) => {
-            let arr = Array::new();
-            for item in items.iter() {
-                arr.push(&swan_value_to_js(item));
-            }
-            arr.into()
+            let tuple = Tuple::new();
+            push_items(&tuple, items);
+            tuple.into()
         }
         Value::Namespace(ns) => {
             // A document gets its tag positions in UTF-16 code units

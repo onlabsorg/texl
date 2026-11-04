@@ -20,8 +20,9 @@ npm install @onlabsorg/texl
 import init, { TexlEngine } from "@onlabsorg/texl";
 ```
 
-The package contains the module `texl_wasm.js`, the WebAssembly binary
-`texl_wasm_bg.wasm`, and the TypeScript declarations `texl_wasm.d.ts`.
+The package contains the module `texl_wasm.js` with the small script it
+imports from `snippets/`, the WebAssembly binary `texl_wasm_bg.wasm`, and the
+TypeScript declarations `texl_wasm.d.ts`.
 
 Without a bundler, import the module from a CDN that serves npm packages, with
 the version you want:
@@ -120,7 +121,8 @@ The objects you pass to the engine and to contexts become Swan values:
 | boolean                             | `Bool`                                         |
 | number                              | `Numb`                                         |
 | string                              | `Text`                                         |
-| array                               | `List`                                         |
+| [`Tuple`](#tuple)                   | `Tuple`                                        |
+| other array                         | `List` (see below)                             |
 | Promise, or any object with a `then` method | `Promise`; a rejection resolves to `Nothing` |
 | function                            | `Func` (see below)                             |
 | a [`TexlUndefined`](#texlundefined) | the original `Undefined`                       |
@@ -133,16 +135,26 @@ and as function arguments, are converted the other way:
 |--------------------------|--------------------------------------------------------|
 | `Nothing`                | `null`                                                 |
 | `Bool`, `Numb`, `Text`   | boolean, number, string                                |
-| `List`, `Tuple`          | array                                                  |
+| `List`                   | array                                                  |
+| `Tuple`                  | [`Tuple`](#tuple), an array subclass                   |
 | `Namespace`              | plain object with its members                          |
 | `Promise`                | `Promise`                                              |
 | `Func`                   | `undefined`                                            |
 | `Undefined`              | a [`TexlUndefined`](#texlundefined) object             |
 
+Arrays and tuples are normalized, as in Swan: `null` and `undefined` items are
+dropped and later items move down one position, `Tuple` items of an array are
+spread into it, and a `Tuple` with one item is that item. So `[1, null, 2]`
+becomes the list `[1, 2]`. Members of an object are not items: `{a: null}` keeps
+`a`. To keep positions in data with gaps, pass an object rather than an array.
+[`normalize`](#normalize) gives you the same result without passing the value
+to the engine.
+
 ### Functions
 
 A JavaScript function becomes a Swan function of one argument. A Swan call
-with several arguments passes them as one array, so destructure it:
+with several arguments passes them as one [`Tuple`](#tuple), which is an
+array, so destructure it:
 
 ```js
 const engine = new TexlEngine({
@@ -152,7 +164,8 @@ const engine = new TexlEngine({
 (await engine.render("doc.texl", '<% shout "hi" %> <% add (2, 3) %>')).text;   // "HI! 5"
 ```
 
-The return value is converted to a Swan value. If the function throws, the
+The return value is converted to a Swan value, so a function returns several
+values as a `Tuple`, and a list as an array. If the function throws, the
 result is `Nothing`. An `async` function, or a function that returns a
 promise, gives a Swan promise, and the tag waits for it:
 
@@ -522,6 +535,62 @@ Swan. A copy of one (`{...u}`) is not.
 import { isUndefined } from "@onlabsorg/texl";
 isUndefined(doc.tags[0].value);    // true if the first tag gave an error
 ```
+
+### `normalize`
+
+```ts
+function normalize(value: any): any
+```
+
+Gives a value the form Swan would give it, without passing it to the engine. A
+`Tuple` is flattened and loses its `null` and `undefined` items; with one item
+left it is that item, with none it is `null`. An array spreads its `Tuple` items
+and loses its `null` and `undefined` items. This goes through nested arrays and
+plain objects, whose members are kept even when `null`. Anything else, such as
+a function, a promise or a class instance, is returned as it is. The value
+passed is not changed.
+
+```js
+import { Tuple, normalize } from "@onlabsorg/texl";
+normalize([1, null, Tuple.of(2, 3), [null]]);          // [1, 2, 3, []]
+normalize(Tuple.of(1, Tuple.of(2, null), null));       // Tuple [1, 2]
+normalize(Tuple.of(null, 7));                          // 7
+normalize({ a: [null, 1], n: null });                  // {a: [1], n: null}
+```
+
+### `Tuple`
+
+```ts
+class Tuple<T = any> extends Array<T> {}
+```
+
+A Swan tuple in JavaScript. It is an `Array` with nothing added, so it reads
+like any array, and `instanceof Tuple` tells it from a list, which is a plain
+array. Tuples from Swan arrive as `Tuple` objects, and a `Tuple` you pass to
+the engine becomes a Swan tuple.
+
+```js
+import { Tuple } from "@onlabsorg/texl";
+const context = engine.createContext();
+context.set("pair", Tuple.of(1, 2));
+(await context.render("<% pair + pair %>")).text;      // "2, 4"
+context.get("pair") instanceof Tuple;                  // true
+```
+
+Swan tuples are flat and never hold `Nothing`, so a `Tuple` is normalized when
+it reaches Swan: nested tuples are flattened, `null` and `undefined` items are
+dropped, one item gives that item and no items give `Nothing`.
+
+```js
+context.set("flat", Tuple.of(1, Tuple.of(2, 3), null));
+context.get("flat");                                   // Tuple [1, 2, 3]
+context.set("one", Tuple.of(7));
+context.get("one");                                    // 7
+```
+
+Create tuples with `Tuple.of` or `Tuple.from`: as with `Array`, `new Tuple(3)`
+is three empty slots, not a tuple holding 3. Array methods that make a new
+array, such as `map` and `filter`, return a `Tuple` when called on one.
 
 ### `TexlDocument`
 

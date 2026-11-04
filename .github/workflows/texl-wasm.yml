@@ -51,6 +51,8 @@ jobs:
           cp LICENSE texl-wasm/pkg/
           cd texl-wasm/pkg
           npm pkg set name=@onlabsorg/texl repository.url=git+https://github.com/onlabsorg/texl.git repository.directory=texl-wasm
+          # wasm-pack leaves the inline JavaScript out of the package files
+          npm pkg set 'files[]=snippets'
           npm pack --dry-run
       - name: Upload the package
         uses: actions/upload-artifact@v6

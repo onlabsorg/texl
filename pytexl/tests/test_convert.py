@@ -311,6 +311,54 @@ class UndefinedTest(unittest.IsolatedAsyncioTestCase):
                 self.context.set("v", value)
                 self.assertEqual(self.context.get("v"), value)
 
+    async def test_lists_are_normalized(self):
+        for value, expected in (
+            ([1, None, 2], [1, 2]),
+            ([(1, 2), 3], [1, 2, 3]),
+            ([(), (4,), [None]], [4, []]),
+            ({"k": [None, 1]}, {"k": [1]}),
+        ):
+            with self.subTest(value=value):
+                self.context.set("v", value)
+                self.assertEqual(self.context.get("v"), expected)
+
+
+class NormalizeTest(unittest.IsolatedAsyncioTestCase):
+    def test_tuples(self):
+        self.assertEqual(pytexl.normalize((1, (2, 3), None)), (1, 2, 3))
+        self.assertEqual(pytexl.normalize((None, 7)), 7)
+        self.assertIsNone(pytexl.normalize((None, ())))
+
+    def test_lists(self):
+        self.assertEqual(pytexl.normalize([(1, 2), [3, None], None]), [1, 2, [3]])
+        self.assertEqual(pytexl.normalize([]), [])
+
+    def test_mappings_keep_none_members(self):
+        self.assertEqual(pytexl.normalize({"a": [None, 1], "t": (2,), "n": None}), {"a": [1], "t": 2, "n": None})
+        self.assertEqual(pytexl.normalize(Settings(a=[None])), {"a": []})
+
+    def test_argument_is_not_changed(self):
+        value = [1, None]
+        pytexl.normalize(value)
+        self.assertEqual(value, [1, None])
+
+    def test_other_values_are_returned_as_they_are(self):
+        for value in (None, True, 1, 1.5, "text", print):
+            with self.subTest(value=value):
+                self.assertIs(pytexl.normalize(value), value)
+
+    async def test_gives_what_comes_back_from_swan(self):
+        context = pytexl.Engine().create_context()
+        for value in (
+            (1, [None, (2, 3)], None),
+            [(), [(4,)], 5],
+            {"a": [None], "b": {"c": (None, 1)}},
+            ((None,), ()),
+        ):
+            with self.subTest(value=value):
+                context.set("v", value)
+                self.assertEqual(pytexl.normalize(value), context.get("v"))
+
 
 if __name__ == "__main__":
     unittest.main()

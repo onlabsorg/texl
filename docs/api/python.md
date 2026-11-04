@@ -195,7 +195,12 @@ as function arguments, are converted the other way:
 | `Undefined`              | [`Undefined`](#undefined), with the details of the error |
 
 A tuple with one item is that item, and an empty tuple is `Nothing`, as in
-Swan.
+Swan. Lists and tuples are normalized when they reach Swan: `None` items are
+dropped and later items move down one position, and tuple items of a list are
+spread into it. So `[1, None, 2]` becomes the list `[1, 2]`. Members of a mapping
+are not items: `{"a": None}` keeps `a`. To keep positions in data with gaps, pass
+a mapping rather than a list. [`pytexl.normalize`](#normalize) gives you the same
+result without passing the value to an engine.
 
 ### Functions
 
@@ -790,6 +795,26 @@ of scopes and promises it cleared.
 
 ```python
 pytexl.collect()       # 0 when there is nothing to free
+```
+
+### `normalize`
+
+```python
+def normalize(value: Any) -> Any
+```
+
+Gives a value the form Swan would give it, without passing it to an engine. A
+tuple is flattened and loses its `None` items; with one item left it is that
+item, with none it is `None`. A list spreads its tuple items and loses its `None`
+items. This goes through nested lists, tuples and mappings; a mapping becomes a
+`dict`, and keeps its members even when they are `None`. Anything else, such as
+a function or an awaitable, is returned as it is. The value passed is not changed.
+
+```python
+pytexl.normalize([1, None, (2, 3), [None]])    # [1, 2, 3, []]
+pytexl.normalize((1, (2, None), None))         # (1, 2)
+pytexl.normalize((None, 7))                    # 7
+pytexl.normalize({"a": [None, 1], "n": None})  # {"a": [1], "n": None}
 ```
 
 ### `Loader`

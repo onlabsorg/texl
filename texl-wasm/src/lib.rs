@@ -14,7 +14,8 @@
 //! ```
 //!
 //! The module also exports `collect()`, the cycle collector (see [`collect`]),
-//! and `isUndefined(value)` (see [`is_undefined`]).
+//! `isUndefined(value)` (see [`is_undefined`]), `normalize(value)` (see
+//! [`normalize`]) and `Tuple`, the array subclass of Swan tuples.
 //!
 //! See the [JavaScript guide and API reference](https://github.com/onlabsorg/texl/blob/main/docs/api/javascript.md).
 
@@ -35,6 +36,16 @@ use convert::{for_each_entry, js_to_swan_value, swan_value_to_js};
 
 #[wasm_bindgen(typescript_custom_section)]
 const TS_TYPES: &'static str = r#"
+/**
+ * A Swan tuple. It is an `Array` with nothing added, so it reads like any
+ * array, and `instanceof Tuple` tells it from a list, which is a plain array.
+ * Passed to the engine, a `Tuple` becomes a Swan tuple and any other array a
+ * list. Swan tuples are normalized: nested tuples are flattened, `null` and
+ * `undefined` items are dropped, one item gives that item and no items give
+ * `Nothing`. See `normalize` to do the same in JavaScript.
+ */
+export class Tuple<T = any> extends Array<T> {}
+
 /**
  * A `<% ... %>` tag of a rendered template. Positions are UTF-16 code units
  * (JavaScript string indices): `source.slice(tag.start, tag.end)` is the tag
@@ -345,6 +356,22 @@ impl TexlContext {
 #[wasm_bindgen(return_description = "The number of scopes and promises it cleared.")]
 pub fn collect() -> usize {
     swan_core::gc::collect()
+}
+
+/// Gives a value the form Swan would give it, without passing it to the engine.
+///
+/// A `Tuple` is flattened and loses its `null` and `undefined` items; with one
+/// item left it is that item, with none it is `null`. An array spreads its
+/// `Tuple` items and loses its `null` and `undefined` items. This goes through
+/// nested arrays and plain objects, whose members are kept even when `null`.
+/// Anything else, such as a function, a promise or a class instance, is
+/// returned as it is. The value passed is not changed.
+#[wasm_bindgen(return_description = "The normalized value.")]
+pub fn normalize(
+    #[wasm_bindgen(param_description = "Any value.")]
+    value: JsValue,
+) -> Result<JsValue, JsValue> {
+    convert::normalize(value)
 }
 
 /// Tells whether `value` is a `TexlUndefined`: an undefined value that came from Swan.

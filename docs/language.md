@@ -72,6 +72,13 @@ value is a tuple of one item. Tuples are flat (a tuple never contains a
 tuple) and never contain `Nothing`. Most operators apply item by item:
 `(1, 2) + (10, 20)` is `(11, 22)`.
 
+Lists are normalized too: a list holds no tuples and no `Nothing`, so
+`[(1, 2), (), 3]` is `[1, 2, 3]`. Hosts follow the same rule, because
+`Value::list` applies it: a `null` or `None` item of a host array is dropped,
+and later items move down one position. Members of namespaces are not items,
+so a host object keeps its `null` members. To keep positions in data with gaps,
+pass an object rather than an array.
+
 The short-circuit operators `&`, `|`, `?` and `;` are the exception. They
 look at their left operand as a whole (a tuple is true if any of its items
 is; `;` checks for `Nothing`) and evaluate the right operand only when it is

@@ -104,8 +104,8 @@ document and a little program that produces it.
 |-------------|----------------------------------------------------------------------|--------------|
 | `swan-core` | The Swan language: lexer, Pratt parser, evaluator, standard library (`bool`, `numb`, `text`, `list`, `nspace`, `promise`, `undef`, `math`, `time`), and a memory cleaner (cycle collector). No dependencies. | Rust crate |
 | `texl-core` | Template rendering and the `Engine`: pluggable loaders per URL scheme, and `fetch` (get a document's source), `render` (render a source as the document at a location) and `load` (both), with `texl.import` and an import cache per rendering. | Rust crate |
-| `texl-wasm` | JavaScript library for the browser via WebAssembly: `TexlEngine` (`fetch`, `load`, `render`, `set`, `createContext`) with HTTP loading, `collect` (the memory cleaner) and `isUndefined`; JS functions and promises cross into Swan and back, and errors arrive as objects with their details. | npm: `@onlabsorg/texl` |
-| `pytexl`    | Python library (PyO3): async `Engine` (`fetch`, `load`, `render`), `Context`, `collect` (the memory cleaner), file and HTTP loaders; Python callables, mappings and awaitables cross into Swan and back, and errors arrive as `Undefined` objects with their details. | PyPI: `pytexl` |
+| `texl-wasm` | JavaScript library for the browser via WebAssembly: `TexlEngine` (`fetch`, `load`, `render`, `set`, `createContext`) with HTTP loading, `collect` (the memory cleaner), `isUndefined`, `normalize` and `Tuple`; JS functions and promises cross into Swan and back, lists and tuples stay distinct, and errors arrive as objects with their details. | npm: `@onlabsorg/texl` |
+| `pytexl`    | Python library (PyO3): async `Engine` (`fetch`, `load`, `render`), `Context`, `collect` (the memory cleaner), `normalize`, file and HTTP loaders; Python callables, mappings and awaitables cross into Swan and back, and errors arrive as `Undefined` objects with their details. | PyPI: `pytexl` |
 
 Hosts can inject their own values and functions into the template scope, and
 register loaders for their own URL schemes. A host application can thus give
@@ -163,7 +163,15 @@ available to hosts too, but it cannot import documents.
   positions; they used to go wrong in text with non-English characters.
 - Not yet released (in the repository since 2026-11-04): an error also gives
   JavaScript and Python programs the source text it was made in, so they can
-  show the code around it.
+  show the code around it. JavaScript programs now tell a tuple from a list:
+  a tuple arrives as a `Tuple` (an array with its own class), and passing one
+  back gives a tuple, where it used to become a list. Lists now follow the
+  same rule whichever program builds them: a list holds no tuples and no
+  empty values. This changes what hosts see: an empty value (`null`, `None`)
+  in a list passed to a template is removed and the later items move down one
+  position, and a tuple in such a list is spread into it. JavaScript and Python
+  also get a `normalize` function that does this without going through a
+  template.
 - Available: browser/JavaScript, Python, Rust.
 - The `texl` command-line tool (`texl-cli`) has been removed from the
   repository; its last release was 0.2.0 (2026-10-25), and its binaries

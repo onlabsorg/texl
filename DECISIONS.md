@@ -237,3 +237,42 @@ accessor of the frozen object (T5 converts the other members up front). The
 JavaScript getters are one shared function bound to the object's key in the
 table of T5; a closure per object would have to be freed by hand, and one
 that held the object would keep it from being collected.
+
+## T12 — 2026-11-04 — JavaScript has a Tuple class
+
+`texl-wasm` exports `Tuple`, a class that extends `Array` and adds nothing. A
+Swan tuple becomes a `Tuple` and a Swan list a plain array; a `Tuple` becomes
+a normalized Swan tuple (`Value::tuple`) and any other array a list. `Tuple`
+items of an array are spread into the list, as in Swan's `[(1, 2), 3]`. A Swan
+call with several arguments passes a JavaScript function one `Tuple`, which
+destructures as before.
+*Reason:* both used to become arrays, so a tuple came back to Swan as a list
+and a JavaScript function could not return a tuple at all. A subclass keeps
+every array operation working and `instanceof` tells the two apart. Spreading
+keeps the Swan invariant that a list holds no tuples. The class is defined
+with `inline_js`, the only way to give the package a real JavaScript subclass,
+which has two consequences: the release workflow adds `snippets` to the package
+files, since wasm-pack leaves them out and the published package would not
+load; and the class is exported through `reexport` on a never-called function
+import, since on a type `reexport` always declares `Tuple: unknown` in the
+TypeScript declarations and would clash with the real one.
+
+## T13 — 2026-11-04 — Lists are normalized wherever they are built
+
+`Value::list` normalizes its items: tuple items are spread into the list and
+`Nothing` items are dropped, as Swan's `[X]` has always done. So a `null` or
+`None` item of a host array is dropped and later items move down one position.
+Members of namespaces are not items and may still be `Nothing`. This supersedes
+the spreading in the JavaScript conversion of T12. Both hosts export `normalize`
+(`normalize` in JavaScript, `pytexl.normalize` in Python), which gives a host
+value this form in the host's own types, through nested arrays, tuples and plain
+objects or mappings, and returns anything else as it is.
+*Reason:* hosts could build lists Swan cannot, such as a Python list holding a
+tuple, and a rule kept in each host would drift. One constructor covers both
+hosts and every built-in, and already-normalized lists pay only for one scan.
+The cost, accepted by the founder, is that positional data with gaps shifts
+silently; such data should be passed as objects. `normalize` is written in the
+host's types rather than as a round trip through Swan, which would lose functions
+and copy promises. It stops at class instances in JavaScript, which it leaves
+alone rather than turning into plain objects, since that is conversion and not
+normalization.
