@@ -132,7 +132,7 @@ impl Function {
 /// `"Termination"`      `expected`, `pos`                 the closing bracket `expected` is missing
 /// `"Token"`            `token`, `pos`                    a token is in the wrong place
 /// `"Name"`             `pos`                             a name was expected
-/// `"Value"`            `val`                             made on purpose, by `undef.from`
+/// `"Value"`            `val`                             `val` wrapped by `undef.from`
 /// `"HostError"`        `error`, `pos`                    a host function or awaitable raised `error`
 /// ===================  ================================  ==========================================
 ///
@@ -143,7 +143,7 @@ impl Function {
 /// string index); `source` is that source, so `source[pos]` is where the
 /// error is, and `uri` is the URL of that document. An error of a built-in
 /// or host function is at the call that returned it. All three are `None`
-/// for values made on purpose (`undef.from`), and `uri` is `None` for a
+/// for values made by `undef.from`, and `uri` is `None` for a
 /// template rendered in a context. An `Undefined` is falsy, and passing it
 /// back to Swan gives the original undefined value.
 ///

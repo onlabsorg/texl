@@ -223,7 +223,7 @@ class UndefinedTest(unittest.IsolatedAsyncioTestCase):
     async def test_value(self):
         u = await self.undefined('undef.from ("not found", 404)')
         self.assertEqual(u.inspect(), {
-            "type": "Value", "description": 'undefined on purpose, from the tuple `("not found", 404)`',
+            "type": "Value", "description": 'Custom undefined value: ("not found", 404)',
             "val": ("not found", 404),
         })
         self.assertIsNone(u.cause)
@@ -307,7 +307,7 @@ class UndefinedTest(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(
             repr(await self.undefined('undef.from "x"')),
-            '<pytexl.Undefined Value: undefined on purpose, from the text `"x"`>',
+            '<pytexl.Undefined Value: Custom undefined value: "x">',
         )
 
     async def test_undefined_goes_back_to_swan_unchanged(self):

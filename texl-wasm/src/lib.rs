@@ -104,7 +104,7 @@ export interface TexlRendering {
  * the original undefined value.
  */
 export interface TexlUndefined {
-    /** The kind of error: `"UnaryOperation"`, `"BinaryOperation"`, `"Termination"`, `"Token"`, `"Name"` or `"Value"` (made on purpose by `undef.from`). */
+    /** The kind of error: `"UnaryOperation"`, `"BinaryOperation"`, `"Termination"`, `"Token"`, `"Name"` or `"Value"` (made by `undef.from`). */
     readonly type: string;
     /** The error in plain words. */
     readonly description: string;
@@ -122,7 +122,7 @@ export interface TexlUndefined {
     readonly token: string | null;
     /** The error of a `"HostError"`, as the host words it, such as `"Error: boom"`. */
     readonly error: string | null;
-    /** Where the error is in the source of the code that made it, in UTF-16 code units (for an error of a built-in or host function, the call that returned it); `null` for values made on purpose (`undef.from`). */
+    /** Where the error is in the source of the code that made it, in UTF-16 code units (for an error of a built-in or host function, the call that returned it); `null` for values made by `undef.from`. */
     readonly pos: number | null;
     /** The text `pos` is an index of: the whole document, or the code run by `parse`; `null` when `pos` is. A getter: the string is made each time it is read. */
     readonly source: string | null;

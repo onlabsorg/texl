@@ -769,7 +769,7 @@ attributes that do not apply are `None`.
 | `"Termination"`     | `expected`, `pos`         | the closing bracket `expected` is missing  |
 | `"Token"`           | `token`, `pos`            | a token is in the wrong place              |
 | `"Name"`            | `pos`                     | a name was expected                        |
-| `"Value"`           | `val`                     | made on purpose, by `undef.from`           |
+| `"Value"`           | `val`                     | `val` wrapped by `undef.from`              |
 | `"HostError"`       | `error`, `pos`            | a host function or awaitable raised `error` |
 
 The operands are [converted](#globals-and-context-values) to Python values,
@@ -780,7 +780,7 @@ source of the code that made it, in code points; `source` is that text (the
 whole document, or the code run by `parse`), so `source[pos]` is where the
 error is, and `uri` is the URL of that document. An error of a built-in or
 host function is at the call that returned it. All three are `None` for
-values made on purpose (`undef.from`) and for a built-in function called
+values made by `undef.from` and for a built-in function called
 directly from Python, and `uri` is `None` for a template rendered in a
 context. `inspect()` returns `type`, `description` and the attributes that
 apply except `source`, as a dict. `repr` shows the type, the position and the

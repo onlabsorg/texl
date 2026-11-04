@@ -255,8 +255,8 @@ async function testDebug() {
     check("data has the same value", doc.data.y.pos, u.pos);
     const parsed = (await engine.render("d.texl", '<% (parse "(1 + 2") {} %>')).tags[0].value;
     check("source of parsed code is the parsed text", [parsed.source, parsed.uri].join("|"), "(1 + 2|");
-    const onPurpose = (await engine.render("d.texl", "<% undef.from 1 %>")).tags[0].value;
-    check("a value made on purpose has no source", onPurpose.source, null);
+    const fromValue = (await engine.render("d.texl", "<% undef.from 1 %>")).tags[0].value;
+    check("a value made by undef.from has no source", fromValue.source, null);
     check("undefined values are frozen", Object.isFrozen(u), true);
     check("plain objects are not undefined values", isUndefined({ ...u }), false);
 

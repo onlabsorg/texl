@@ -82,8 +82,8 @@ pub enum Undef {
         expression: Option<Rc<Expression>>,
     },
 
-    /// An undefined value created explicitly, for example by the Swan
-    /// built-in `undef.from`. It wraps an arbitrary value.
+    /// An undefined value that wraps an arbitrary value, made for example by
+    /// the Swan built-in `undef.from`.
     Value(Box<Value>),
 
     /// The host failed: a host function raised an exception, or a host
@@ -215,7 +215,7 @@ impl Undef {
     /// The cause of this value: the first operand that is itself undefined
     /// (or the first undefined item of a tuple operand). Following `cause`
     /// leads to the root cause of an error. [`Undef::Value`] has no cause:
-    /// it was made on purpose.
+    /// the value it wraps is not an operand.
     pub fn cause(&self) -> Option<&Undef> {
         if let Undef::Value(_) = self { return None; }
         self.operands().into_iter().find_map(|(_, val)| match val {
@@ -282,7 +282,10 @@ impl Undef {
             }
             Undef::Token { token, .. } => format!("unexpected `{token}`"),
             Undef::Name { .. } => "expected a name".to_string(),
-            Undef::Value(val) => format!("undefined on purpose, from {}", a_value(val)),
+            Undef::Value(val) => {
+                let value = quote(val).unwrap_or_else(|| a_value(val));
+                format!("Custom undefined value: {value}")
+            }
             Undef::HostError { error, .. } => format!("host error: {error}"),
         }
     }
@@ -585,8 +588,8 @@ mod tests {
         assert_eq!(undef_of("1 + )").cause().unwrap().describe(), "unexpected `)`");
         assert_eq!(describe("@"), "unexpected `@`");
         assert_eq!(undef_of("1 +").cause().unwrap().describe(), "unexpected end of expression");
-        assert_eq!(describe("undef.from 5"), "undefined on purpose, from the number `5`");
-        assert_eq!(describe("undef.from {}"), "undefined on purpose, from a namespace");
+        assert_eq!(describe("undef.from 5"), "Custom undefined value: 5");
+        assert_eq!(describe("undef.from {}"), "Custom undefined value: a namespace");
         let name = Undef::Name { pos: None, expression: None };
         assert_eq!(name.describe(), "expected a name");
     }
@@ -611,7 +614,7 @@ mod tests {
         // An undefined item of a tuple operand is a cause too.
         let u = undef_of(r#"bind (1, "a" - 1)"#);
         assert_eq!(u.cause().unwrap().kind(), "BinaryOperation");
-        // A value made on purpose has no cause.
+        // The value `undef.from` wraps is not a cause.
         assert!(undef_of(r#"undef.from ("a" - 1)"#).cause().is_none());
     }
 
@@ -625,7 +628,7 @@ mod tests {
         let u = undef_of("math.sqrt(-1)");
         assert_eq!(u.pos(), Some(9));
         assert_eq!(origin(&u).as_deref(), Some("doc"));
-        // Made on purpose: no position.
+        // Made by `undef.from`: no position.
         assert_eq!(undef_of("undef.from 1").pos(), None);
         // Made by a built-in, not yet returned to a call.
         let Value::Undefined(mut u) = Value::undef_unary("f", Value::Nothing) else { panic!() };

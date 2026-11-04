@@ -716,7 +716,7 @@ undefined value.
 | `expected`    | The missing closing bracket of a `"Termination"` error.      |
 | `token`       | The misplaced token of a `"Token"` error.                    |
 | `error`       | The text of what a host function threw or a host promise rejected with, such as `"Error: boom"`, of a `"HostError"`. |
-| `pos`         | Where the error is in the source of the code that made it, in UTF-16 code units; for an error of a built-in or host function, the call that returned it. `null` for values made on purpose (`undef.from`) and when the error has no known place in any source. |
+| `pos`         | Where the error is in the source of the code that made it, in UTF-16 code units; for an error of a built-in or host function, the call that returned it. `null` for values made by `undef.from` and when the error has no known place in any source. |
 | `source`      | The text `pos` is an index of: the whole document, or the code run by `parse`. `null` when `pos` is. A getter: the string is made each time it is read, so keep it in a variable to read it many times. |
 | `uri`         | The URL of the document the error is in. `null` when `pos` is, and for templates rendered in a context. |
 | `cause`       | The first operand (or tuple item) that is itself undefined: following `cause` leads to the root cause. |
@@ -728,7 +728,7 @@ undefined value.
 | `"Termination"`     | the closing bracket `expected` is missing        |
 | `"Token"`           | a token is in the wrong place                    |
 | `"Name"`            | a name was expected                              |
-| `"Value"`           | made on purpose, by `undef.from`                 |
+| `"Value"`           | `val` wrapped by `undef.from`                    |
 | `"HostError"`       | a host function threw, or a host promise rejected, with `error` |
 
 ```js

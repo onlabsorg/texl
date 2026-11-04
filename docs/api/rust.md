@@ -315,7 +315,7 @@ An undefined value carries an `Undef`, which explains itself:
   following it leads to the root cause;
 - `Undef::pos()` is a byte offset in `Undef::expression()`, the
   `swan_core::expression::Expression` (text and origin) of the code that
-  made the value. Both are `None` for values made on purpose (`undef.from`).
+  made the value. Both are `None` for values made by `undef.from`.
   A host function makes its errors with no position
   (`Value::undef_unary(op, val)`, `Value::undef_binary(op, lhv, rhv)`); the
   evaluator gives them the position of the call when the function returns

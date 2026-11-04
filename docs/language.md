@@ -347,8 +347,8 @@ operations: ``cannot add the text `"a"` and the number `1` ``, ``missing
 closing `)` ``, ``unexpected `@` ``, `` `math.sqrt` is not defined for the
 number `-1` ``. A value is named by its literal when it is short (a number, a
 text up to 24 characters, a short tuple), otherwise by its type ("a list").
-An undefined value made on purpose by `undef.from` says so ("undefined on
-purpose, from …"): it is not an error.
+The description of an undefined value made by `undef.from` names the value it
+wraps.
 
 The description covers one level. An operand that is itself undefined is
 "an undefined value", and `Undef::cause` returns it (the first undefined
