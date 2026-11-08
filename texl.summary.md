@@ -123,7 +123,7 @@ available to hosts too, but it cannot import documents.
 ## Status
 
 - MIT licensed; source at <https://github.com/onlabsorg/texl>.
-- Latest releases (2026-11-08): `texl-wasm` 0.7.0, `pytexl` 0.7.0. The Rust
+- Latest releases (2026-11-08): `texl-wasm` 0.7.1, `pytexl` 0.7.0. The Rust
   crates (`swan-core` 0.5.0, `texl-core` 0.6.0) are used
   from the repository; they are not on crates.io.
 - Version 0.4.0 changed how hosts use the engine: rendering text now needs a
@@ -209,7 +209,7 @@ available to hosts too, but it cannot import documents.
   conversion, so a value shows the same text in both. Names that start and
   end with two underscores are reserved for such special members; the
   language does not enforce it.
-- Since 2026-11-08 (not released yet), JavaScript programs can register
+- `texl-wasm` 0.7.1 (2026-11-08): JavaScript programs can register
   their own loaders for a URL scheme, as Python and Rust programs already
   could: a function that receives a document's location and returns its
   source. It can also replace the built-in web loader, for example to limit
