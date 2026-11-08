@@ -31,6 +31,7 @@
 //! | `Nothing`              | empty text                                          |
 //! | `Tuple`                | the items, rendered and joined with `", "`          |
 //! | `List`                 | `[[List of N]]`                                     |
+//! | `Namespace` with `__text__` | what `__text__` returns, applied to the namespace (`[[Undefined]]` if not a text) |
 //! | `Namespace`            | `[[Namespace of N]]` (N = number of members) |
 //! | `Func`                 | `[[Func]]`                                          |
 //! | `Undefined`            | `[[Undefined]]`                                     |
@@ -64,6 +65,7 @@
 //! # }
 //! ```
 
+use swan_core::builtins::to_text;
 use swan_core::evaluator::eval;
 use swan_core::lexer::Lexer;
 use swan_core::parser::Parser;
@@ -292,18 +294,15 @@ pub async fn render(document: impl Into<Document>, scope: &Scope) -> Rendering {
 
 /// Converts a Swan [`Value`] into its rendered text form.
 ///
+/// Single values go through [`swan_core::builtins::to_text`], the conversion
+/// shared with Swan's `text.from` (including the `__text__` member of
+/// namespaces); a value it cannot convert renders as `[[Undefined]]`. This
+/// function adds only what is specific to templates:
+///
 /// | Value                  | Output                                              |
 /// |------------------------|-----------------------------------------------------|
-/// | `Text`                 | the string itself                                   |
-/// | `Numb`                 | Rust `f64` display (`30`, not `30.0`; `1.5`)        |
-/// | `Bool`                 | `TRUE` / `FALSE`                                    |
 /// | `Nothing`              | empty string                                        |
 /// | `Tuple`                | items rendered and joined with `", "`               |
-/// | `List`                 | `[[List of N]]`                                     |
-/// | `Namespace`            | `[[Namespace of N]]` (N = number of members) |
-/// | `Func` / `Builtin`     | `[[Func]]`                                          |
-/// | `Undefined`            | `[[Undefined]]`                                     |
-/// | `Name`                 | the name text                                       |
 /// | `Promise` (resolved)   | the rendered resolved value                         |
 /// | `Promise` (pending)    | `[[Pending Promise]]`                               |
 ///
@@ -311,14 +310,7 @@ pub async fn render(document: impl Into<Document>, scope: &Scope) -> Rendering {
 /// only appear for promises nested inside other values, such as tuple items.
 fn value_to_string(val: Value) -> String {
     match val {
-        Value::Text(s) => s.to_string(),
-        Value::Numb(n) => n.to_string(),
-        Value::Bool(b) => if b { "TRUE".into() } else { "FALSE".into() },
         Value::Nothing => String::new(),
-        Value::List(l) => format!("[[List of {}]]", l.len()),
-        Value::Namespace(s) => format!("[[Namespace of {}]]", s.len()),
-        Value::Func { .. } | Value::Builtin(_) => "[[Func]]".to_string(),
-        Value::Undefined(_) => "[[Undefined]]".to_string(),
         Value::Tuple(items) => {
             let item_strs: Vec<String> = items
                 .iter()
@@ -327,7 +319,6 @@ fn value_to_string(val: Value) -> String {
                 .collect();
             item_strs.join(", ")
         }
-        Value::Name(n) => n.to_string(),
 
         // Non-blocking: read the promise's current value without awaiting it.
         Value::Promise(promise) => {
@@ -337,6 +328,11 @@ fn value_to_string(val: Value) -> String {
                 None => "[[Pending Promise]]".to_string(),
             }
         }
+
+        other => match to_text(other) {
+            Value::Text(s) => s.to_string(),
+            _ => "[[Undefined]]".to_string(),
+        },
     }
 }
 
@@ -420,6 +416,23 @@ mod tests {
         let scope = create_test_scope();
         let input = "List: <% items %>, Namespace: <% { x: 1, y: 2 } %>";
         assert_eq!(block_on(render(input, &scope)).text, "List: [[List of 2]], Namespace: [[Namespace of 2]]");
+    }
+
+    #[test]
+    /// A namespace with a `__text__` member renders as the text it returns
+    /// when applied to the namespace, and stays usable as data.
+    fn test_namespace_text_hook() {
+        let scope = swan_core::builtins::root_scope();
+        let input = "<% t: {v: 3, __text__: s -> \"<b>\" + text.from(s.v) + \"</b>\"} %> <% t.v + 1 %>";
+        assert_eq!(block_on(render(input, &scope)).text, "<b>3</b> 4");
+
+        // Nested in a tuple
+        let input = "<% u = {__text__: s -> \"U\"}, (u, 1, u) %>";
+        assert_eq!(block_on(render(input, &scope)).text, "U, 1, U");
+
+        // A hook that does not return a text renders as undefined
+        let input = "<% {__text__: s -> 1} %>|<% {__text__: \"x\"} %>|<% {__text__: s -> (\"a\", \"b\")} %>";
+        assert_eq!(block_on(render(input, &scope)).text, "[[Undefined]]|[[Undefined]]|[[Undefined]]");
     }
 
     #[test]

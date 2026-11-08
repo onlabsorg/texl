@@ -198,6 +198,16 @@ available to hosts too, but it cannot import documents.
   existing JavaScript functions written for one `Tuple` argument must change.
   A JavaScript or Python function given to the engine now comes back to its
   program as the very same function; Python used to get a wrapper.
+  A namespace can now choose how it is shown as text: if it has a
+  `__text__` member (a function), that function receives the namespace and
+  the text it returns is what a tag shows and what `text.from` gives. A
+  function that returns data, such as a table, can thus be labelled and shown
+  in place in one tag (`<% t: table(...) %>`) while its data stays usable. If
+  the member returns anything but text, the result is an `Undefined` value
+  (`[[Undefined]]` in the output). Rendering and `text.from` now share one
+  conversion, so a value shows the same text in both. Names that start and
+  end with two underscores are reserved for such special members; the
+  language does not enforce it.
 - Available: browser/JavaScript, Python, Rust.
 - The `texl` command-line tool (`texl-cli`) has been removed from the
   repository; its last release was 0.2.0 (2026-10-25), and its binaries
@@ -242,4 +252,6 @@ with it.
   "nothing", not an error.
 - The memory cleaner only sees Swan's own memory. Swan values kept inside
   a host's own functions, and loops of references that pass through both
-  Swan and JavaScript or Python objects, are not cleaned up.
+  Swan and JavaScript or Python objects, are not cleaned up. The JavaScript and
+  Python guides describe the common case (a host function that refers to its
+  own context) and how to avoid it.

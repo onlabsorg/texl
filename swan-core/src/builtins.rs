@@ -60,6 +60,7 @@ use helpers::*;
 mod bool_;
 mod numb;
 mod text;
+pub use text::{to_text, TEXT_HOOK};
 mod list;
 mod nspace;
 mod promise;

@@ -102,6 +102,13 @@ Let point = {x: 3, y: 4}
   nspace.enum point        -> x, y
   nspace.size point        -> 2
 
+Let card = {n: 2, __text__: c -> "card " + text.from(c.n)}
+
+  card                     -> card 2
+  card.n + 1               -> 3
+  text.from card           -> card 2
+  nspace.size card         -> 2
+
 
 8. Functions
 ------------

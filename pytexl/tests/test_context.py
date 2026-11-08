@@ -81,6 +81,11 @@ class PythonFunctionTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(await self.render("<% size [1, 2, 3] %>", size=len), "3")
         self.assertEqual(await self.render("<% keys {b: 1, a: 2} %>", keys=lambda d: ",".join(d)), "a,b")
 
+    async def test_mappings_render_with_their_text_hook(self):
+        table = {"rows": [[1, 2], [3, 4]], "__text__": lambda t: f"<table of {len(t['rows'])}>"}
+        self.assertEqual(await self.render("<% t: table %> <% list.size(t.rows) %>", table=table), "<table of 2> 2")
+        self.assertEqual(await self.render("<% {__text__: hook} %>", hook=lambda t: 1), "[[Undefined]]")
+
     async def test_functions_can_be_mapped(self):
         self.assertEqual(await self.render("<% (1, 2, 3) => square %>", square=lambda x: x * x), "1, 4, 9")
 

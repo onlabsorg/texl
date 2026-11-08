@@ -119,6 +119,13 @@ Let point = {x: 3, y: 4}<% point = {x: 3, y: 4} %>
   nspace.enum point        -> <% nspace.enum point %>
   nspace.size point        -> <% nspace.size point %>
 
+Let card = {n: 2, __text__: c -> "card " + text.from(c.n)}<% card = {n: 2, __text__: c -> "card " + text.from(c.n)} %>
+
+  card                     -> <% card %>
+  card.n + 1               -> <% card.n + 1 %>
+  text.from card           -> <% text.from card %>
+  nspace.size card         -> <% nspace.size card %>
+
 
 8. Functions
 ------------

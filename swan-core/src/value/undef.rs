@@ -314,6 +314,7 @@ fn describe_binary(op: &str, lhv: &Value, rhv: &Value) -> String {
         "power"       => format!("cannot raise {l} to the power of {r}"),
         "order"       => format!("cannot compare {l} with {r}"),
         "application" => format!("cannot apply {l} to {r}"),
+        "__text__"    => format!("the `__text__` member of a namespace must return a text, not {r}"),
         "subcontexting" => format!("cannot look up names in {l}: `.` needs a namespace"),
         "document.load" => match (lhv, rhv) {
             (Value::Text(url), Value::Text(reason)) => format!("cannot load `{url}`: {reason}"),

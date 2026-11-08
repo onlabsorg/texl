@@ -358,3 +358,24 @@ were left out: the first needs a weak reverse map, and finalizers run at
 unpredictable times while `collect()` already runs after every rendering. A
 cycle that passes through both a host object and a Swan value is still freed by
 neither collector; that is a separate question.
+
+## T17 — 2026-11-08 — Namespaces give their own text with `__text__`
+
+A namespace with a `__text__` member converts to text by applying that member
+to the namespace itself. The result must be a text; anything else, promises
+included, makes the conversion `Undefined` (operation `__text__`, the namespace
+in `lhv`, the returned value in `rhv`), rendered `[[Undefined]]`. One
+conversion of single values (`swan_core::builtins::to_text`) holds this rule
+and is used by every stringifier: Swan's `text.from` and Texl's renderer, which
+adds only what is template-specific (`Nothing`, tuples, promises). `__text__`
+is an ordinary member, with no hidden exception. Names of the form `__name__`
+are reserved for such hooks by documentation only; the parser accepts them.
+*Reason:* a function that returns data often has a natural rendering (a table,
+a quantity with its unit); with the hook, `<% t: table(...) %>` labels it and
+renders it in one tag. Putting it in Swan rather than in the renderer keeps
+one text form per value, so nested values and Swan code that builds text agree
+with what a tag shows. Passing the namespace, not closing over it, lets one
+function serve many namespaces. Allowing only text keeps `text.from`
+synchronous and stops a hook from looping by returning its own namespace. A
+visible member, unlike hidden metadata, survives a round trip through Python
+or JavaScript, so a host can build such values.

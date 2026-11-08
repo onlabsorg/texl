@@ -105,6 +105,49 @@ to many documents, and a document's `data` cannot be changed by the documents
 that import it. It also means that only scopes and promises can be part of a
 reference cycle (see [Memory management](#memory-management)).
 
+### Values as text
+
+One conversion turns a value into text, and both Swan's `text.from` (item by
+item over a tuple) and the template renderer use it (`to_text` in
+`swan-core`'s `builtins`): `Text` as is, numbers as Rust's `f64` display writes
+them (`30`, `1.5`), `Bool` as `TRUE`/`FALSE`; lists, namespaces, functions and
+undefined values as markers: `[[List of N]]`, `[[Namespace of N]]`, `[[Func]]`,
+`[[Undefined]]`.
+
+A namespace with a `__text__` member gives its own text: the member is applied
+to the namespace itself, and the text it returns is the namespace's text. So a
+value can be labelled as data and rendered in place in one tag:
+
+```texl
+<% money = {amount: 12.5, currency: "EUR", __text__: m -> text.from(m.amount) + " " + m.currency} %>Price: <% price: money %>
+Twice: <% money.amount * 2 %>
+<% text.from(price, 3) %>
+```
+
+```text
+Price: 12.5 EUR
+Twice: 25
+12.5 EUR, 3
+```
+
+- The hook gets the namespace as its argument rather than reading names from
+  its closure, so one function can serve many namespaces.
+- It must return a text, and only a text: anything else (a number, a tuple, a
+  promise, an undefined value), or a `__text__` that is not a function, makes
+  the conversion `Undefined` ("the `__text__` member of a namespace must return
+  a text, not the number `1`"), which a tag renders as `[[Undefined]]`. The
+  returned text is not converted again, and a promise is not awaited.
+- `__text__` is a member like any other: `nspace.size` counts it, it is in a
+  document's `data`, and hosts receive it as a function. A host can make such a
+  namespace: a Python dict or a JavaScript object with a `__text__` function
+  (decision T16 brings the function back as itself).
+- A hook that converts its own namespace (`text.from` of it) recurses forever,
+  like any other unbounded recursion.
+
+Names that start and end with two underscores are reserved for hooks like
+this one, present and future. The parser does not enforce it: documents should
+not use such names for anything else.
+
 ## Scopes and names
 
 A *scope* is the environment in which code runs: a table of bindings plus a
@@ -211,11 +254,10 @@ the names of the calling document nor the engine's globals.
   outside tags is copied as it is. A tag ends at the first `%>`, even inside a
   text literal; a `<%` without a closing `%>` makes the rest of the template
   plain text.
-- **Rendering a value.** `Text` is written as is, numbers as Rust's `f64`
-  display writes them (`30`, `1.5`), `Bool` as `TRUE`/`FALSE`, `Nothing` as nothing, a tuple
-  as its items joined with `, `. Lists, namespaces, functions and undefined
-  values are written as markers: `[[List of N]]`, `[[Namespace of N]]`,
-  `[[Func]]`, `[[Undefined]]`.
+- **Rendering a value.** `Nothing` is written as nothing and a tuple as its
+  items joined with `, `; every other value is written as its text form (see
+  [Values as text](#values-as-text)), and a value with no text form as
+  `[[Undefined]]`.
 
 ## Promises and async rendering
 

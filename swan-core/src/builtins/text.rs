@@ -6,6 +6,7 @@
 //! type produce `Value::Undefined`. All positions and lengths count Unicode
 //! characters, not bytes.
 
+use crate::evaluator::apply;
 use crate::value::{BuiltinFn, Namespace, Value};
 use super::helpers::*;
 
@@ -19,7 +20,7 @@ pub fn create_namespace() -> Value {
     let mut ns = Namespace::new();
 
     // Unary functions: map over each item of the argument.
-    ns.insert("from"     , map_1("text.from"     , text_from));
+    ns.insert("from"     , map_1("text.from"     , to_text));
     ns.insert("size"     , map_1("text.size"     , text_size));
     ns.insert("enum"     , map_1("text.enum"     , text_enum));
     ns.insert("lower"    , map_1("text.lower"    , text_lower));
@@ -45,8 +46,38 @@ pub fn create_namespace() -> Value {
 //  Conversion / inspection
 // ----------------------------------------------------------------------------
 
-/// Converts a scalar to its text form (`TRUE`/`FALSE`, number, `[[List of N]]`, `[[Func]]`, `[[Undefined]]`, `[[Namespace of N]]`). Text passes through unchanged; anything else is Undefined.
-fn text_from(val: Value) -> Value {
+/// The name of the namespace member that gives a namespace its text form.
+///
+/// A namespace with this member is converted to text by applying the member
+/// to the namespace itself; see [`to_text`].
+pub const TEXT_HOOK: &str = "__text__";
+
+/// Converts a single value to text, the one conversion shared by every
+/// stringifier: Swan's `text.from` (which maps it over tuples) and Texl's
+/// template renderer.
+///
+/// | Value                  | Text                                        |
+/// |------------------------|---------------------------------------------|
+/// | `Text`                 | the text itself                             |
+/// | `Numb`                 | Rust `f64` display (`30`, not `30.0`; `1.5`) |
+/// | `Bool`                 | `TRUE` / `FALSE`                            |
+/// | `List`                 | `[[List of N]]`                             |
+/// | `Namespace` with `__text__` | what `__text__` returns when applied to the namespace |
+/// | `Namespace`            | `[[Namespace of N]]` (N = number of members) |
+/// | `Func` / `Builtin`     | `[[Func]]`                                  |
+/// | `Undefined`            | `[[Undefined]]`                             |
+/// | `Name`                 | the name                                    |
+///
+/// The `__text__` member ([`TEXT_HOOK`]) is applied to the namespace and must
+/// return a text. Anything else it returns (a number, a tuple, a promise, an
+/// undefined value…) makes the conversion return `Undefined` (operation
+/// `__text__`, the namespace in `lhv`, the returned value in `rhv`). The
+/// returned text is used as it is: it is not converted again.
+///
+/// Anything else (`Nothing`, a tuple, a promise) gives `Undefined`: callers
+/// handle those themselves (`text.from` maps over tuple items, the renderer
+/// joins them and awaits promises). Values made here have no position.
+pub fn to_text(val: Value) -> Value {
     let s: String = match &val {
         Value::Bool(b) => {
             if *b { "TRUE".into() } else { "FALSE".into() }
@@ -57,6 +88,9 @@ fn text_from(val: Value) -> Value {
         Value::Text(s) => {
             return Value::Text(s.clone())
         }
+        Value::Name(n) => {
+            n.to_string()
+        }
         Value::List(l) => {
             format!("[[List of {}]]", l.len())
         }
@@ -66,11 +100,18 @@ fn text_from(val: Value) -> Value {
         Value::Undefined(_) => {
             "[[Undefined]]".to_string()
         }
+        Value::Namespace(ns) if ns.contains(TEXT_HOOK) => {
+            return match apply(ns.get(TEXT_HOOK), val.clone()) {
+                text @ Value::Text(_) => text,
+                other => Value::undef_binary(TEXT_HOOK, val, other),
+            };
+        }
         Value::Namespace(ns) => {
             format!("[[Namespace of {}]]", ns.len())
         }
-        // Bool/Numb/Text/etc. handled above; Nothing and Tuple never reach here (handled by map_1).
-        _ => return Value::undef_unary("text.from", val),
+        Value::Nothing | Value::Tuple(_) | Value::Promise(_) => {
+            return Value::undef_unary("text.from", val)
+        }
     };
 
     Value::Text(s.into())
@@ -253,7 +294,7 @@ fn text_join(sep: Value) -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::value::Scope;
+    use crate::value::{Scope, Undef};
     use crate::evaluator::eval;
     use crate::lexer::Lexer;
     use crate::parser::Parser;
@@ -271,6 +312,43 @@ mod tests {
         let mut parser = Parser::new(Lexer::new(src));
         let ast = parser.parse();
         eval(&ast, &scope)
+    }
+
+    #[test]
+    fn text_from_hook() {
+        // The hook is applied to the namespace itself
+        assert_eq!(run("text.from{n: 2, __text__: self -> \"n=\" + text.from(self.n * 2)}"), Value::Text("n=4".into()));
+
+        // Mapped over tuples like any other value
+        assert_eq!(
+            run("t = {__text__: s -> \"T\"}, text.from(t, 1, t)"),
+            Value::tuple(vec![Value::Text("T".into()), Value::Text("1".into()), Value::Text("T".into())]),
+        );
+
+        // A hook that does not return a text gives Undefined
+        for src in [
+            "text.from{__text__: s -> 1}",
+            "text.from{__text__: s -> (\"a\", \"b\")}",
+            "text.from{__text__: s -> []-[]}",
+            "text.from{__text__: \"abc\"}",
+            "text.from{__text__: ()}",
+        ] {
+            match run(src) {
+                Value::Undefined(u) => {
+                    assert!(matches!(&u, Undef::BinaryOperation { op: "__text__", lhv, .. } if matches!(**lhv, Value::Namespace(_))), "{src}");
+                    assert!(u.describe().starts_with("the `__text__` member of a namespace must return a text"), "{src}");
+                    // text.from places the error at its call
+                    assert_eq!(u.pos(), Some(9), "{src}");
+                }
+                other => panic!("{src}: expected Undefined, got {other:?}"),
+            }
+        }
+
+        // The cause of a failed hook is reachable
+        match run("text.from{__text__: s -> []-[]}") {
+            Value::Undefined(u) => assert!(u.cause().is_some()),
+            other => panic!("expected Undefined, got {other:?}"),
+        }
     }
 
     #[test]
