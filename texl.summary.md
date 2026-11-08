@@ -123,8 +123,8 @@ available to hosts too, but it cannot import documents.
 ## Status
 
 - MIT licensed; source at <https://github.com/onlabsorg/texl>.
-- Latest releases (2026-11-04): `texl-wasm` 0.6.0, `pytexl` 0.6.0. The Rust
-  crates (`swan-core` 0.4.0, `texl-core` 0.5.0) are used
+- Latest releases (2026-11-08): `texl-wasm` 0.7.0, `pytexl` 0.7.0. The Rust
+  crates (`swan-core` 0.5.0, `texl-core` 0.6.0) are used
   from the repository; they are not on crates.io.
 - Version 0.4.0 changed how hosts use the engine: rendering text now needs a
   location, documents are no longer cached between renderings, imported
@@ -187,8 +187,9 @@ available to hosts too, but it cannot import documents.
   program a proper `Error` instead of a text. An `Undefined` value made
   deliberately with `undef.from` now describes itself like any other, as
   "Custom undefined value: 5" instead of "undefined on purpose".
-- Not released yet (after 0.6.0, 2026-11-08): the functions a template
-  defines, and the built-in functions, now reach JavaScript programs as
+- Version 0.7.0 (2026-11-08) changes the host interface for JavaScript: the
+  functions a template defines, and the built-in functions, now reach
+  JavaScript programs as
   ordinary functions they can call, as Python programs already could; before,
   they arrived as `undefined`. Such a function can be handed back to the
   engine and stays the same Swan function, and `isSwanFunction` tells it from
