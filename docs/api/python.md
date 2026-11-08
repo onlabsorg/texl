@@ -363,7 +363,18 @@ pytexl.collect()
 Python's own garbage collector does not reach Swan scopes, and `collect` does
 not reach Python objects. A Swan value held by a Python object (a
 [`Function`](#function) in a list, for example) is kept while that object
-lives.
+lives. So a loop of references through both is freed by neither. The usual
+case is a Python function that refers to its own context, such as
+`context.set("f", lambda: context.get("x"))`: the context is then never freed,
+even after `del context`. Refer to the context through a weak reference
+instead:
+
+```python
+import weakref
+
+ref = weakref.ref(context)
+context.set("f", lambda: ref().get("x"))
+```
 
 ## API reference
 

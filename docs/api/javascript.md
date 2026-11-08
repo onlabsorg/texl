@@ -285,6 +285,12 @@ context is freed, so it can still be called. It needs no `free()`: once the
 JavaScript garbage collector has collected the function, the next `collect`
 frees its scope.
 
+The JavaScript garbage collector does not see inside Swan, and `collect` does
+not see inside JavaScript, so a loop of references through both is freed by
+neither. The usual case is a JavaScript function that refers to its own
+context, such as `context.set("f", () => context.get("x"))`: the context then
+stays alive until you call `context.free()`, so call it when you are done.
+
 ## API reference
 
 ### `init`
