@@ -94,6 +94,30 @@ try {
 In a template, `texl.import` gives an [undefined value](#texlundefined) instead,
 with the operation `"document.load"`, the URL in `lhv` and the reason in `rhv`.
 
+### Custom loaders
+
+A *loader* is a function that takes the full URL of a document and returns its
+source, or a promise of it. The engine starts with one, for `http` and `https`
+URLs. `engine.addLoader` adds a loader for a scheme of your own, or replaces
+the built-in one:
+
+```js
+const notes = { "mem://notes/todo.texl": "Buy <% 2 + 1 %> apples" };
+engine.addLoader("mem", (uri) => {
+    if (!(uri in notes)) throw new Error("no such note");
+    return notes[uri];
+});
+const doc = await engine.load("mem://notes/todo.texl");
+doc.text;                                 // "Buy 3 apples"
+```
+
+The loader serves `fetch`, `load` and `texl.import`. If it throws, its promise
+rejects or its result is not a string, the load fails: the reason is the text
+of the error, such as `"Error: no such note"`. Nothing is cached, so a loader
+that reads from a slow source can keep its own cache. A page that renders
+templates it does not trust can replace the `http` and `https` loaders with
+ones that refuse what the templates should not read.
+
 ## Rendering a source
 
 `engine.render` renders a source that you already have, such as the text of an
@@ -373,6 +397,43 @@ name is replaced.
 ```js
 engine.set("today", new Date().toISOString().slice(0, 10));
 ```
+
+#### `engine.addLoader(scheme, loader)`
+
+```ts
+addLoader(scheme: string, loader: (uri: string) => string | Promise<string>): void
+```
+
+Registers the [loader](#custom-loaders) of the URLs with a given scheme. It
+replaces any previous loader of the scheme, including the built-in `http` and
+`https` loader.
+
+| Argument | Description                                                          |
+|----------|----------------------------------------------------------------------|
+| `scheme` | The URL scheme, without the colon, such as `"mem"`. It is case-insensitive. |
+| `loader` | A function that takes the full URL, without fragment, and returns the source of the document, or a promise of it. If it throws, its promise rejects or its result is not a string, the document cannot be loaded. |
+
+```js
+engine.addLoader("mem", (uri) => notes[uri]);
+```
+
+#### `engine.setDefaultLoader(loader)`
+
+```ts
+setDefaultLoader(loader: (path: string) => string | Promise<string>): void
+```
+
+Registers the loader of the URLs without a scheme. The engine normalizes the
+paths before calling the loader: they are absolute and percent-encoded, such
+as `/dir/my%20doc.texl`.
+
+The URIs given to the engine resolve against `baseUrl` to full URLs, and so do
+the imports in their documents, so the engine does not currently produce paths
+without a scheme.
+
+| Argument | Description                                                          |
+|----------|----------------------------------------------------------------------|
+| `loader` | A function that takes the path and returns the source of the document, or a promise of it, like the loaders of [`addLoader`](#engineaddloaderscheme-loader). |
 
 #### `engine.fetch(uri)`
 

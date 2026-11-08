@@ -4,7 +4,13 @@
 //! (the URIs of the host resolve against the base URL), and the engine resolves the imports
 //! of a document to full URLs, absolute paths included: `/p/t/d` imported by
 //! `http://host.com/path/to/doc` is `http://host.com/p/t/d`. So there is no default loader.
+//!
+//! [`js_loader`] wraps a JavaScript function as a loader, for `addLoader` and
+//! `setDefaultLoader`.
 
+use std::rc::Rc;
+
+use texl_core::{LoaderFn, loader_fn};
 use url::Url;
 use wasm_bindgen::prelude::*;
 use wasm_bindgen_futures::JsFuture;
@@ -40,6 +46,23 @@ pub async fn load_http(url: String) -> Result<String, String> {
     }
     let text = JsFuture::from(response.text().map_err(fail)?).await.map_err(fail)?;
     text.as_string().ok_or_else(|| "the response is not text".to_string())
+}
+
+/// Wraps a JavaScript loader: a function that takes the URI and returns the source, or a
+/// promise (or any thenable) of it. A throw, a rejection, or a result that is not a string
+/// is a failed load, whose reason is the text of the error.
+pub fn js_loader(loader: js_sys::Function) -> LoaderFn {
+    let loader = Rc::new(loader);
+    loader_fn(move |uri| {
+        // Called right away, so that a sync loader runs when the engine asks for the document
+        let called = loader.call1(&JsValue::NULL, &JsValue::from_str(&uri));
+        async move {
+            let fail = |err: JsValue| crate::convert::js_string(&err).unwrap_or_else(|_| "unknown error".to_string());
+            let result = called.map_err(fail)?;
+            let source = JsFuture::from(js_sys::Promise::resolve(&result)).await.map_err(fail)?;
+            source.as_string().ok_or_else(|| "the loader did not return a string".to_string())
+        }
+    })
 }
 
 /// Resolves the URI of a document loaded by the host against `base` (the page URL, by default).

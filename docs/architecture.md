@@ -92,7 +92,7 @@ Everything is `Rc`-based and single-threaded. See
 | Extension point | API (Rust)                                   | JavaScript                  | Python                        |
 |-----------------|----------------------------------------------|-----------------------------|-------------------------------|
 | Globals         | `Engine::add_builtin(name, value)`           | `new TexlEngine(globals)`, `engine.set` | `Engine(globals)`, `engine.set` |
-| Loaders         | `Engine::add_loader(scheme, loader)`, `add_default_loader` | built in: `http`, `https` | `engine.add_loader`, `set_default_loader`; built in: `file`, `http`, `https` |
+| Loaders         | `Engine::add_loader(scheme, loader)`, `add_default_loader` | `engine.addLoader`, `setDefaultLoader`; built in: `http`, `https` | `engine.add_loader`, `set_default_loader`; built in: `file`, `http`, `https` |
 | Async runtime   | the `SpawnFn` passed to `Engine::new`, or `helpers::run_pending` | `spawn_local` (built in) | the asyncio loop (built in)  |
 | Built-ins       | `swan_core::builtins::set_builtin(name, value)` | —                        | —                             |
 | Memory          | `swan_core::gc::collect()`                   | `collect()`                 | `pytexl.collect()`            |
@@ -121,6 +121,7 @@ Everything is `Rc`-based and single-threaded. See
   `isUndefined`, `isSwanFunction`, `normalize`. Its doc comments are copied into the generated
   `texl_wasm.d.ts`.
 - `src/loader.rs`: the `http`/`https` loader, which uses the global `fetch`,
+  the wrapper of JavaScript loaders (`addLoader`, `setDefaultLoader`),
   and the resolution of URIs against the base URL (`location.href` by
   default). Every document has a full URL.
 - `src/convert.rs`: JavaScript ↔ Swan value conversion, and the exported

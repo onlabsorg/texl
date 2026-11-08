@@ -599,7 +599,8 @@ An imported document's `source` is in the import result, so a template can
 read any text the loaders serve, not just Texl documents. A host that renders
 untrusted templates registers only the loaders it needs; in Python,
 `add_loader("file", ...)` and `set_default_loader(...)` replace the built-in
-file loader, for example with one that raises.
+file loader, for example with one that raises; in JavaScript,
+`addLoader("https", ...)` replaces the built-in `https` loader.
 
 Other boundaries:
 

@@ -13,6 +13,9 @@
 //! const draft = await engine.render("docs/draft.texl", "Hello <% reader %>!");
 //! ```
 //!
+//! `engine.addLoader(scheme, fn)` and `engine.setDefaultLoader(fn)` add loaders to
+//! the built-in `http`/`https` one.
+//!
 //! The module also exports `collect()`, the cycle collector (see [`collect`]),
 //! `isUndefined(value)` (see [`is_undefined`]), `isSwanFunction(value)` (see
 //! [`is_swan_function`]), `normalize(value)` (see [`normalize`]) and `Tuple`,
@@ -216,6 +219,44 @@ impl TexlEngine {
     ) -> Result<(), JsValue> {
         self.engine.add_builtin(name, js_to_swan_value(value)?);
         Ok(())
+    }
+
+    /// Registers the loader of the URIs with a given scheme. It replaces any previous
+    /// loader of the scheme, including the built-in `http` and `https` loader.
+    ///
+    /// The loader serves `fetch`, `load` and `texl.import`. Nothing is cached: wrap the
+    /// loader to cache sources.
+    #[wasm_bindgen(js_name = addLoader)]
+    pub fn add_loader(
+        &self,
+        #[wasm_bindgen(param_description = "The URI scheme, without the colon, such as `\"mem\"`. It is case-insensitive.")]
+        scheme: &str,
+        #[wasm_bindgen(
+            unchecked_param_type = "(uri: string) => string | Promise<string>",
+            param_description = "A function that takes the full URI and returns the source of the document, or a promise of it. If it throws, its promise rejects, or its result is not a string, the document cannot be loaded."
+        )]
+        loader: js_sys::Function,
+    ) {
+        self.engine.add_loader(scheme, loader::js_loader(loader));
+    }
+
+    /// Registers the loader of the URIs without a scheme. The engine normalizes the paths
+    /// before calling the loader: they are absolute and percent-encoded, such as
+    /// `/dir/my%20doc.texl`.
+    ///
+    /// The URIs given to the engine resolve against `baseUrl` to full URLs, and so do the
+    /// imports in their documents, so the engine does not currently produce paths without
+    /// a scheme.
+    #[wasm_bindgen(js_name = setDefaultLoader)]
+    pub fn set_default_loader(
+        &self,
+        #[wasm_bindgen(
+            unchecked_param_type = "(path: string) => string | Promise<string>",
+            param_description = "A function that takes the path and returns the source of the document, or a promise of it, like the loaders of `addLoader`."
+        )]
+        loader: js_sys::Function,
+    ) {
+        self.engine.add_default_loader(loader::js_loader(loader));
     }
 
     /// Fetches and renders the document at `uri`: `fetch` followed by `render`.

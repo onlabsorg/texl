@@ -161,6 +161,53 @@ async function testEngine() {
     check("an invalid base URL throws", threw, true);
 }
 
+async function testLoaders() {
+    const engine = new TexlEngine({}, "mem://site/docs/main.texl");
+    const sources = {
+        "mem://site/docs/main.texl": '<% texl.import("part.texl") ~> (doc -> doc.text) %>!',
+        "mem://site/docs/part.texl": "Hello",
+    };
+    const requested = [];
+    engine.addLoader("MEM", (uri) => {
+        requested.push(uri);
+        if (!(uri in sources)) throw new Error("not found");
+        return sources[uri];
+    });
+    check("a sync loader serves load and texl.import", (await engine.load("main.texl")).text, "Hello!");
+    check("a loader gets the full URI, without fragment",
+        requested.join(" "), "mem://site/docs/main.texl mem://site/docs/part.texl");
+    check("fetch goes through the loader", await engine.fetch("part.texl#x"), "Hello");
+    {
+        const failed = await engine.load("missing.texl").catch((err) => err);
+        check("a throwing loader gives a LoadError", failed.name, "LoadError");
+        check("a throwing loader gives its error as the reason", failed.reason, "Error: not found");
+    }
+
+    engine.addLoader("mem", async (uri) => {
+        await new Promise((r) => setTimeout(r, 10));
+        return uri === "mem://site/bad.texl" ? 42 : `async ${uri.slice(-9)}`;
+    });
+    check("addLoader replaces the loader of the scheme", (await engine.load("part.texl")).text, "async part.texl");
+    {
+        const failed = await engine.fetch("/bad.texl").catch((err) => err);
+        check("a loader that returns no string fails", failed.reason, "the loader did not return a string");
+    }
+    engine.addLoader("mem", () => Promise.reject(new Error("offline")));
+    {
+        const failed = await (await engine.render("main.texl", '<% x = texl.import("part.texl") %>')).data.x;
+        check("a rejecting loader gives an undefined import", failed.op, "document.load");
+        check("a rejecting loader gives its error as the reason", failed.rhv, "Error: offline");
+    }
+
+    const web = new TexlEngine();
+    web.addLoader("https", () => "replaced");
+    check("addLoader can replace the built-in https loader",
+        await web.fetch("https://example.invalid/doc.texl"), "replaced");
+    web.setDefaultLoader(() => "default");
+    check("setDefaultLoader does not change full URLs", (await web.load("fixtures/partials/counted.texl")).text,
+        "counted.texl has been evaluated 1 time(s)\n");
+}
+
 async function testContext() {
     const engine = new TexlEngine({ g: "global" });
     const context = engine.createContext({
@@ -452,6 +499,7 @@ try {
     await init();
     await testSample();
     await testEngine();
+    await testLoaders();
     await testContext();
     await testCollect();
     await testDebug();

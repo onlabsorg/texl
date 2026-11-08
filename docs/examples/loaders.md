@@ -3,7 +3,8 @@
 A *loader* decides where documents come from. This example, in Python, adds
 three: a loader for a scheme of your own, a cache in front of any loader, and
 a file loader that serves one folder only. The same ideas apply in Rust with
-`Engine::add_loader` and `loader_fn` (see the [Rust guide](../api/rust.md#loading-documents)).
+`Engine::add_loader` and `loader_fn` (see the [Rust guide](../api/rust.md#loading-documents)),
+and in JavaScript with `engine.addLoader` (see the [JavaScript guide](../api/javascript.md#custom-loaders)).
 
 ## A scheme of your own
 

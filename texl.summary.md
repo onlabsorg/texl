@@ -104,7 +104,7 @@ document and a little program that produces it.
 |-------------|----------------------------------------------------------------------|--------------|
 | `swan-core` | The Swan language: lexer, Pratt parser, evaluator, standard library (`bool`, `numb`, `text`, `list`, `nspace`, `promise`, `undef`, `math`, `time`), and a memory cleaner (cycle collector). No dependencies. | Rust crate |
 | `texl-core` | Template rendering and the `Engine`: pluggable loaders per URL scheme, and `fetch` (get a document's source), `render` (render a source as the document at a location) and `load` (both), with `texl.import` and an import cache per rendering. | Rust crate |
-| `texl-wasm` | JavaScript library for the browser via WebAssembly: `TexlEngine` (`fetch`, `load`, `render`, `set`, `createContext`) with HTTP loading, `collect` (the memory cleaner), `isUndefined`, `isSwanFunction`, `normalize` and `Tuple`; JS functions and promises cross into Swan and back, the functions a template defines can be called from JavaScript, lists and tuples stay distinct, and errors arrive as objects with their details. | npm: `@onlabsorg/texl` |
+| `texl-wasm` | JavaScript library for the browser via WebAssembly: `TexlEngine` (`fetch`, `load`, `render`, `set`, `addLoader`, `setDefaultLoader`, `createContext`) with HTTP loading and loaders of its own, `collect` (the memory cleaner), `isUndefined`, `isSwanFunction`, `normalize` and `Tuple`; JS functions and promises cross into Swan and back, the functions a template defines can be called from JavaScript, lists and tuples stay distinct, and errors arrive as objects with their details. | npm: `@onlabsorg/texl` |
 | `pytexl`    | Python library (PyO3): async `Engine` (`fetch`, `load`, `render`), `Context`, `collect` (the memory cleaner), `normalize`, file and HTTP loaders; Python callables, mappings and awaitables cross into Swan and back, and errors arrive as `Undefined` objects with their details. | PyPI: `pytexl` |
 
 Hosts can inject their own values and functions into the template scope, and
@@ -209,6 +209,12 @@ available to hosts too, but it cannot import documents.
   conversion, so a value shows the same text in both. Names that start and
   end with two underscores are reserved for such special members; the
   language does not enforce it.
+- Since 2026-11-08 (not released yet), JavaScript programs can register
+  their own loaders for a URL scheme, as Python and Rust programs already
+  could: a function that receives a document's location and returns its
+  source. It can also replace the built-in web loader, for example to limit
+  what a template may read. A loader for locations without a scheme can be
+  set too, as in Python, but the engine does not produce such locations yet.
 - Available: browser/JavaScript, Python, Rust.
 - The `texl` command-line tool (`texl-cli`) has been removed from the
   repository; its last release was 0.2.0 (2026-10-25), and its binaries
