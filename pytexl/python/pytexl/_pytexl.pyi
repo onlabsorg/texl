@@ -24,7 +24,8 @@ class Function:
 
     No argument is passed as ``Nothing``, one argument as itself, and several
     arguments as a tuple. Calling a Swan function never raises: an invalid call
-    returns an :class:`Undefined`.
+    returns an :class:`Undefined`. A Python callable passed to Swan comes back
+    as itself, not as a :class:`Function`.
     """
 
     def __call__(self, *args: Any) -> Any: ...

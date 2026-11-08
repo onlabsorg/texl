@@ -511,12 +511,16 @@ it runs on.
   `data`, which holds every function they defined, and so their scopes.
 - Run the collector after dropping a context or a document that defined
   functions, unless a rendering will run it soon anyway.
+- Nothing to do for the Swan functions given to the host: when the host's
+  garbage collector frees one (a Python `Function` object, or a JavaScript
+  function, which `texl-wasm` tracks with a `FinalizationRegistry`), its
+  reference goes, and the next collector run frees its scope.
 - In a Rust built-in that keeps Swan values, use `BuiltinFn::capturing`, not a
   closure that captures them.
 - Remember that the host's own garbage collector does not see Swan references,
   and the cycle collector does not see host references. A Swan value held by a
-  host object (a `pytexl.Function` in a Python list) lives as long as that
-  object, and a cycle that passes through both a host object and a Swan value
+  host object (a `pytexl.Function` in a Python list, a Swan function held by
+  JavaScript) lives as long as that object, and a cycle that passes through both a host object and a Swan value
   is freed by neither.
 
 ### Measuring leaks

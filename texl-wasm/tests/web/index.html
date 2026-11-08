@@ -36,7 +36,7 @@
 <pre id="expected" hidden></pre>
 
 <script type="module">
-import init, { TexlEngine, Tuple, collect, isUndefined, normalize } from "../../pkg/texl_wasm.js";
+import init, { TexlEngine, Tuple, collect, isSwanFunction, isUndefined, normalize } from "../../pkg/texl_wasm.js";
 
 const checks = document.getElementById("checks");
 let failures = 0;
@@ -216,20 +216,50 @@ async function testContext() {
     check("contexts cannot import", Object.keys(context.get("texl")).length, 0);
 }
 
+/// Runs the JS garbage collector (`gc`, from Chrome's `--js-flags=--expose-gc`),
+/// waits for the finalizers that free the Swan values of collected objects, and
+/// returns what `collect` frees. Null without `gc`.
+async function collectAll() {
+    if (typeof globalThis.gc !== "function") return null;
+    let freed = 0;
+    for (let i = 0; i < 5; i++) {
+        globalThis.gc();
+        await new Promise((r) => setTimeout(r, 10));
+        freed += collect();
+    }
+    return freed;
+}
+
+/// A check that needs `gc`: skipped (and passed) without it.
+function checkWithGc(name, freed, test) {
+    if (freed === null) check(`${name} (skipped: no gc)`, true, true);
+    else check(name, test(freed), true);
+}
+
 async function testCollect() {
     const engine = new TexlEngine();
-    collect();
+    await collectAll();
 
-    // A function stored in the context holds its scope: a reference cycle
+    // A function stored in the context holds its scope: a reference cycle.
+    // The renderings return the functions too, which JS collects later.
     const kept = engine.createContext({ rate: 2 });
     await kept.render("<% convert = a -> a * rate %>");
     const dropped = engine.createContext();
     await dropped.render("<% f = x -> x %>");
     dropped.free();
 
-    check("collect frees the scopes of freed contexts", collect() > 0, true);
+    checkWithGc("collect frees the scopes of freed contexts", await collectAll(), (n) => n > 0);
     check("collect keeps the contexts in use", (await kept.render("<% convert 10 %>")).text, "20");
-    check("collect has nothing left to free", collect(), 0);
+    checkWithGc("collect has nothing left to free", await collectAll(), (n) => n === 0);
+
+    // A Swan function held by JS keeps its scope; once JS drops it, the scope is freed
+    const owner = engine.createContext();
+    await owner.render("<% g = x -> x + 1 %>");
+    let g = owner.get("g");
+    owner.free();
+    checkWithGc("a Swan function held by JS keeps its scope", await collectAll(), () => g(1) === 2);
+    g = null;
+    checkWithGc("a Swan function JS no longer holds is freed", await collectAll(), (n) => n > 0);
 }
 
 async function testDebug() {
@@ -291,7 +321,7 @@ async function testTuples() {
         pair: Tuple.of(1, 2),
         items: [1, 2],
         mixed: [Tuple.of(1, 2), [3, 4]],
-        receive: (arg) => { received.push(arg); return arg; },
+        receive: (...args) => { received.push(args); },
         makeTuple: () => Tuple.of("a", "b"),
         makeArray: () => ["a", "b"],
         later: async () => Tuple.of(5, 6),
@@ -319,11 +349,12 @@ async function testTuples() {
     check("a Tuple in an array is spread", (await context.render("<% m = mixed %>")).data.m.length, 3);
     check("a list in a list stays a list", Array.isArray(context.get("m")[2]), true);
 
-    await context.render("<% receive(1, 2) %><% receive [1, 2] %>");
-    check("a call with several arguments passes a Tuple", received[0] instanceof Tuple, true);
-    check("a call with a list passes an array", received[1] instanceof Tuple, false);
-    const [a, b] = received[0];
-    check("a Tuple argument destructures", a + b, 3);
+    await context.render("<% receive(1, 2) %><% receive [1, 2] %><% receive() %><% receive pair %>");
+    check("a call with several arguments spreads them", received[0].join(), "1,2");
+    check("a call with a list passes an array", received[1].length === 1 && Array.isArray(received[1][0]), true);
+    check("the array is not a Tuple", received[1][0] instanceof Tuple, false);
+    check("a call with () passes no arguments", received[2].length, 0);
+    check("a tuple argument is spread", received[3].join(), "1,2");
     check("a promised Tuple becomes a tuple", (await context.render("<% later() %>")).tags[0].value instanceof Tuple, true);
 
     context.set("one", Tuple.of(7));
@@ -340,8 +371,55 @@ async function testTuples() {
     check("null members of an object are kept", context.get("deep").n, null);
 }
 
+async function testFunctions() {
+    const jsDouble = (x) => 2 * x;
+    const engine = new TexlEngine();
+    const context = engine.createContext({ jsDouble, asyncDouble: async (x) => 2 * x });
+    await context.render("<% double = x -> x * 2, add = (a, b) -> a + b, answer = () -> 42, wrap = x -> [x] %>");
+
+    const double = context.get("double");
+    check("a Swan function is a JS function", typeof double, "function");
+    check("isSwanFunction tells a Swan function", isSwanFunction(double), true);
+    check("a Swan function can be called", double(21), 42);
+    check("several arguments are a tuple", context.get("add")(2, 3), 5);
+    check("no arguments are ()", context.get("answer")(), 42);
+    check("no arguments are Nothing", context.get("wrap")().length, 0);
+    check("the arguments are the items of the tuple", context.get("wrap")(1, 2).join(), "1,2");
+    check("a Tuple argument is spread", context.get("wrap")(Tuple.of(1, 2), 3).join(), "1,2,3");
+    check("this is ignored", double.call({ x: 1 }, 3), 6);
+
+    const bad = double("a");
+    check("an invalid call returns a TexlUndefined", isUndefined(bad), true);
+    check("its undefined value is the one Swan made", bad.op, "product");
+
+    const upper = context.get("text").upper;
+    check("built-ins are Swan functions", isSwanFunction(upper), true);
+    check("built-ins can be called", upper("texl"), "TEXL");
+    check("curried built-ins can be called", context.get("text").split(",")("a,b").join(), "a,b");
+
+    check("a JS function comes back as itself", context.get("jsDouble"), jsDouble);
+    check("a JS function is not a Swan function", isSwanFunction(jsDouble), false);
+    check("isSwanFunction is false for other values", [null, 1, "f", {}, []].some(isSwanFunction), false);
+
+    context.set("double2", double);
+    check("a Swan function goes back to Swan", (await context.render("<% double2 5 %>")).text, "10");
+    check("it is the original function", isSwanFunction(context.get("double2")), true);
+
+    await context.render("<% later = x -> asyncDouble x %>");
+    const promised = context.get("later")(4);
+    check("a Swan function can return a promise", promised instanceof Promise, true);
+    check("the promise resolves to the result", await promised, 8);
+
+    const doc = await engine.render("functions.texl", "<% inc = x -> x + 1 %>");
+    check("documents give their functions", doc.data.inc(1), 2);
+    check("a function keeps working after its context is freed", (context.free(), double(5)), 10);
+}
+
 async function testNormalize() {
-    const show = (v) => JSON.stringify(v);
+    // Object keys sorted: a Swan namespace has no order
+    const sortKeys = (_, v) => (v && typeof v === "object" && !Array.isArray(v)
+        ? Object.fromEntries(Object.entries(v).sort(([a], [b]) => (a < b ? -1 : 1))) : v);
+    const show = (v) => JSON.stringify(v, sortKeys);
     check("normalize flattens a Tuple", show(normalize(Tuple.of(1, Tuple.of(2, 3), null))), "[1,2,3]");
     check("normalize keeps the Tuple class", normalize(Tuple.of(1, 2)) instanceof Tuple, true);
     check("normalize of one item gives that item", normalize(Tuple.of(null, 7)), 7);
@@ -349,7 +427,7 @@ async function testNormalize() {
     check("normalize of undefined gives null", normalize(undefined), null);
     check("normalize spreads Tuples in arrays", show(normalize([Tuple.of(1, 2), [3, null], null])), "[1,2,[3]]");
     check("normalize keeps arrays as arrays", normalize([1, 2]) instanceof Tuple, false);
-    check("normalize goes through plain objects", show(normalize({ a: [null, 1], t: Tuple.of(2), n: null })), '{"a":[1],"t":2,"n":null}');
+    check("normalize goes through plain objects", show(normalize({ a: [null, 1], t: Tuple.of(2), n: null })), '{"a":[1],"n":null,"t":2}');
     const input = [1, null];
     normalize(input);
     check("normalize leaves its argument as it was", input.length, 2);
@@ -378,6 +456,7 @@ try {
     await testCollect();
     await testDebug();
     await testTuples();
+    await testFunctions();
     await testNormalize();
 } catch (err) {
     failures++;

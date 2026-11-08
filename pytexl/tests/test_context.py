@@ -246,11 +246,21 @@ class FunctionTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((result.op, result.lhv, result.rhv), ("product", "a", 2))
 
     async def test_python_functions_round_trip(self):
-        self.context.set("f", lambda x: x + 1)
-        f = self.context.get("f")
-        self.assertIsInstance(f, pytexl.Function)
-        self.assertEqual(f(1), 2)
-        self.assertEqual(repr(f), "<pytexl.Function python>")
+        def f(x):
+            return x + 1
+
+        self.context.set("f", f)
+        self.assertIs(self.context.get("f"), f)
+        await self.context.render("<% g = f, fs = [f] %>")
+        self.assertIs(self.context.get("g"), f)
+        self.assertIs(self.context.get("fs")[0], f)
+        self.assertEqual((await self.context.render("<% f 1 %>")).text, "2")
+
+    async def test_swan_functions_round_trip(self):
+        await self.context.render("<% double = x -> x * 2 %>")
+        self.context.set("d", self.context.get("double"))
+        self.assertIsInstance(self.context.get("d"), pytexl.Function)
+        self.assertEqual((await self.context.render("<% d 5 %>")).text, "10")
 
     async def test_functions_returning_promises(self):
         async def slow(x):

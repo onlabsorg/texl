@@ -118,19 +118,25 @@ Everything is `Rc`-based and single-threaded. See
 
 - `src/lib.rs`: `TexlEngine` (wraps an `Engine` that spawns with
   `wasm_bindgen_futures::spawn_local`), `TexlContext`, `collect`,
-  `isUndefined`. Its doc comments are copied into the generated
+  `isUndefined`, `isSwanFunction`, `normalize`. Its doc comments are copied into the generated
   `texl_wasm.d.ts`.
 - `src/loader.rs`: the `http`/`https` loader, which uses the global `fetch`,
   and the resolution of URIs against the base URL (`location.href` by
   default). Every document has a full URL.
 - `src/convert.rs`: JavaScript ↔ Swan value conversion, and the exported
-  `Tuple` class. JavaScript functions become built-ins, JavaScript promises
-  become Swan promises. Positions
+  `Tuple` class. JavaScript functions become built-ins that hold the
+  function as host data (`BuiltinFn::with_host_data`), so they come back as
+  themselves; JavaScript promises become Swan promises. Positions
   (undefined values, document tags) are converted to UTF-16 code units.
-- `src/undefined.rs`: undefined values as frozen plain objects
-  (`TexlUndefined`), with a getter for their source text. A private `WeakMap` gives the Swan value back when the
-  object returns to Swan; a `FinalizationRegistry` frees it when JavaScript
+- `src/handles.rs`: the table of Swan values held by JavaScript objects
+  (*handles*). A private `WeakMap` gives the Swan value back when the object
+  returns to Swan; a `FinalizationRegistry` removes it when JavaScript
   collects the object.
+- `src/undefined.rs`: undefined values as frozen plain objects
+  (`TexlUndefined`), handles with a getter for their source text.
+- `src/function.rs`: Swan functions as plain JavaScript functions, handles
+  made by one JavaScript factory that call one shared Rust function with
+  their key; the JavaScript arguments are the items of the Swan argument.
 
 ### `pytexl`
 

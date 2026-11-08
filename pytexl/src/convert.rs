@@ -16,8 +16,9 @@
 //!
 //! In the other direction, `Nothing` becomes `None`, integral numbers become `int` and the
 //! others `float`, lists become `list`, tuples become `tuple`, namespaces become `dict` (own
-//! bindings only), promises become [`Promise`], functions become [`Function`] and undefined
-//! values become [`Undefined`], which keeps the details of the error. Positions are converted
+//! bindings only), promises become [`Promise`], functions become [`Function`] (a Python
+//! callable passed to Swan comes back as itself) and undefined values become [`Undefined`],
+//! which keeps the details of the error. Positions are converted
 //! to code points (Python string indices): the `pos` of an [`Undefined`], and the tag spans of
 //! a document namespace (see [`texl_core::engine::convert_tag_positions`]). A mapping with the
 //! members of a document gets its tag spans converted back to bytes, so a document passed
@@ -90,6 +91,9 @@ impl Promise {
 /// `Nothing`, one argument as itself, and several arguments as a tuple. The
 /// result is converted back to a Python value. Calling a Swan function never
 /// raises: an invalid call returns an :class:`Undefined`.
+///
+/// A Python callable passed to Swan is not wrapped in a :class:`Function`
+/// when it comes back: it is the original callable.
 ///
 /// Example:
 ///     >>> doc = await pytexl.Engine().load("lib/format.texl")
@@ -389,15 +393,17 @@ pub fn py_to_swan(obj: &Bound<'_, PyAny>) -> Value {
             }
         }))
     } else if obj.is_callable() {
-        Value::Builtin(py_function(obj.clone().unbind()))
+        Value::Builtin(py_function(py, obj.clone().unbind()))
     } else {
         Value::Nothing
     }
 }
 
 /// Wraps a Python callable as a Swan function. See [`Function`] for the argument convention,
-/// which is the same in this direction. An exception gives an `Undefined`.
-fn py_function(func: Py<PyAny>) -> BuiltinFn {
+/// which is the same in this direction. An exception gives an `Undefined`. The built-in holds
+/// the callable as host data too, so that it leaves Swan as itself.
+fn py_function(py: Python<'_>, func: Py<PyAny>) -> BuiltinFn {
+    let host_data = func.clone_ref(py);
     BuiltinFn::new("python", move |arg| {
         Python::attach(|py| {
             let args: Vec<Py<PyAny>> = match &arg {
@@ -411,6 +417,7 @@ fn py_function(func: Py<PyAny>) -> BuiltinFn {
             }
         })
     })
+    .with_host_data(host_data)
 }
 
 /// Converts a Swan value to a Python value. See the [module documentation](self).
@@ -446,6 +453,8 @@ pub fn swan_to_py(py: Python<'_>, value: &Value) -> Py<PyAny> {
             result.map(|()| dict.into_any())
         }
         Value::Promise(p) => Bound::new(py, Promise { inner: p.clone() }).map(Bound::into_any),
+        // A Python callable passed to Swan comes back as itself
+        Value::Builtin(f) if let Some(callable) = f.host_data::<Py<PyAny>>() => Ok(callable.bind(py).clone()),
         Value::Func { .. } | Value::Builtin(_) => {
             Bound::new(py, Function { inner: value.clone() }).map(Bound::into_any)
         }

@@ -52,6 +52,8 @@ pub struct BuiltinFn {
     /// Human-readable name, used in Debug output and error messages.
     pub name: &'static str,
     body: BuiltinBody,
+    /// Data the host attached with [`BuiltinFn::with_host_data`].
+    host_data: Option<Rc<dyn std::any::Any>>,
 }
 
 /// A built-in that receives its captured values on every call.
@@ -69,7 +71,7 @@ impl BuiltinFn {
     /// Both plain function pointers (`fn(Value) -> Value`) and closures are
     /// accepted because both coerce to `dyn Fn(Value) -> Value`.
     pub fn new(name: &'static str, f: impl Fn(Value) -> Value + 'static) -> Self {
-        Self { name, body: BuiltinBody::Plain(Rc::new(f)) }
+        Self { name, body: BuiltinBody::Plain(Rc::new(f)), host_data: None }
     }
 
     /// Create a built-in function that holds the Swan values `captured`.
@@ -96,7 +98,7 @@ impl BuiltinFn {
         captured: Vec<Value>,
         f: impl Fn(&[Value], Value) -> Value + 'static,
     ) -> Self {
-        Self { name, body: BuiltinBody::Capturing(Rc::new(f), Rc::new(captured)) }
+        Self { name, body: BuiltinBody::Capturing(Rc::new(f), Rc::new(captured)), host_data: None }
     }
 
     /// Invoke the built-in with the given argument.
@@ -109,6 +111,32 @@ impl BuiltinFn {
             BuiltinBody::Plain(f) => f(arg),
             BuiltinBody::Capturing(f, captured) => f(captured, arg),
         })
+    }
+
+    /// Attaches `data` to the built-in, for the host to read back with
+    /// [`BuiltinFn::host_data`]: typically the host function it wraps, so that
+    /// the original function is given back when the built-in leaves Swan.
+    ///
+    /// Swan never reads it. It is opaque to the cycle collector, so it must
+    /// not hold Swan values (see [`crate::gc`]).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use swan_core::value::{BuiltinFn, Value};
+    ///
+    /// let f = BuiltinFn::new("host", |arg| arg).with_host_data("callback #1");
+    /// assert_eq!(f.host_data::<&str>(), Some(&"callback #1"));
+    /// assert_eq!(f.host_data::<String>(), None);
+    /// ```
+    pub fn with_host_data(mut self, data: impl std::any::Any) -> Self {
+        self.host_data = Some(Rc::new(data));
+        self
+    }
+
+    /// The data attached with [`BuiltinFn::with_host_data`], if it is a `T`.
+    pub fn host_data<T: 'static>(&self) -> Option<&T> {
+        self.host_data.as_deref()?.downcast_ref()
     }
 
     /// The values captured with [`BuiltinFn::capturing`], if any.

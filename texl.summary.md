@@ -104,7 +104,7 @@ document and a little program that produces it.
 |-------------|----------------------------------------------------------------------|--------------|
 | `swan-core` | The Swan language: lexer, Pratt parser, evaluator, standard library (`bool`, `numb`, `text`, `list`, `nspace`, `promise`, `undef`, `math`, `time`), and a memory cleaner (cycle collector). No dependencies. | Rust crate |
 | `texl-core` | Template rendering and the `Engine`: pluggable loaders per URL scheme, and `fetch` (get a document's source), `render` (render a source as the document at a location) and `load` (both), with `texl.import` and an import cache per rendering. | Rust crate |
-| `texl-wasm` | JavaScript library for the browser via WebAssembly: `TexlEngine` (`fetch`, `load`, `render`, `set`, `createContext`) with HTTP loading, `collect` (the memory cleaner), `isUndefined`, `normalize` and `Tuple`; JS functions and promises cross into Swan and back, lists and tuples stay distinct, and errors arrive as objects with their details. | npm: `@onlabsorg/texl` |
+| `texl-wasm` | JavaScript library for the browser via WebAssembly: `TexlEngine` (`fetch`, `load`, `render`, `set`, `createContext`) with HTTP loading, `collect` (the memory cleaner), `isUndefined`, `isSwanFunction`, `normalize` and `Tuple`; JS functions and promises cross into Swan and back, the functions a template defines can be called from JavaScript, lists and tuples stay distinct, and errors arrive as objects with their details. | npm: `@onlabsorg/texl` |
 | `pytexl`    | Python library (PyO3): async `Engine` (`fetch`, `load`, `render`), `Context`, `collect` (the memory cleaner), `normalize`, file and HTTP loaders; Python callables, mappings and awaitables cross into Swan and back, and errors arrive as `Undefined` objects with their details. | PyPI: `pytexl` |
 
 Hosts can inject their own values and functions into the template scope, and
@@ -187,6 +187,17 @@ available to hosts too, but it cannot import documents.
   program a proper `Error` instead of a text. An `Undefined` value made
   deliberately with `undef.from` now describes itself like any other, as
   "Custom undefined value: 5" instead of "undefined on purpose".
+- Not released yet (after 0.6.0, 2026-11-08): the functions a template
+  defines, and the built-in functions, now reach JavaScript programs as
+  ordinary functions they can call, as Python programs already could; before,
+  they arrived as `undefined`. Such a function can be handed back to the
+  engine and stays the same Swan function, and `isSwanFunction` tells it from
+  the program's own functions. Calls now read the same in both directions: a
+  JavaScript function called from a template with several values receives
+  them as separate arguments, where before it received them as one `Tuple`;
+  existing JavaScript functions written for one `Tuple` argument must change.
+  A JavaScript or Python function given to the engine now comes back to its
+  program as the very same function; Python used to get a wrapper.
 - Available: browser/JavaScript, Python, Rust.
 - The `texl` command-line tool (`texl-cli`) has been removed from the
   repository; its last release was 0.2.0 (2026-10-25), and its binaries
@@ -216,7 +227,10 @@ uses them, and frees them. The engine runs it after every rendering, so
 programs that keep rendering for a long time, such as an editor or a server,
 no longer grow in memory with each rendering. Hosts that render into a
 *context* call `collect` themselves after dropping it; it is available in
-Rust, JavaScript and Python. The developer example that measured what each
+Rust, JavaScript and Python. A Swan function held by a JavaScript or Python
+program keeps its document alive while the program holds it; once the
+program's own memory manager drops it, the next cleanup frees the document.
+The browser tests check this. The developer example that measured what each
 rendering leaves behind was part of the command-line tool and was removed
 with it.
 

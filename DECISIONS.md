@@ -322,3 +322,39 @@ gets that language's way of failing, as for a URI it cannot resolve. An operatio
 fits since it has a real operand, the URL, as `import.cycle` does, and keeps the
 URL and the reason apart. `HostError` would not cover a URL with no loader, and
 would leave the URL inside a host's wording.
+
+## T16 — 2026-11-08 — Swan functions reach JavaScript; host functions come back as themselves
+
+In `texl-wasm`, a Swan function (a `Func` or a built-in) becomes a plain
+JavaScript function instead of `undefined`:
+
+- `f(a, b)` calls the Swan function with the tuple `(a, b)`, `f(a)` with `a`
+  and `f()` with `()`; `this` is ignored. A JavaScript function called from
+  Swan gets the arguments the same way: Swan `f(a, b)` calls it with `a` and
+  `b`, `f()` with none, as in Python. This replaces the single argument that
+  received a tuple as a `Tuple`.
+- The result is converted as usual: a promise becomes a JS Promise, and an
+  undefined value is returned as a `TexlUndefined`, never thrown.
+- The function is a handle, like a `TexlUndefined` (T5): it holds a key into
+  a table of Swan values, shared with undefined values, and a
+  `FinalizationRegistry` removes the entry when JavaScript collects the
+  function. Its scope is then freed by the next `collect()`, which is not run
+  from the finalizer. Passed back to Swan, it is the original Swan function.
+- Converting the same Swan function twice gives two different JS functions.
+  `isSwanFunction(value)` tells a Swan function from the host's own.
+
+In both bindings, a host function that goes into Swan comes back as itself: a
+JavaScript function as that function, a Python callable as that callable (no
+longer a `pytexl.Function`). A built-in carries the host function it wraps as
+opaque host data (`BuiltinFn::with_host_data` / `host_data`), which must not
+hold Swan values.
+*Reason:* hosts need to call the functions a document defines (a document as a
+library), as Python could already. A `wasm_bindgen` `Closure` would have to be
+leaked, since JavaScript does not say when a function is no longer used; the
+handle table frees every function JavaScript drops. Spreading the arguments
+makes calls read the same in both directions and in both bindings. Returning
+undefined values keeps "never fails". Identity and a finalizer-driven collection
+were left out: the first needs a weak reverse map, and finalizers run at
+unpredictable times while `collect()` already runs after every rendering. A
+cycle that passes through both a host object and a Swan value is still freed by
+neither collector; that is a separate question.

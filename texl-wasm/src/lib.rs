@@ -14,12 +14,15 @@
 //! ```
 //!
 //! The module also exports `collect()`, the cycle collector (see [`collect`]),
-//! `isUndefined(value)` (see [`is_undefined`]), `normalize(value)` (see
-//! [`normalize`]) and `Tuple`, the array subclass of Swan tuples.
+//! `isUndefined(value)` (see [`is_undefined`]), `isSwanFunction(value)` (see
+//! [`is_swan_function`]), `normalize(value)` (see [`normalize`]) and `Tuple`,
+//! the array subclass of Swan tuples.
 //!
 //! See the [JavaScript guide and API reference](https://github.com/onlabsorg/texl/blob/main/docs/api/javascript.md).
 
 mod convert;
+mod function;
+mod handles;
 mod loader;
 mod undefined;
 
@@ -399,6 +402,20 @@ pub fn is_undefined(
     value: JsValue,
 ) -> bool {
     undefined::js_to_undefined(&value).is_some()
+}
+
+/// Tells whether `value` is a function that came from Swan.
+///
+/// A Swan function becomes a plain JS function: `f(a, b)` calls it with the
+/// tuple `(a, b)`, `f()` with `()`. Passed back to the engine, it is the
+/// original Swan function. A JS function that went into Swan and came back is
+/// the original JS function, so it is not a Swan function.
+#[wasm_bindgen(js_name = isSwanFunction, unchecked_return_type = "value is (...args: any[]) => any")]
+pub fn is_swan_function(
+    #[wasm_bindgen(param_description = "Any value.")]
+    value: JsValue,
+) -> bool {
+    function::js_to_function(&value).is_some()
 }
 
 /// `location.href` of the current page or worker, if any.

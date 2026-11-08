@@ -136,6 +136,7 @@ The objects you pass to the engine and to contexts become Swan values:
 | Promise, or any object with a `then` method | `Promise`; a rejection resolves to an `Undefined` |
 | function                            | `Func` (see below)                             |
 | a [`TexlUndefined`](#texlundefined) | the original `Undefined`                       |
+| a function that came from Swan      | the original `Func`                            |
 | other object                        | `Namespace` of its own enumerable properties   |
 
 Values that come back to JavaScript, from `context.get`, from document data
@@ -149,7 +150,7 @@ and as function arguments, are converted the other way:
 | `Tuple`                  | [`Tuple`](#tuple), an array subclass                   |
 | `Namespace`              | plain object with its members                          |
 | `Promise`                | `Promise`                                              |
-| `Func`                   | `undefined`                                            |
+| `Func`                   | a function, which you can call (see below)             |
 | `Undefined`              | a [`TexlUndefined`](#texlundefined) object             |
 
 Arrays and tuples are normalized, as in Swan: `null` and `undefined` items are
@@ -162,16 +163,17 @@ to the engine.
 
 ### Functions
 
-A JavaScript function becomes a Swan function of one argument. A Swan call
-with several arguments passes them as one [`Tuple`](#tuple), which is an
-array, so destructure it:
+A JavaScript function becomes a Swan function. A Swan call with several
+arguments passes them as separate arguments, and a call with `()` passes
+none:
 
 ```js
 const engine = new TexlEngine({
     shout: (s) => s.toUpperCase() + "!",
-    add: ([a, b]) => a + b,
+    add: (a, b) => a + b,
+    answer: () => 42,
 });
-(await engine.render("doc.texl", '<% shout "hi" %> <% add (2, 3) %>')).text;   // "HI! 5"
+(await engine.render("doc.texl", '<% shout "hi" %> <% add(2, 3) %> <% answer() %>')).text;   // "HI! 5 42"
 ```
 
 The return value is converted to a Swan value, so a function returns several
@@ -188,6 +190,27 @@ const engine = new TexlEngine({
 });
 await engine.render("doc.texl", 'Today in Rome: <% weather "rome" %>');
 ```
+
+A JavaScript function that goes into Swan and comes back, from
+`context.get` for example, is the original function.
+
+### Swan functions
+
+The functions that a template defines, and the built-ins, come back to
+JavaScript as functions. You call them like any function: the arguments are
+the items of the Swan argument, so `f(a, b)` calls the Swan function with
+`(a, b)` and `f()` calls it with `()`. The result is converted to a
+JavaScript value, so a Swan promise comes back as a `Promise`. A call never
+throws: an invalid call returns a [`TexlUndefined`](#texlundefined). A
+document can be a library:
+
+```js
+const doc = await engine.load("lib/format.texl");   // defines plural = (count, word) -> ...
+doc.data.plural(3, "apple");                        // "3 apples"
+```
+
+Passed back to the engine, a Swan function is the original Swan function.
+[`isSwanFunction`](#isswanfunction) tells a Swan function from your own.
 
 ## Contexts
 
@@ -256,6 +279,11 @@ import { collect } from "@onlabsorg/texl";
 context.free();
 collect();
 ```
+
+A Swan function that JavaScript holds keeps its scope alive, also after its
+context is freed, so it can still be called. It needs no `free()`: once the
+JavaScript garbage collector has collected the function, the next `collect`
+frees its scope.
 
 ## API reference
 
@@ -547,6 +575,23 @@ Swan. A copy of one (`{...u}`) is not.
 ```js
 import { isUndefined } from "@onlabsorg/texl";
 isUndefined(doc.tags[0].value);    // true if the first tag gave an error
+```
+
+### `isSwanFunction`
+
+```ts
+function isSwanFunction(value: any): value is (...args: any[]) => any
+```
+
+Tells whether a value is a function that came from Swan (see
+[Swan functions](#swan-functions)). A JavaScript function that went into
+Swan and came back is the original JavaScript function, so it is not.
+
+```js
+import { isSwanFunction } from "@onlabsorg/texl";
+await context.render("<% double = x -> x * 2 %>");
+isSwanFunction(context.get("double"));    // true
+isSwanFunction((x) => 2 * x);             // false
 ```
 
 ### `normalize`

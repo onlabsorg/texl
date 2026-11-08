@@ -181,6 +181,11 @@ panic: return an `Undefined` value, for example with `Value::undef_unary`, when
 the argument is invalid. `Value::items` iterates over the items of a tuple,
 and treats any other value as a tuple of one item.
 
+A host that wraps its own functions as built-ins can attach the original with
+`BuiltinFn::with_host_data` and read it back with `host_data`, to give the
+original function back when the built-in leaves Swan. The data is opaque to
+the cycle collector, so it must not hold Swan values.
+
 ### Asynchronous host functions
 
 A host function that needs to wait returns a promise.

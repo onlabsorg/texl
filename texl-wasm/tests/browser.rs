@@ -42,6 +42,8 @@ fn test_web_page_passes_in_headless_chrome() {
         .arg(format!("--user-data-dir={}", profile_dir.display()))
         // Virtual time runs until the page is idle, so the DOM is dumped after the checks end
         .arg("--virtual-time-budget=30000")
+        // `gc()` for the page, to test that values JS no longer uses are freed
+        .arg("--js-flags=--expose-gc")
         .arg("--dump-dom")
         .arg(format!("{origin}{}", support::PAGE))
         .output()

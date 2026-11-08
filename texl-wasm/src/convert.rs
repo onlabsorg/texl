@@ -9,15 +9,21 @@
 //! | [`Tuple`]                      | `Tuple` (normalized)                     |
 //! | other array                    | `List` (normalized)                      |
 //! | Promise or other thenable      | `Promise` (a rejection gives `Undefined`) |
-//! | function                       | `Func` taking one argument (a throw gives `Undefined`) |
+//! | function                       | `Func` (a throw gives `Undefined`)       |
 //! | `TexlUndefined` (from Swan)    | the original `Undefined`                 |
+//! | function from Swan             | the original `Func`                      |
 //! | other object                   | `Namespace` of its own enumerable keys   |
 //!
 //! In the other direction, `Nothing` becomes `null`, lists become arrays,
 //! tuples become [`Tuple`] objects, namespaces become plain objects (own
-//! bindings only), promises become JS Promises, functions become `undefined`,
-//! and undefined values
-//! become `TexlUndefined` objects (see [`crate::undefined`]). Positions are
+//! bindings only), promises become JS Promises, functions become JS functions
+//! (see [`crate::function`]; a JS function passed to Swan comes back as
+//! itself), and undefined values become `TexlUndefined` objects (see
+//! [`crate::undefined`]).
+//!
+//! A JS function called from Swan gets the items of the Swan argument as its
+//! arguments: Swan `f(a, b)` calls it with `a` and `b`, `f(a)` with `a`, and
+//! `f()` with none. A JS call of a Swan function does the same the other way. Positions are
 //! converted to UTF-16 code units (JS string indices): the `pos` of an
 //! undefined value, and the tag spans of a document namespace (see
 //! [`texl_core::engine::convert_tag_positions`]). An object with the members
@@ -28,6 +34,8 @@ use js_sys::{Array, Function, Object, Reflect};
 use texl_core::document::{utf16_offset, utf16_to_byte_offset};
 use swan_core::value::{BuiltinFn, Namespace, Promise, Value};
 
+use crate::function::function_to_js;
+use crate::handles;
 use crate::undefined::{js_to_undefined, undefined_to_js};
 use wasm_bindgen::prelude::*;
 
@@ -76,7 +84,7 @@ fn push_items(arr: &Array, items: &[Value]) {
 }
 
 /// Converts each item of the JS array `arr` to a Swan value.
-fn array_items(arr: &Array) -> Result<Vec<Value>, JsValue> {
+pub(crate) fn array_items(arr: &Array) -> Result<Vec<Value>, JsValue> {
     let mut items = Vec::with_capacity(arr.length() as usize);
     for i in 0..arr.length() {
         items.push(js_to_swan_value(arr.get(i))?);
@@ -123,8 +131,9 @@ pub fn js_to_swan_value(val: JsValue) -> Result<Value, JsValue> {
         Ok(Value::Numb(n))
     } else if let Some(s) = val.as_string() {
         Ok(Value::Text(s.into()))
-    } else if let Some(undef) = js_to_undefined(&val) {
-        Ok(Value::Undefined(undef))
+    } else if let Some(value) = handles::value_of(&val) {
+        // A `TexlUndefined` or a function from Swan: the original value
+        Ok(value)
     } else if val.is_instance_of::<Tuple>() {
         // Before the array test, since a Tuple is also an array
         Ok(Value::tuple(array_items(&Array::from(&val))?))
@@ -141,15 +150,21 @@ pub fn js_to_swan_value(val: JsValue) -> Result<Value, JsValue> {
         });
         Ok(Value::Promise(swan_promise))
     } else if val.is_function() {
-        // Wrap JS Function as a Swan BuiltinFn
-        // If the JS function is async (returns a Promise), the result is converted by
-        // js_to_swan_value into a Swan Promise, so Swan sees it as a promise-returning function.
+        // A JS function that returns a promise (an async function) gives a Swan promise.
+        // The built-in holds the JS function as host data, so it leaves Swan as itself.
         let js_fn: Function = val.into();
-
+        let host_fn = js_fn.clone();
         let builtin = BuiltinFn::new("js_callback", move |arg: Value| {
-            let js_arg = swan_value_to_js(&arg);
-            outcome_to_swan(js_fn.call1(&JsValue::NULL, &js_arg))
-        });
+            // The items of the argument are the arguments
+            let args = Array::new();
+            match &arg {
+                Value::Nothing => {}
+                Value::Tuple(items) => push_items(&args, items),
+                other => { args.push(&swan_value_to_js(other)); }
+            }
+            outcome_to_swan(js_fn.apply(&JsValue::NULL, &args))
+        })
+        .with_host_data(host_fn);
 
         Ok(Value::Builtin(builtin))
     } else if val.is_object() {
@@ -269,6 +284,7 @@ pub fn swan_value_to_js(val: &Value) -> JsValue {
             js_promise.into()
         }
         Value::Undefined(undef) => undefined_to_js(undef),
-        _ => JsValue::UNDEFINED,
+        Value::Func { .. } | Value::Builtin(_) => function_to_js(val),
+        Value::Name(_) => JsValue::UNDEFINED,
     }
 }

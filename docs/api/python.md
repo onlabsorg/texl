@@ -243,6 +243,9 @@ engine = pytexl.Engine({"weather": weather})
 (await engine.render("doc.texl", 'Today in Rome: <% weather "rome" %>')).text   # 'Today in Rome: sunny'
 ```
 
+A Python callable that goes into Swan and comes back, from `context.get` for
+example, is the original callable, not a [`Function`](#function).
+
 A coroutine object passed as a value is awaited once, and every template sees
 its result.
 
@@ -728,7 +731,9 @@ class Function:
 A Swan function. Calling it with no argument passes `Nothing`, with one
 argument passes that argument, and with several arguments passes them as a
 tuple. The result is converted to a Python value. A call never raises: an
-invalid call returns an [`Undefined`](#undefined).
+invalid call returns an [`Undefined`](#undefined). Passed back to Swan, it is
+the original Swan function. A Python callable passed to Swan comes back as
+itself, not as a `Function`.
 
 ```python
 await context.render("<% double = x -> x * 2 %>")
