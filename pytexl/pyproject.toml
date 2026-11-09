@@ -4,7 +4,7 @@ build-backend = "maturin"
 
 [project]
 name = "pytexl"
-version = "0.7.0"
+version = "0.8.0"
 description = "Text templates with Swan expressions: the Python library of Texl"
 readme = "README.md"
 license = "MIT"
