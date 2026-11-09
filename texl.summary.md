@@ -131,8 +131,8 @@ available to hosts too, but it cannot import documents.
 ## Status
 
 - MIT licensed; source at <https://github.com/onlabsorg/texl>.
-- Latest releases (2026-11-08): `texl-wasm` 0.7.1, `pytexl` 0.7.0. The Rust
-  crates (`swan-core` 0.5.0, `texl-core` 0.6.0) are used
+- Latest releases (2026-11-09): `texl-wasm` 0.8.0, `pytexl` 0.8.0. The Rust
+  crates (`swan-core` 0.5.0, `texl-core` 0.7.0) are used
   from the repository; they are not on crates.io.
 - Version 0.4.0 changed how hosts use the engine: rendering text now needs a
   location, documents are no longer cached between renderings, imported
@@ -223,7 +223,7 @@ available to hosts too, but it cannot import documents.
   source. It can also replace the built-in web loader, for example to limit
   what a template may read. A loader for locations without a scheme can be
   set too, as in Python, but the engine does not produce such locations yet.
-- Not released yet (in the repository since 2026-11-09): loaders can give a
+- Version 0.8.0 (2026-11-09) changes the host interface: loaders can give a
   document's real location, as described under "Where a document really
   is". The built-in web loaders of JavaScript and Python report the address
   a web server redirected to. This changes the host interface: fetching a
