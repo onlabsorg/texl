@@ -231,6 +231,11 @@ available to hosts too, but it cannot import documents.
   in all three languages, instead of the source alone, so a program that
   fetches a source and renders it later renders it as the right document.
   Python's built-in web loader, if called directly, also returns both.
+- Since 0.8.0 (not released yet): a new built-in, `text.template`, turns a
+  text with `{name}` placeholders into a function that fills them from a
+  namespace, e.g. `text.template "My car is {color}." {color: "white"}`.
+  Each value is shown exactly as a tag would show it; a missing name gives
+  empty text; `{{` and `}}` give literal braces.
 - Available: browser/JavaScript, Python, Rust.
 - The `texl` command-line tool (`texl-cli`) has been removed from the
   repository; its last release was 0.2.0 (2026-10-25), and its binaries

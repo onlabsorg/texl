@@ -495,6 +495,15 @@ async function testFunctions() {
     check("built-ins can be called", upper("texl"), "TEXL");
     check("curried built-ins can be called", context.get("text").split(",")("a,b").join(), "a,b");
 
+    const tfunc = context.get("text").template("My car is {color} and it is from {year}.");
+    check("text.template returns a Swan function", isSwanFunction(tfunc), true);
+    check("text.template fills a JS object", tfunc({ color: "white", year: 2012 }), "My car is white and it is from 2012.");
+    check("text.template renders a missing name as nothing", tfunc({ year: 2012 }), "My car is  and it is from 2012.");
+    check("text.template needs a namespace", isUndefined(tfunc("white")), true);
+    context.set("car", { color: "red", year: 1999 });
+    check("a Swan template fills JS values",
+        (await context.render('<% card = text.template "{color}/{year}" %><% card car %>')).text, "red/1999");
+
     check("a JS function comes back as itself", context.get("jsDouble"), jsDouble);
     check("a JS function is not a Swan function", isSwanFunction(jsDouble), false);
     check("isSwanFunction is false for other values", [null, 1, "f", {}, []].some(isSwanFunction), false);

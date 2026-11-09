@@ -419,3 +419,24 @@ those in the cycle. A cycle through a redirect is found after one fetch
 instead of before it, and an importer that does not wait for its import may
 finish first and then get the finished document, as any import of a finished
 document does.
+
+## T19 — 2026-11-09 — `text.template` fills `{name}` placeholders from a namespace
+
+`text.template tpl` returns a function that takes a namespace and returns
+`tpl` with every `{name}` placeholder replaced by the text of that member.
+The value is converted exactly as a Texl tag renders it: the renderer's
+conversion moved to swan-core (`builtins::to_rendered_text`, built on
+`to_text`), and both use it. A placeholder is `{` + a Swan name + `}`; `{{`
+and `}}` are literal braces, any other brace is literal text, so parsing never
+fails; the template is parsed once, when `text.template` is applied. A missing
+name is `Nothing` and gives an empty text. `text.template` maps over a tuple
+of templates and the returned function over a tuple of namespaces; any other
+argument gives `Undefined`.
+*Reason:* building text from many values with `+` and `text.from` is long and
+hard to read, while a document already knows how to show any value; sharing
+the tag's conversion keeps one text form per value (T17). Names rather than
+expressions keep a template plain data, safe to take from a host or a file.
+Treating a missing name as Nothing follows Swan's name lookup and the
+renderer (`<% colr %>` renders nothing); the price is that a misspelled name
+is silent, as it is in a tag. Python-style brace escapes are familiar, and
+leaving other braces literal lets texts like JSON pass through unchanged.

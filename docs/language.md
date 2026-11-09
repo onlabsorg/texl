@@ -144,6 +144,34 @@ Twice: 25
 - A hook that converts its own namespace (`text.from` of it) recurses forever,
   like any other unbounded recursion.
 
+What a tag adds to this conversion, for the values it leaves out, is shared
+too (`to_rendered_text`): `Nothing` is empty, a tuple's items are joined with
+`", "`, a resolved promise gives its value's text and a pending one
+`[[Pending Promise]]`, and a value that cannot be converted gives
+`[[Undefined]]`. Swan's `text.template` uses it, so a `{name}` placeholder
+shows a value exactly as `<% name %>` would:
+
+```texl
+<% row = text.template "{name}: {sales} ({tags})" %><% row {name: "North", sales: 1200, tags: ("a", "b")} %>
+<% row {name: "South"} %>
+```
+
+```text
+North: 1200 (a, b)
+South:  ()
+```
+
+- The template is parsed once, when `text.template` is applied to it; the
+  function it returns can be applied to many namespaces, and to a tuple of
+  namespaces (a tuple of texts).
+- A placeholder is `{` + a Swan name + `}`. `{{` and `}}` are literal braces;
+  any other brace (`{ a }`, `{a.b}`, `{}`) is literal text, so a template never
+  fails.
+- A missing name is `Nothing`, as in a tag, so it gives an empty text, not an
+  error. A template applied to anything but a namespace gives `Undefined`.
+- Placeholders are names, not expressions: the template is data, so a text
+  from outside (a host, a loaded file) can be one without running code.
+
 Names that start and end with two underscores are reserved for hooks like
 this one, present and future. The parser does not enforce it: documents should
 not use such names for anything else.

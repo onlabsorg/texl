@@ -38,6 +38,8 @@ pub fn create_namespace() -> Value {
     // `join` uses map_1 (not map_curried) on purpose: the separator is mapped, but the
     // returned function receives the whole tuple of items to join.
     ns.insert("join"     , map_1("text.join"     , text_join));
+    // `template` maps over templates; the function it returns maps over namespaces.
+    ns.insert("template" , map_1("text.template" , text_template));
 
     Value::Namespace(ns)
 }
@@ -115,6 +117,43 @@ pub fn to_text(val: Value) -> Value {
     };
 
     Value::Text(s.into())
+}
+
+/// Converts any value to the text a Texl tag renders for it.
+///
+/// Single values go through [`to_text`]; this function adds what `to_text`
+/// leaves to its callers, and never fails:
+///
+/// | Value                  | Text                                          |
+/// |------------------------|-----------------------------------------------|
+/// | `Nothing`              | empty text                                    |
+/// | `Tuple`                | items converted and joined with `", "`        |
+/// | `Promise` (resolved)   | the text of the resolved value                |
+/// | `Promise` (pending)    | `[[Pending Promise]]`                         |
+/// | anything `to_text` cannot convert | `[[Undefined]]`                    |
+///
+/// Used by Texl's template renderer and by `text.template`, so a placeholder
+/// shows a value the way a tag does. A pending promise is not awaited.
+pub fn to_rendered_text(val: Value) -> String {
+    match val {
+        Value::Nothing => String::new(),
+        Value::Tuple(items) => {
+            let item_strs: Vec<String> = items.iter().cloned().map(to_rendered_text).collect();
+            item_strs.join(", ")
+        }
+        // Non-blocking: read the promise's current value without awaiting it.
+        Value::Promise(promise) => {
+            let inner_value = promise.0.borrow().value.clone();
+            match inner_value {
+                Some(resolved_val) => to_rendered_text(resolved_val),
+                None => "[[Pending Promise]]".to_string(),
+            }
+        }
+        other => match to_text(other) {
+            Value::Text(s) => s.to_string(),
+            _ => "[[Undefined]]".to_string(),
+        },
+    }
 }
 
 /// Number of characters in the text.
@@ -288,6 +327,98 @@ fn text_join(sep: Value) -> Value {
 
 
 // ----------------------------------------------------------------------------
+//  Templates
+// ----------------------------------------------------------------------------
+
+/// A piece of a parsed `text.template` template.
+#[derive(Debug, PartialEq)]
+enum Segment {
+    /// Text copied to the output as it is.
+    Literal(String),
+    /// A `{name}` placeholder.
+    Name(String),
+}
+
+/// Splits a template into literal text and `{name}` placeholders.
+///
+/// - `{name}`, where `name` is a Swan name (a letter or `_`, then letters,
+///   digits or `_`), is a placeholder.
+/// - `{{` stands for `{` and `}}` for `}`.
+/// - Any other `{` or `}` is literal text, so a template never fails to parse.
+fn parse_template(template: &str) -> Vec<Segment> {
+    let mut segments = Vec::new();
+    let mut literal = String::new();
+    let mut rest = template;
+
+    while let Some(ch) = rest.chars().next() {
+        if let Some(after) = rest.strip_prefix("{{") {
+            literal.push('{');
+            rest = after;
+        } else if let Some(after) = rest.strip_prefix("}}") {
+            literal.push('}');
+            rest = after;
+        } else if let Some((name, after)) = placeholder(rest) {
+            if !literal.is_empty() {
+                segments.push(Segment::Literal(std::mem::take(&mut literal)));
+            }
+            segments.push(Segment::Name(name.to_string()));
+            rest = after;
+        } else {
+            literal.push(ch);
+            rest = &rest[ch.len_utf8()..];
+        }
+    }
+    if !literal.is_empty() {
+        segments.push(Segment::Literal(literal));
+    }
+    segments
+}
+
+/// If `s` starts with a `{name}` placeholder, returns the name and the text
+/// after the closing `}`.
+fn placeholder(s: &str) -> Option<(&str, &str)> {
+    let body = s.strip_prefix('{')?;
+    let end = body.find('}')?;
+    let name = &body[..end];
+    let mut chars = name.chars();
+    let first = chars.next()?;
+    let is_name = (first == '_' || first.is_alphabetic())
+        && chars.all(|c| c == '_' || c.is_alphanumeric());
+    is_name.then(|| (name, &body[end + 1..]))
+}
+
+/// Curried: `text.template tpl ns` replaces each `{name}` placeholder of `tpl`
+/// with the text of `ns.name`, converted as a Texl tag renders it
+/// ([`to_rendered_text`]): a missing name is `Nothing`, so it gives an empty
+/// text. The template is parsed once, when `text.template` is applied to it.
+/// The returned function maps over a tuple of namespaces; anything else that
+/// is not a namespace gives `Undefined`.
+fn text_template(template: Value) -> Value {
+    let segments = match &template {
+        Value::Text(t) => std::rc::Rc::new(parse_template(t)),
+        _ => return Value::undef_unary("text.template", template),
+    };
+    // The segments hold no Swan values, so the cycle collector need not see them.
+    Value::Builtin(BuiltinFn::new("text.template", move |arg| {
+        let segments = segments.clone();
+        arg.map(move |item| match item {
+            Value::Namespace(ns) => {
+                let mut out = String::new();
+                for segment in segments.iter() {
+                    match segment {
+                        Segment::Literal(s) => out.push_str(s),
+                        Segment::Name(n) => out.push_str(&to_rendered_text(ns.get(n))),
+                    }
+                }
+                Value::Text(out.into())
+            }
+            other => Value::undef_unary("text.template", other),
+        })
+    }))
+}
+
+
+// ----------------------------------------------------------------------------
 //  UNIT TESTS
 // ----------------------------------------------------------------------------
 
@@ -349,6 +480,83 @@ mod tests {
             Value::Undefined(u) => assert!(u.cause().is_some()),
             other => panic!("expected Undefined, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn text_template() {
+        let text = |s: &str| Value::Text(s.into());
+
+        // The example of the manual
+        assert_eq!(
+            run(r#"tfunc = text.template "My car is {color} and it is from {year}.", tfunc {color: "white", year: 2012}"#),
+            text("My car is white and it is from 2012."),
+        );
+
+        // Values are converted as a tag renders them
+        assert_eq!(run(r#"text.template "{b}|{n}|{l}|{s}" {b: TRUE, n: 1.5, l: [1, 2], s: {x: 1}}"#), text("TRUE|1.5|[[List of 2]]|[[Namespace of 1]]"));
+        assert_eq!(run(r#"text.template "[{t}]" {t: (1, "a", 2)}"#), text("[1, a, 2]"));
+        assert_eq!(run(r#"text.template "[{u}]" {u: [] - []}"#), text("[[[Undefined]]]"));
+        assert_eq!(run(r#"text.template "{m}" {m: {__text__: s -> "M"}}"#), text("M"));
+
+        // A missing name is Nothing: an empty text
+        assert_eq!(run(r#"text.template "[{colour}]" {color: "red"}"#), text("[]"));
+
+        // A name may repeat; names follow Swan's rules
+        assert_eq!(run(r#"text.template "{a}{a}{_b2}{è}" {a: 1, _b2: 2, è: 3}"#), text("1123"));
+
+        // `{{` and `}}` are braces; other braces are literal text
+        assert_eq!(run(r#"text.template "{{a}} {a} }} {{" {a: 1}"#), text("{a} 1 } {"));
+        assert_eq!(run(r#"text.template "{ a } {1a} {a.b} {} {a" {a: 1}"#), text("{ a } {1a} {a.b} {} {a"));
+        assert_eq!(run(r#"text.template "{{{a}}}" {a: 1}"#), text("{1}"));
+
+        // No placeholders, empty template
+        assert_eq!(run(r#"text.template "plain" {}"#), text("plain"));
+        assert_eq!(run(r#"text.template "" {a: 1}"#), text(""));
+
+        // Mapped over tuples of templates and of namespaces
+        assert_eq!(
+            run(r#"text.template ("<{a}>", "[{a}]") {a: 1}"#),
+            Value::tuple(vec![text("<1>"), text("[1]")]),
+        );
+        assert_eq!(
+            run(r#"text.template "<{a}>" ({a: 1}, {a: 2})"#),
+            Value::tuple(vec![text("<1>"), text("<2>")]),
+        );
+        assert_eq!(run(r#"text.template "<{a}>" ()"#), Value::Nothing);
+        assert_eq!(run("text.template ()"), Value::Nothing);
+
+        // Wrong arguments give Undefined, placed at the call
+        for (src, desc, pos) in [
+            ("text.template 1", "`text.template` is not defined for the number `1`", 14),
+            (r#"text.template "{a}" [1]"#, "`text.template` is not defined for a list", 20),
+            (r#"t = text.template "{a}", t "x""#, r#"`text.template` is not defined for the text `"x"`"#, 27),
+        ] {
+            match run(src) {
+                Value::Undefined(u) => {
+                    assert_eq!(u.describe(), desc, "{src}");
+                    assert_eq!(u.pos(), Some(pos), "{src}");
+                }
+                other => panic!("{src}: expected Undefined, got {other:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn parse_template_segments() {
+        use Segment::*;
+        assert_eq!(
+            parse_template("a{x}b{{c}}{y}"),
+            vec![Literal("a".into()), Name("x".into()), Literal("b{c}".into()), Name("y".into())],
+        );
+        assert_eq!(parse_template(""), vec![]);
+    }
+
+    #[test]
+    fn rendered_text() {
+        assert_eq!(to_rendered_text(Value::Nothing), "");
+        assert_eq!(to_rendered_text(Value::tuple(vec![Value::Numb(1.0), Value::Text("a".into())])), "1, a");
+        let pending = crate::value::Promise::new();
+        assert_eq!(to_rendered_text(Value::Promise(pending)), "[[Pending Promise]]");
     }
 
     #[test]

@@ -244,6 +244,20 @@ class FunctionTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(text["split"](",")("a,b"), ("a", "b"))
         self.assertEqual(repr(text["upper"]), "<pytexl.Function text.upper>")
 
+    async def test_text_template(self):
+        tfunc = self.context.get("text")["template"]("My car is {color} and it is from {year}.")
+        self.assertIsInstance(tfunc, pytexl.Function)
+        # A dict is a namespace; integral numbers render without decimals
+        self.assertEqual(tfunc({"color": "white", "year": 2012}), "My car is white and it is from 2012.")
+        # A missing name renders nothing; a list of dicts is not a namespace
+        self.assertEqual(tfunc({"colour": "white", "year": 2012}), "My car is  and it is from 2012.")
+        self.assertIsInstance(tfunc([{"color": "white"}]), pytexl.Undefined)
+        # A template made in Swan, filled with Python values
+        self.context.set("car", {"color": "red", "year": 1999})
+        result = await self.context.render('<% card = text.template "{color}/{year}" %><% card car %>')
+        self.assertEqual(result.text, "red/1999")
+        self.assertEqual(self.context.get("card")({"color": "blue"}), "blue/")
+
     async def test_invalid_calls_return_undefined(self):
         await self.context.render("<% double = x -> x * 2 %>")
         result = self.context.get("double")("a")

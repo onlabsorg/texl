@@ -165,6 +165,7 @@ Currying and closures:<% inc = (a -> b -> a + b) 1, scale = factor -> (v -> v * 
   text.join "-" ("a", "b", "c")  -> <% text.join "-" ("a", "b", "c") %>
   text.enum "abc"                -> <% text.enum "abc" %>
   text.from 42 + "!"             -> <% text.from 42 + "!" %>
+  text.template "{n}/{d}" {n: 1, d: 4}  -> <% text.template "{n}/{d}" {n: 1, d: 4} %>
   numb.from "41" + 1             -> <% numb.from "41" + 1 %>
   bool.from ""                   -> <% bool.from "" %>
   bool.any (0, 1)                -> <% bool.any (0, 1) %>

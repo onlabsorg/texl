@@ -65,7 +65,7 @@
 //! # }
 //! ```
 
-use swan_core::builtins::to_text;
+use swan_core::builtins::to_rendered_text;
 use swan_core::evaluator::eval;
 use swan_core::lexer::Lexer;
 use swan_core::parser::Parser;
@@ -274,7 +274,9 @@ pub async fn render(document: impl Into<Document>, scope: &Scope) -> Rendering {
 
             // Convert evaluated Value into its text representation
             let out_start = text.len();
-            text.push_str(&value_to_string(value.clone()));
+            // Shared with `text.template`; top-level promises are already awaited
+            // here, so `[[Pending Promise]]` only appears for nested ones.
+            text.push_str(&to_rendered_text(value.clone()));
             tags.push(Tag { start: tag_start, end: tag_end, out_start, out_end: text.len(), value });
 
             // Move cursor past the closing delimiter tag
@@ -288,52 +290,6 @@ pub async fn render(document: impl Into<Document>, scope: &Scope) -> Rendering {
     // Append any trailing string fragment after the final tag
     text.push_str(&template[cursor..]);
     Rendering { text, data: scope.namespace(), tags, document }
-}
-
-
-
-/// Converts a Swan [`Value`] into its rendered text form.
-///
-/// Single values go through [`swan_core::builtins::to_text`], the conversion
-/// shared with Swan's `text.from` (including the `__text__` member of
-/// namespaces); a value it cannot convert renders as `[[Undefined]]`. This
-/// function adds only what is specific to templates:
-///
-/// | Value                  | Output                                              |
-/// |------------------------|-----------------------------------------------------|
-/// | `Nothing`              | empty string                                        |
-/// | `Tuple`                | items rendered and joined with `", "`               |
-/// | `Promise` (resolved)   | the rendered resolved value                         |
-/// | `Promise` (pending)    | `[[Pending Promise]]`                               |
-///
-/// Top-level promises are already awaited by [`render`], so `[[Pending Promise]]` can
-/// only appear for promises nested inside other values, such as tuple items.
-fn value_to_string(val: Value) -> String {
-    match val {
-        Value::Nothing => String::new(),
-        Value::Tuple(items) => {
-            let item_strs: Vec<String> = items
-                .iter()
-                .cloned()
-                .map(value_to_string)
-                .collect();
-            item_strs.join(", ")
-        }
-
-        // Non-blocking: read the promise's current value without awaiting it.
-        Value::Promise(promise) => {
-            let inner_value = promise.0.borrow().value.clone();
-            match inner_value {
-                Some(resolved_val) => value_to_string(resolved_val),
-                None => "[[Pending Promise]]".to_string(),
-            }
-        }
-
-        other => match to_text(other) {
-            Value::Text(s) => s.to_string(),
-            _ => "[[Undefined]]".to_string(),
-        },
-    }
 }
 
 

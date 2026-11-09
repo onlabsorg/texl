@@ -149,6 +149,7 @@ Currying and closures:
   text.join "-" ("a", "b", "c")  -> a-b-c
   text.enum "abc"                -> a, b, c
   text.from 42 + "!"             -> 42!
+  text.template "{n}/{d}" {n: 1, d: 4}  -> 1/4
   numb.from "41" + 1             -> 42
   bool.from ""                   -> FALSE
   bool.any (0, 1)                -> TRUE
