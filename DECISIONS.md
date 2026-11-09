@@ -379,3 +379,43 @@ function serve many namespaces. Allowing only text keeps `text.from`
 synchronous and stops a hook from looping by returning its own namespace. A
 visible member, unlike hidden metadata, survives a round trip through Python
 or JavaScript, so a host can build such values.
+
+## T18 — 2026-11-09 — A loader may give a document's final URL
+
+A loader returns the source of a document and, optionally, its *final URL*,
+the way an HTTP redirect does: `Loaded {url, source}` in Rust, `{url, source}`
+in JavaScript, `(final_url, source)` in Python; a bare string still means the
+requested URL. The final URL resolves against the requested one and is
+normalized like it. The document is the one at its final URL: its `uri`, the
+base of its relative imports and its key in the import cache. A requested URL
+whose final URL differs becomes an alias of it for the rest of the rendering,
+so it is fetched once; the document at the final URL renders once, whatever
+URLs lead to it. While a URL is fetched, its importers wait for it under that
+URL and share one promise, as before; after the fetch, if the document at the
+final URL is pending and waits for them, the import resolves to `Undefined`
+(`import.cycle`), otherwise their wait-for edges move to the final URL. The
+HTTP loaders of both bindings return the URL after redirects
+(`response.url`, `geturl()`), so `pytexl.loaders.load_http` now returns
+`(final_url, source)`. `fetch` returns the final URL with the source:
+`Fetched {url, source}` in Rust, `{url, source}` (`TexlFetched`) in
+JavaScript, a `Fetched(url, source)` named tuple in Python; so `load(uri)` is
+`render` of what `fetch(uri)` returns, and `load` gives the final URL as the
+document's `uri`. `Engine::render(url, source)` is unchanged: no loader
+runs for the root.
+*Reason:* the engine took a document's identity from the URL it requested,
+before the loader ran, so a host that gives a URL a meaning of its own (Stilo's
+`~` for the project home) chose which file was read but not which document it
+was: a library importing itself through `~` asked for a longer URL at every
+turn and never closed the cycle, two paths to one library rendered it twice,
+and relative imports resolved from the alias. Resolving first and identifying
+by the result is what module systems (Node.js) and HTTP do, and Texl still
+gives no path segment a meaning. `fetch` returns the final URL too, at the
+cost of compatibility, so that a host that fetches a source and renders it
+later (an editor) renders it as the right document. Keeping one shared promise per requested URL
+keeps promise identity (`a == b` for two concurrent imports of one URL) exactly
+as it was when no loader redirects; the price is that importers sharing the
+fetch of a URL that turns out to close a cycle all get `Undefined`, not only
+those in the cycle. A cycle through a redirect is found after one fetch
+instead of before it, and an importer that does not wait for its import may
+finish first and then get the finished document, as any import of a finished
+document does.

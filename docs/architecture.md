@@ -103,8 +103,9 @@ Everything is `Rc`-based and single-threaded. See
   returns a promise: `helpers::promise_async` turns a Rust future into one;
   the bindings turn JavaScript promises and Python awaitables into Swan
   promises.
-- **Loaders** are async functions from a URL to the source text, chosen by
-  the URL's scheme. The engine has none by default.
+- **Loaders** are async functions from a URL to the source text, and
+  optionally the document's final URL, chosen by the URL's scheme. The engine
+  has none by default.
 - **The spawner** is how the engine runs background tasks (imports, and the
   futures of `promise_async`). Without one, tasks wait in a thread-local queue
   that `helpers::run_pending` drains.

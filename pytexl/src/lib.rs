@@ -18,10 +18,11 @@ mod runtime;
 
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
+use pyo3::types::PyTuple;
 use texl_core::document::char_offset;
-use swan_core::value::{Scope, Value};
+use swan_core::value::{Namespace, Scope, Value};
 use texl_core::helpers::spawner_fn;
-use texl_core::{Engine, LoaderFn, loader_fn, template};
+use texl_core::{Engine, Loaded, LoaderFn, loader_fn, template};
 use url::Url;
 
 use convert::{Function, Promise, Undefined, for_each_entry, py_to_swan};
@@ -80,8 +81,9 @@ impl NativeEngine {
         resolve_document_url(uri, &self.base_url).map_err(PyValueError::new_err)
     }
 
-    /// Returns a promise of the source of the document at `uri` (resolved against the base
-    /// URL), or of an Undefined holding the reason if it cannot be fetched.
+    /// Returns a promise of `{url, source}`, the final URL and the source of the document at
+    /// `uri` (resolved against the base URL), or of an Undefined holding the reason if it
+    /// cannot be fetched.
     ///
     /// Raises:
     ///     ValueError: If `uri` cannot be resolved to a URL.
@@ -90,7 +92,16 @@ impl NativeEngine {
         let engine = self.engine.clone();
         Ok(Promise {
             inner: runtime::promise_of(async move {
-                engine.fetch(&url).await.map_or_else(|undefined| undefined, |source| Value::Text(source.into()))
+                engine.fetch(&url).await.map_or_else(
+                    |undefined| undefined,
+                    |fetched| {
+                        let ns: Namespace = [
+                            ("url", Value::Text(fetched.url.into())),
+                            ("source", Value::Text(fetched.source.into())),
+                        ].into_iter().collect();
+                        Value::Namespace(ns)
+                    },
+                )
             }),
         })
     }
@@ -162,8 +173,9 @@ impl NativeContext {
     }
 }
 
-/// Wraps a Python loader: a callable that takes the URI and returns the source, or an
-/// awaitable of it. An exception, or a result that is not a string, is a failed load.
+/// Wraps a Python loader: a callable that takes the URI and returns the source, or a tuple
+/// `(final_url, source)`, or an awaitable of either. An exception, or another result, is a
+/// failed load.
 fn py_loader(loader: Py<PyAny>) -> LoaderFn {
     let loader = std::rc::Rc::new(loader);
     loader_fn(move |uri| {
@@ -176,8 +188,15 @@ fn py_loader(loader: Py<PyAny>) -> LoaderFn {
             } else {
                 result
             };
-            Python::attach(|py| source.bind(py).extract::<String>())
-                .map_err(|_| "the loader did not return a string".to_string())
+            Python::attach(|py| {
+                let source = source.bind(py);
+                if let Ok(source) = source.extract::<String>() {
+                    return Some(Loaded::from(source));
+                }
+                let (url, source) = source.cast::<PyTuple>().ok()?.extract::<(String, String)>().ok()?;
+                Some(Loaded::redirected(url, source))
+            })
+            .ok_or_else(|| "the loader did not return a string or a (final_url, source) tuple".to_string())
         }
     })
 }

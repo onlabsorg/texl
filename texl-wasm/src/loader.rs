@@ -10,7 +10,7 @@
 
 use std::rc::Rc;
 
-use texl_core::{LoaderFn, loader_fn};
+use texl_core::{Loaded, LoaderFn, loader_fn};
 use url::Url;
 use wasm_bindgen::prelude::*;
 use wasm_bindgen_futures::JsFuture;
@@ -29,12 +29,16 @@ extern "C" {
     #[wasm_bindgen(method, getter)]
     fn status(this: &Response) -> u16;
 
+    #[wasm_bindgen(method, getter)]
+    fn url(this: &Response) -> String;
+
     #[wasm_bindgen(method, catch)]
     fn text(this: &Response) -> Result<js_sys::Promise, JsValue>;
 }
 
-/// Fetches the document at the absolute `url`. Non-2xx responses are errors.
-pub async fn load_http(url: String) -> Result<String, String> {
+/// Fetches the document at the absolute `url`. Non-2xx responses are errors. The final URL
+/// of the document is the URL of the response, after the redirects `fetch` followed.
+pub async fn load_http(url: String) -> Result<Loaded, String> {
     let fail = |err: JsValue| crate::convert::js_string(&err).unwrap_or_else(|_| "unknown error".to_string());
 
     let response: Response = JsFuture::from(fetch(&url).map_err(fail)?)
@@ -44,13 +48,16 @@ pub async fn load_http(url: String) -> Result<String, String> {
     if !response.ok() {
         return Err(format!("HTTP status {}", response.status()));
     }
+    let final_url = Some(response.url()).filter(|url| !url.is_empty());
     let text = JsFuture::from(response.text().map_err(fail)?).await.map_err(fail)?;
-    text.as_string().ok_or_else(|| "the response is not text".to_string())
+    let source = text.as_string().ok_or_else(|| "the response is not text".to_string())?;
+    Ok(Loaded { url: final_url, source })
 }
 
-/// Wraps a JavaScript loader: a function that takes the URI and returns the source, or a
-/// promise (or any thenable) of it. A throw, a rejection, or a result that is not a string
-/// is a failed load, whose reason is the text of the error.
+/// Wraps a JavaScript loader: a function that takes the URI and returns the source, or
+/// `{url, source}` with the final URL of the document (`url` may be missing or `null`), or a
+/// promise (or any thenable) of either. A throw, a rejection, or another result is a failed
+/// load, whose reason is the text of the error.
 pub fn js_loader(loader: js_sys::Function) -> LoaderFn {
     let loader = Rc::new(loader);
     loader_fn(move |uri| {
@@ -59,10 +66,28 @@ pub fn js_loader(loader: js_sys::Function) -> LoaderFn {
         async move {
             let fail = |err: JsValue| crate::convert::js_string(&err).unwrap_or_else(|_| "unknown error".to_string());
             let result = called.map_err(fail)?;
-            let source = JsFuture::from(js_sys::Promise::resolve(&result)).await.map_err(fail)?;
-            source.as_string().ok_or_else(|| "the loader did not return a string".to_string())
+            let loaded = JsFuture::from(js_sys::Promise::resolve(&result)).await.map_err(fail)?;
+            js_loaded(&loaded).ok_or_else(|| "the loader did not return a string or {url, source}".to_string())
         }
     })
+}
+
+/// Reads the result of a JavaScript loader: a string, or `{url, source}`
+fn js_loaded(value: &JsValue) -> Option<Loaded> {
+    if let Some(source) = value.as_string() {
+        return Some(Loaded::from(source));
+    }
+    if !value.is_object() {
+        return None;
+    }
+    let get = |name: &str| js_sys::Reflect::get(value, &JsValue::from_str(name)).ok();
+    let source = get("source")?.as_string()?;
+    let url = match get("url") {
+        Some(url) if url.is_undefined() || url.is_null() => None,
+        Some(url) => Some(url.as_string()?),
+        None => None,
+    };
+    Some(Loaded { url, source })
 }
 
 /// Resolves the URI of a document loaded by the host against `base` (the page URL, by default).

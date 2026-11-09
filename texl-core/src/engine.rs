@@ -64,9 +64,16 @@
 //!   renders: the next rendering fetches its imports again.
 //! - The cache key is the resolved URL without its fragment, so `doc.texl#a`
 //!   and `doc.texl#b` are one document. The query is kept as it is.
+//! - A loader may return the *final URL* of a document, the way an HTTP
+//!   redirect does (see [`Loaded`]). The document is then the one at its
+//!   final URL: that is its `uri`, the base of its relative imports and its
+//!   key in the cache. Imports of different URLs with the same final URL share
+//!   one document; each requested URL is fetched once per rendering, and kept
+//!   as an alias of its final URL.
 //! - An import that would wait for a document that is itself waiting for the
-//!   importer (a cycle, such as a document importing itself) returns
-//!   `Undefined` instead of a promise.
+//!   importer (a cycle, such as a document importing itself) gives `Undefined`
+//!   instead of the document: right away, or, when the cycle goes through a
+//!   final URL, once that URL is fetched.
 //!
 //! # Example
 //!
@@ -117,33 +124,102 @@ use crate::template;
 /// The engine calls it with the normalized URL of the document, without
 /// fragment: a full URL (`https://host/dir/doc.texl`) for scheme loaders, or
 /// an absolute, percent-encoded path (`/dir/doc.texl`) for the default loader.
-/// The future resolves to the template source, or to an error message, which
-/// need not repeat the URL. A failed load gives an `Undefined` holding the URL
-/// and the message (see [`Engine::fetch`]).
+/// The future resolves to a [`Loaded`] (the template source and, optionally,
+/// the final URL of the document), or to an error message, which need not
+/// repeat the URL. A failed load gives an `Undefined` holding the URL and the
+/// message (see [`Engine::fetch`]).
 ///
 /// The engine does not cache sources. A host that wants to can wrap its
 /// loaders.
 ///
 /// Build one from an async closure with [`loader_fn`].
-pub type LoaderFn = Rc<dyn Fn(&str) -> Pin<Box<dyn Future<Output = Result<String, String>>>>>;
+pub type LoaderFn = Rc<dyn Fn(&str) -> Pin<Box<dyn Future<Output = Result<Loaded, String>>>>>;
+
+/// What a loader returns: the source of a document and, optionally, its final URL.
+///
+/// The final URL works like the target of an HTTP redirect: it is the URL the
+/// document really has, which the engine uses as its identity. The document's
+/// `uri` is the final URL, its relative imports resolve against it, and within
+/// one rendering, imports whose URLs lead to the same final URL share one
+/// document (see the [module documentation](self)). A loader that resolves
+/// paths (a symbolic link, an alias such as a project-home segment, a server
+/// that redirects) returns the URL it resolved to. `None` means the URL the
+/// loader was called with.
+///
+/// The final URL resolves against the requested one, like an HTTP `Location`,
+/// and is normalized like a requested URL (see [`Engine::fetch`]).
+///
+/// A `String` converts into a `Loaded` with no final URL, so a loader built
+/// with [`loader_fn`] may return either.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Loaded {
+    /// The final URL of the document, or `None` for the URL the loader was called with
+    pub url: Option<String>,
+    /// The template source
+    pub source: String,
+}
+
+impl Loaded {
+    /// The source of the document at the final URL `url`.
+    pub fn redirected(url: impl Into<String>, source: impl Into<String>) -> Self {
+        Self { url: Some(url.into()), source: source.into() }
+    }
+}
+
+impl From<String> for Loaded {
+    fn from(source: String) -> Self {
+        Self { url: None, source }
+    }
+}
+
+impl From<&str> for Loaded {
+    fn from(source: &str) -> Self {
+        Self { url: None, source: source.to_string() }
+    }
+}
+
+/// What [`Engine::fetch`] returns: the final URL of a document and its source.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Fetched {
+    /// The normalized final URL of the document: the one its loader returned,
+    /// or the requested URL if the loader returned none
+    pub url: String,
+    /// The template source
+    pub source: String,
+}
 
 /// Builds a [`LoaderFn`] from a closure that takes the URI and returns a future.
+///
+/// The future resolves to the source (a `String`) or to a [`Loaded`] with a
+/// final URL, or to an error message.
 ///
 /// # Examples
 ///
 /// ```
-/// use texl_core::loader_fn;
+/// use texl_core::{Loaded, loader_fn};
 ///
 /// let loader = loader_fn(|uri| async move {
 ///     Ok(format!("This is <% \"{uri}\" %>"))
 /// });
+///
+/// // `/latest.texl` is the document at `/v2.texl`
+/// let redirecting = loader_fn(|uri| async move {
+///     match uri.as_str() {
+///         "/latest.texl" | "/v2.texl" => Ok(Loaded::redirected("/v2.texl", "version 2")),
+///         _ => Err("not found".to_string()),
+///     }
+/// });
 /// ```
-pub fn loader_fn<F, Fut>(f: F) -> LoaderFn
+pub fn loader_fn<F, Fut, T>(f: F) -> LoaderFn
 where
     F: Fn(String) -> Fut + 'static,
-    Fut: Future<Output = Result<String, String>> + 'static,
+    Fut: Future<Output = Result<T, String>> + 'static,
+    T: Into<Loaded>,
 {
-    Rc::new(move |uri: &str| Box::pin(f(uri.to_string())))
+    Rc::new(move |uri: &str| {
+        let loading = f(uri.to_string());
+        Box::pin(async move { loading.await.map(Into::into) })
+    })
 }
 
 /// Renders and loads documents. See the [module documentation](self).
@@ -161,13 +237,30 @@ pub struct Engine {
 /// The documents of one rendering: its import cache and its wait-for graph.
 #[derive(Default)]
 struct Imports {
-    /// The documents of the rendering, by URL without fragment, as promises of their namespaces
+    /// The documents of the rendering, by URL without fragment, as promises of their
+    /// namespaces: documents by final URL, and URLs being fetched, whose final URL is not
+    /// known yet
     docs: HashMap<String, Promise>,
+    /// The requested URLs whose document has another final URL, with that URL
+    aliases: HashMap<String, String>,
     /// The wait-for graph: `waits[x]` holds the URLs of the pending documents that `x` waits for
     waits: HashMap<String, HashSet<String>>,
 }
 
 impl Imports {
+    /// Makes the document at `importer` wait for `doc`, the document at `url`. Returns the
+    /// promise of the document, or `Undefined` if waiting would never end: `doc` is pending
+    /// and waits for the importer, directly or not.
+    fn wait(&mut self, importer: &str, url: &str, doc: &Promise) -> Value {
+        if doc.0.borrow().value.is_none() {
+            if self.reaches(url, importer) {
+                return Value::undef_unary("import.cycle", Value::Text(url.into()));
+            }
+            self.waits.entry(importer.to_string()).or_default().insert(url.to_string());
+        }
+        Value::Promise(doc.clone())
+    }
+
     /// Whether the document at `from` is the one at `to`, or waits for it, directly or not
     fn reaches(&self, from: &str, to: &str) -> bool {
         let mut stack = vec![from];
@@ -189,6 +282,15 @@ impl Imports {
     fn resolved(&mut self, url: &str) {
         for targets in self.waits.values_mut() {
             targets.remove(url);
+        }
+    }
+
+    /// Moves the edges into `from` to `to`, once `from` is known to be the document at `to`
+    fn redirect(&mut self, from: &str, to: &str) {
+        for targets in self.waits.values_mut() {
+            if targets.remove(from) {
+                targets.insert(to.to_string());
+            }
         }
     }
 }
@@ -240,17 +342,20 @@ impl Engine {
         *self.default_loader.borrow_mut() = Some(loader);
     }
 
-    /// Returns the source of the document at `url`.
+    /// Returns the source of the document at `url`, and its final URL.
     ///
     /// The URL is normalized (a scheme-less path becomes absolute, so `doc.texl`
     /// is `/doc.texl`, and the fragment is removed), then passed to the loader
     /// of its scheme, or to the default loader if it has none. Nothing is
     /// cached: every call runs the loader.
     ///
-    /// Returns the source. If no loader matches the URL or the loader fails, the
-    /// error is an `Undefined` value of the operation `document.load`, with the
-    /// normalized URL in `lhv` and the reason in `rhv`: the loader's message, or
-    /// `"no loader for this URL"`. [`Engine::load`] returns the same error, and
+    /// Returns the source and the final URL of the document: the URL the loader
+    /// returned (see [`Loaded`]), resolved against the normalized URL and
+    /// normalized the same way, or the normalized URL itself. If no loader
+    /// matches the URL or the loader fails, the error is an `Undefined` value of
+    /// the operation `document.load`, with the normalized URL in `lhv` and the
+    /// reason in `rhv`: the loader's message, `"no loader for this URL"`, or
+    /// `"invalid final URL ..."`. [`Engine::load`] returns the same error, and
     /// `texl.import` gives this value to the template.
     ///
     /// # Examples
@@ -261,7 +366,9 @@ impl Engine {
     /// let engine = Engine::new(None);
     /// engine.add_loader("mem", loader_fn(|uri| async move { Ok(format!("source of {uri}")) }));
     ///
-    /// assert_eq!(block_on(engine.fetch("mem://doc#part")), Ok("source of mem://doc".to_string()));
+    /// let fetched = block_on(engine.fetch("mem://doc#part")).unwrap();
+    /// assert_eq!(fetched.url, "mem://doc");
+    /// assert_eq!(fetched.source, "source of mem://doc");
     /// assert!(block_on(engine.fetch("ftp://host/doc")).is_err());
     /// # use std::{future::Future, pin::pin, task::{Context, Poll, Waker}};
     /// # fn block_on<F: Future>(fut: F) -> F::Output {
@@ -273,17 +380,23 @@ impl Engine {
     /// #     }
     /// # }
     /// ```
-    pub async fn fetch(&self, url: &str) -> Result<String, Value> {
+    pub async fn fetch(&self, url: &str) -> Result<Fetched, Value> {
         let url = normalize_url(url);
         let loader = match Url::parse(&url) {
             Ok(parsed) => self.loaders.borrow().get(parsed.scheme()).cloned(),
             Err(_) => self.default_loader.borrow().clone(),
         };
-        let source = match loader {
+        let loaded = match loader {
             Some(loader) => loader(&url).await,
             None => Err("no loader for this URL".to_string()),
         };
-        source.map_err(|reason| {
+        let fetched = loaded.and_then(|Loaded { url: final_url, source }| match final_url {
+            None => Ok(Fetched { url: url.clone(), source }),
+            Some(final_url) => resolve_url(&final_url, &url)
+                .map(|url| Fetched { url, source })
+                .map_err(|err| format!("invalid final URL `{final_url}`: {err}")),
+        });
+        fetched.map_err(|reason| {
             Value::undef_binary("document.load", Value::Text(url.as_str().into()), Value::Text(reason.into()))
         })
     }
@@ -354,7 +467,7 @@ impl Engine {
     }
 
     /// Fetches and renders the document at `url`: [`Engine::fetch`] followed by
-    /// [`Engine::render`].
+    /// [`Engine::render`] of the source as the document at its final URL.
     ///
     /// # Returns
     ///
@@ -386,8 +499,8 @@ impl Engine {
     /// # }
     /// ```
     pub async fn load(&self, url: &str) -> Result<Value, Value> {
-        let source = self.fetch(url).await?;
-        Ok(self.render(url, &source).await)
+        let fetched = self.fetch(url).await?;
+        Ok(self.render(&fetched.url, &fetched.source).await)
     }
 
     /// Creates a new scope with the built-ins and the globals of the engine.
@@ -480,19 +593,20 @@ impl Engine {
         }))
     }
 
-    /// Imports the document at the normalized `url` for the document at `importer`
+    /// Imports the document at the normalized `url` for the document at `importer`.
+    ///
+    /// A document is known by its final URL only once it is fetched. Until then it is in the
+    /// cache under the requested URL, and concurrent imports of that URL share its promise.
+    /// If the final URL is the requested one, the document renders under it, as it is. If
+    /// not, the requested URL becomes an alias: its promise follows the document at the final
+    /// URL (rendered under it, unless it is in the cache already), or resolves to `Undefined`
+    /// if waiting for that document would never end.
     fn import(&self, imports: &Rc<RefCell<Imports>>, importer: &str, url: String) -> Value {
         let mut state = imports.borrow_mut();
+        let url = state.aliases.get(&url).cloned().unwrap_or(url);
 
         if let Some(doc) = state.docs.get(&url).cloned() {
-            if doc.0.borrow().value.is_none() {
-                // Waiting for a document that waits for the importer would never end
-                if state.reaches(&url, importer) {
-                    return Value::undef_unary("import.cycle", Value::Text(url.into()));
-                }
-                state.waits.entry(importer.to_string()).or_default().insert(url);
-            }
-            return Value::Promise(doc);
+            return state.wait(importer, &url, &doc);
         }
 
         // Cache the promise before the import starts, so concurrent imports share it
@@ -505,20 +619,70 @@ impl Engine {
         let imports = imports.clone();
         let promise = doc.clone();
         let task = Box::pin(async move {
-            let result = match engine.fetch(&url).await {
-                Ok(source) => engine.render_document(&imports, &url, &source).await,
+            let (final_url, source) = match engine.fetch(&url).await {
+                Ok(Fetched { url: final_url, source }) => (final_url, source),
                 Err(undefined) => {
                     // A failed load is not cached: a later import tries again
-                    imports.borrow_mut().docs.remove(&url);
-                    undefined
+                    let mut state = imports.borrow_mut();
+                    state.docs.remove(&url);
+                    state.resolved(&url);
+                    drop(state);
+                    promise.resolve(undefined);
+                    return;
                 }
             };
-            imports.borrow_mut().resolved(&url);
-            promise.resolve(result);
+
+            let target = if final_url == url {
+                promise.clone()
+            } else {
+                let (render, result) = engine.redirect(&imports, &url, &final_url);
+                match result {
+                    Value::Promise(doc) => drop(doc.then(move |value| {
+                        promise.resolve(value);
+                        Value::Nothing
+                    })),
+                    other => promise.resolve(other),
+                }
+                match render {
+                    Some(target) => target,
+                    None => return,
+                }
+            };
+
+            let result = engine.render_document(&imports, &final_url, &source).await;
+            imports.borrow_mut().resolved(&final_url);
+            target.resolve(result);
         });
         spawn(self.spawner.borrow().as_ref(), task);
 
         Value::Promise(doc)
+    }
+
+    /// Makes the requested `url`, just fetched, an alias of its `final_url`. Returns the
+    /// promise of the document to render under `final_url` if it is not in the cache yet,
+    /// and what the imports of `url` get: the promise of the document at `final_url`, or
+    /// `Undefined` if that document waits for them (a cycle, found after the fetch).
+    fn redirect(&self, imports: &Rc<RefCell<Imports>>, url: &str, final_url: &str) -> (Option<Promise>, Value) {
+        let mut state = imports.borrow_mut();
+        state.docs.remove(url);
+        state.aliases.insert(url.to_string(), final_url.to_string());
+
+        let (doc, render) = match state.docs.get(final_url) {
+            Some(doc) => (doc.clone(), None),
+            None => {
+                let doc = Promise::new();
+                state.docs.insert(final_url.to_string(), doc.clone());
+                (doc.clone(), Some(doc))
+            }
+        };
+
+        // The imports of `url` wait for it: a cycle if the document at `final_url` does too
+        if doc.0.borrow().value.is_none() && state.reaches(final_url, url) {
+            state.resolved(url);
+            return (render, Value::undef_unary("import.cycle", Value::Text(final_url.into())));
+        }
+        state.redirect(url, final_url);
+        (render, Value::Promise(doc))
     }
 }
 
@@ -691,6 +855,46 @@ mod tests {
 
     const RENDERING: &str = "~> (ns -> ns.text)";
 
+    /// Builds an engine whose default loader resolves a `~` segment the way a project home
+    /// does: `.../~/rest` is the document at `/p/rest`, its final URL. Other paths are served
+    /// as they are. Sources come from `docs`, keyed by final URL; the loader records every URL
+    /// it is asked to load.
+    fn engine_with_home(docs: &[(&str, &str)]) -> (Engine, Rc<RefCell<Vec<String>>>) {
+        let engine = Engine::new(None);
+        let docs: Rc<HashMap<String, String>> = Rc::new(
+            docs.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect(),
+        );
+        let requested = Rc::new(RefCell::new(Vec::new()));
+        let r = requested.clone();
+        engine.add_default_loader(loader_fn(move |uri| {
+            r.borrow_mut().push(uri.clone());
+            let final_url = match uri.rfind("/~/") {
+                Some(i) => format!("/p/{}", &uri[i + 3..]),
+                None => uri.clone(),
+            };
+            let res = match docs.get(&final_url) {
+                Some(source) if final_url != uri => Ok(Loaded::redirected(final_url, source.as_str())),
+                Some(source) => Ok(Loaded::from(source.as_str())),
+                None => Err(format!("not found: {}", uri)),
+            };
+            async move { res }
+        }));
+        (engine, requested)
+    }
+
+    /// The `uri` field of a document namespace
+    fn uri(doc: Value) -> Value {
+        unwrap_namespace(doc).get("uri")
+    }
+
+    /// The value of a resolved promise, or the value itself if it is not a promise
+    fn settled(value: Value) -> Value {
+        match value {
+            Value::Promise(p) => p.0.borrow().value.clone().expect("a resolved promise"),
+            other => other,
+        }
+    }
+
     // --- Tests ---
 
     #[test]
@@ -749,8 +953,9 @@ mod tests {
     fn test_engine_fetch_returns_the_source_or_none() {
         let (engine, requested) = engine_with_docs(&[("/a.texl", "A"), ("http://example.com/b.texl", "B")]);
 
-        assert_eq!(block_on(engine.fetch("a.texl#part")), Ok("A".to_string()));
-        assert_eq!(block_on(engine.fetch("http://example.com/b.texl")), Ok("B".to_string()));
+        let fetched = |url: &str, source: &str| Ok(Fetched { url: url.into(), source: source.into() });
+        assert_eq!(block_on(engine.fetch("a.texl#part")), fetched("/a.texl", "A"));
+        assert_eq!(block_on(engine.fetch("http://example.com/b.texl")), fetched("http://example.com/b.texl", "B"));
         assert!(block_on(engine.fetch("/missing.texl")).is_err());
         assert!(block_on(engine.fetch("ftp://example.com/c.texl")).is_err());
         assert_eq!(*requested.borrow(), vec!["/a.texl", "http://example.com/b.texl", "/missing.texl"]);
@@ -782,7 +987,7 @@ mod tests {
         let (engine, _) = engine_with_docs(&[("/a/main.texl", &main), ("/a/lib.texl", "lib")]);
 
         let loaded = unwrap_namespace(block_on(engine.load("/a/main.texl")).unwrap());
-        let source = block_on(engine.fetch("/a/main.texl")).unwrap();
+        let source = block_on(engine.fetch("/a/main.texl")).unwrap().source;
         let rendered = unwrap_namespace(block_on(engine.render("/a/main.texl", &source)));
 
         for field in ["uri", "source", "text"] {
@@ -1120,6 +1325,158 @@ mod tests {
     }
 
     #[test]
+    fn test_engine_fetch_and_load_give_the_final_url() {
+        let (engine, requested) = engine_with_home(&[("/p/lib/x.texl", "x")]);
+
+        let fetched = block_on(engine.fetch("/p/docs/~/lib/x.texl#top")).unwrap();
+        assert_eq!(fetched, Fetched { url: "/p/lib/x.texl".into(), source: "x".into() });
+        let doc = block_on(engine.load("/p/docs/~/lib/x.texl")).unwrap();
+        assert_eq!(uri(doc), Value::Text("/p/lib/x.texl".into()));
+        assert_eq!(*requested.borrow(), vec!["/p/docs/~/lib/x.texl", "/p/docs/~/lib/x.texl"]);
+    }
+
+    #[test]
+    fn test_engine_final_urls_resolve_against_the_requested_url() {
+        let engine = Engine::new(None);
+        engine.add_loader("http", loader_fn(|uri| async move {
+            Ok(match uri.as_str() {
+                "http://host/a/old.texl" => Loaded::redirected("new.texl#frag", "moved"),
+                "http://host/a/abs.texl" => Loaded::redirected("/b/abs.texl", "moved"),
+                _ => Loaded::redirected("mem://elsewhere", "moved"),
+            })
+        }));
+
+        let final_url = |url: &str| block_on(engine.fetch(url)).unwrap().url;
+        assert_eq!(final_url("http://host/a/old.texl"), "http://host/a/new.texl");
+        assert_eq!(final_url("http://host/a/abs.texl"), "http://host/b/abs.texl");
+        assert_eq!(final_url("http://host/a/other.texl"), "mem://elsewhere");
+    }
+
+    #[test]
+    fn test_engine_self_import_through_a_final_url_is_undefined() {
+        // `b.texl` imports `x/b.texl`, whose final URL is `b.texl` itself, and waits for it
+        let engine = Engine::new(None);
+        let requested = Rc::new(RefCell::new(Vec::new()));
+        let r = requested.clone();
+        engine.add_default_loader(loader_fn(move |uri| {
+            r.borrow_mut().push(uri.clone());
+            let source = r#"<% x = texl.import("x/b.texl") %><% x %>b"#;
+            let res = match uri.as_str() {
+                "/a/b.texl" => Ok(Loaded::from(source)),
+                "/a/x/b.texl" => Ok(Loaded::redirected("/a/b.texl", source)),
+                _ => Err("not found".to_string()),
+            };
+            async move { res }
+        }));
+
+        let doc = block_on(engine.load("/a/b.texl")).unwrap();
+        let Value::Undefined(u) = settled(data(doc.clone()).get("x")) else { panic!() };
+        assert_eq!(u.describe(), "import cycle: `/a/b.texl` is already being imported");
+        assert_eq!(rendering(doc), "[[Undefined]]b");
+        assert_eq!(*requested.borrow(), vec!["/a/b.texl", "/a/x/b.texl"]);
+    }
+
+    #[test]
+    fn test_engine_self_import_through_a_home_segment_ends() {
+        // Each turn would ask for a longer URL: `/p/lib/~/lib/x.texl`, `/p/lib/~/lib/~/lib/...`
+        let x = r#"<% y = texl.import("~/lib/x.texl") %><% y %>x"#;
+        let main = format!(r#"<% texl.import("~/lib/x.texl") ~> (doc -> bind "x" doc) %>"#);
+        let (engine, requested) = engine_with_home(&[("/p/lib/x.texl", x)]);
+
+        let x_doc = data(block_on(engine.render("/p/docs/main.texl", &main))).get("x");
+        assert_eq!(rendering(x_doc.clone()), "[[Undefined]]x");
+        assert!(matches!(settled(data(x_doc).get("y")), Value::Undefined(_)));
+        assert_eq!(*requested.borrow(), vec!["/p/docs/~/lib/x.texl", "/p/lib/~/lib/x.texl"]);
+    }
+
+    #[test]
+    fn test_engine_urls_with_one_final_url_share_one_rendering() {
+        // Three URLs of `/p/lib/x.texl`: two through `~`, from different folders, and its own
+        let main = r#"<% texl.import("~/lib/x.texl") ~> (doc -> bind "a" doc) %><% texl.import("sub/c.texl") ~> (doc -> bind "c" doc) %><% texl.import("../lib/x.texl") ~> (doc -> bind "b" doc) %><% texl.import("~/lib/x.texl") %>"#;
+        let c = r#"<% texl.import("~/lib/x.texl") ~> (doc -> bind "x" doc) %>"#;
+        let (engine, requested) = engine_with_home(&[("/p/lib/x.texl", "x"), ("/p/docs/sub/c.texl", c)]);
+
+        let main_data = data(block_on(engine.render("/p/docs/main.texl", main)));
+        let a = unwrap_namespace(main_data.get("a"));
+        let b = unwrap_namespace(main_data.get("b"));
+        let from_c = unwrap_namespace(data(main_data.get("c")).get("x"));
+
+        assert!(a.ptr_eq(&b) && a.ptr_eq(&from_c));
+        assert_eq!(a.get("uri"), Value::Text("/p/lib/x.texl".into()));
+        // Each requested URL is fetched at most once: `../lib/x.texl` is the final URL of a
+        // document already in the cache, and the last import is an alias already known
+        assert_eq!(*requested.borrow(), vec!["/p/docs/~/lib/x.texl", "/p/docs/sub/c.texl", "/p/docs/sub/~/lib/x.texl"]);
+    }
+
+    #[test]
+    fn test_engine_concurrent_imports_of_one_url_share_one_fetch_and_rendering() {
+        let main = r#"<% pa = texl.import("~/lib/x.texl"), pb = texl.import("~/lib/x.texl") %><% pa == pb %><% pa ~> (doc -> bind "a" doc) %><% pb ~> (doc -> bind "b" doc) %>"#;
+        let (engine, requested) = engine_with_home(&[("/p/lib/x.texl", "x")]);
+
+        let doc = block_on(engine.render("/p/docs/main.texl", main));
+        // One promise, as for any URL
+        assert!(rendering(doc.clone()).starts_with("TRUE"));
+        let main_data = data(doc);
+        assert!(unwrap_namespace(main_data.get("a")).ptr_eq(&unwrap_namespace(main_data.get("b"))));
+        assert_eq!(*requested.borrow(), vec!["/p/docs/~/lib/x.texl"]);
+    }
+
+    #[test]
+    fn test_engine_redirected_documents_import_relative_to_their_final_url() {
+        let x = format!(r#"x<% texl.import("y.texl") {RENDERING} %>"#);
+        let main = format!(r#"<% texl.import("~/lib/x.texl") ~> (doc -> bind "x" doc) %>"#);
+        let (engine, requested) = engine_with_home(&[("/p/lib/x.texl", &x), ("/p/lib/y.texl", "y")]);
+
+        let x_doc = data(block_on(engine.render("/p/docs/main.texl", &main))).get("x");
+        assert_eq!(uri(x_doc.clone()), Value::Text("/p/lib/x.texl".into()));
+        assert_eq!(rendering(x_doc), "xy");
+        assert_eq!(*requested.borrow(), vec!["/p/docs/~/lib/x.texl", "/p/lib/y.texl"]);
+    }
+
+    #[test]
+    fn test_engine_cycles_with_one_redirected_leg_end() {
+        // A imports B through `~`, B imports A by its own URL: found before B waits
+        let a = r#"<% texl.import("~/b.texl") ~> (doc -> bind "b" doc) %>a"#;
+        let b = r#"<% x = texl.import("a.texl") %><% x %>b"#;
+        let (engine, _) = engine_with_home(&[("/p/a.texl", a), ("/p/b.texl", b)]);
+        let b_doc = data(block_on(engine.load("/p/a.texl")).unwrap()).get("b");
+        assert_eq!(rendering(b_doc.clone()), "[[Undefined]]b");
+        assert!(matches!(settled(data(b_doc).get("x")), Value::Undefined(_)));
+
+        // A imports B by its own URL, B imports A through `~`: found after the fetch
+        let a = r#"<% texl.import("b.texl") ~> (doc -> bind "b" doc) %>a"#;
+        let b = r#"<% x = texl.import("~/a.texl") %><% x %>b"#;
+        let (engine, _) = engine_with_home(&[("/p/a.texl", a), ("/p/b.texl", b)]);
+        let b_doc = data(block_on(engine.load("/p/a.texl")).unwrap()).get("b");
+        assert_eq!(rendering(b_doc.clone()), "[[Undefined]]b");
+        assert!(matches!(settled(data(b_doc).get("x")), Value::Undefined(_)));
+    }
+
+    #[test]
+    fn test_engine_a_cycle_through_a_shared_fetch_fails_every_import_sharing_it() {
+        // L and C both import `~/lib/x.texl` (one URL) while it is fetched, and share its
+        // promise; its final URL is L, which waits for it: a cycle, so both get `Undefined`
+        let main = r#"<% pl = texl.import("lib/x.texl"), pc = texl.import("lib/c.texl") %><% pl ~> (doc -> bind "l" doc) %><% pc ~> (doc -> bind "c" doc) %>"#;
+        let l = r#"<% y = texl.import("~/lib/x.texl") %><% y %>l"#;
+        let c = r#"<% texl.import("~/lib/x.texl") ~> (doc -> bind "y" doc) %>c"#;
+        let (engine, requested) = engine_with_home(&[("/p/lib/x.texl", l), ("/p/lib/c.texl", c)]);
+
+        let main_data = data(block_on(engine.render("/p/main.texl", main)));
+        assert!(matches!(settled(data(main_data.get("l")).get("y")), Value::Undefined(_)));
+        assert!(matches!(data(main_data.get("c")).get("y"), Value::Undefined(_)));
+        assert_eq!(requested.borrow().iter().filter(|url| *url == "/p/lib/~/lib/x.texl").count(), 1);
+    }
+
+    #[test]
+    fn test_engine_failed_redirected_imports_are_not_cached() {
+        let main = format!(r#"[<% texl.import("~/missing.texl") {RENDERING} %>][<% texl.import("~/missing.texl") {RENDERING} %>]"#);
+        let (engine, requested) = engine_with_home(&[]);
+
+        assert_eq!(rendering(block_on(engine.render("/p/main.texl", &main))), "[[[Undefined]]][[[Undefined]]]");
+        assert_eq!(*requested.borrow(), vec!["/p/~/missing.texl", "/p/~/missing.texl"]);
+    }
+
+    #[test]
     fn test_engine_failed_imports_are_not_cached() {
         let main = format!(r#"[<% texl.import("missing.texl") {RENDERING} %>][<% texl.import("missing.texl") {RENDERING} %>]"#);
         let (engine, requested) = engine_with_docs(&[]);
@@ -1131,7 +1488,7 @@ mod tests {
     #[test]
     fn test_engine_failed_imports_give_undefined() {
         let engine = Engine::new(None);
-        engine.add_default_loader(loader_fn(|_uri| async { Err("not found".to_string()) }));
+        engine.add_default_loader(loader_fn(|_uri| async { Err::<String, _>("not found".to_string()) }));
 
         // The loader failed: the value says why, and points to the import
         let source = r#"x <% texl.import "missing.texl" %>"#;

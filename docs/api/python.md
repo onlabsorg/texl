@@ -123,8 +123,10 @@ doc = await engine.render(Path("templates/report.texl"), source)   # imports res
 
 A source with no real location can use any URL, for example a file in the
 folder of the documents it imports. `engine.fetch` returns the source of a
-document without rendering it, so `await engine.load(uri)` is
-`await engine.render(uri, await engine.fetch(uri))`.
+document and its [final URL](#your-own-loaders) without rendering it, so
+`await engine.load(uri)` is `await engine.render(*await engine.fetch(uri))`.
+An editor that opens a document with `fetch` and renders its edits with
+`render` passes that URL, so the document keeps its identity.
 
 ## Caching
 
@@ -152,8 +154,8 @@ doc = await engine.load("mem://greeting")
 print(doc.text)                           # Hello Ada!
 ```
 
-If the loader raises an exception, or returns something other than a string,
-the document cannot be loaded. `async` loaders work the same way:
+If the loader raises an exception, or returns something other than a string or
+a `(final_url, source)` tuple, the document cannot be loaded. `async` loaders work the same way:
 
 ```python
 async def load_from_db(uri):
@@ -162,6 +164,26 @@ async def load_from_db(uri):
 
 engine.add_loader("db", load_from_db)
 ```
+
+A loader that resolves URLs returns a tuple `(final_url, source)`, with the
+*final URL* of the document, the way an HTTP redirect gives one. Here `~`
+stands for the folder of a project:
+
+```python
+def load_note(uri):
+    head, sep, rest = uri.rpartition("/~/")
+    if not sep:
+        return notes[uri]
+    final_url = "mem://notes/" + rest
+    return (final_url, notes[final_url])
+```
+
+The document then is the one at its final URL: that is its `uri` and the base
+of its relative imports, and within one rendering, imports of URLs with the
+same final URL share one document (see
+[Final URLs](../language.md#final-urls)). A relative final URL resolves
+against the requested URL. The built-in `loaders.load_http` gives the URL
+after redirects, so a server can resolve paths with a redirect.
 
 A loader runs every time a document is fetched: the engine does not cache
 sources across renders (see [Caching](#caching)). To cache them, wrap the
@@ -450,7 +472,7 @@ previous loader of that scheme, the built-in ones included.
 | Argument | Description                                                      |
 |----------|------------------------------------------------------------------|
 | `scheme` | The URL scheme, without the colon, such as `"mem"`. It is case-insensitive. |
-| `loader` | A function that takes the full URL and returns the source, or an awaitable of it. |
+| `loader` | A function that takes the full URL and returns the source, or `(final_url, source)`, or an awaitable of either. |
 
 ```python
 engine.add_loader("mem", lambda uri: templates[uri])
@@ -469,7 +491,7 @@ does not currently call this loader.
 
 | Argument | Description                                                      |
 |----------|------------------------------------------------------------------|
-| `loader` | A function that takes the path and returns the source, or an awaitable of it. |
+| `loader` | A function that takes the path and returns the source, or `(final_url, source)`, or an awaitable of either. |
 
 ```python
 engine.set_default_loader(lambda path: (root / path.lstrip("/")).read_text())
@@ -478,21 +500,22 @@ engine.set_default_loader(lambda path: (root / path.lstrip("/")).read_text())
 #### `engine.fetch(uri)`
 
 ```python
-async def fetch(uri: str | os.PathLike[str]) -> str
+async def fetch(uri: str | os.PathLike[str]) -> Fetched
 ```
 
-Reads the source of the document at `uri`, without rendering it. Nothing is
-cached: every call runs the loader again.
+Reads the source of the document at `uri` and its final URL, without
+rendering it. Nothing is cached: every call runs the loader again.
 
 | Argument | Description                                                          |
 |----------|----------------------------------------------------------------------|
 | `uri`    | The URL of the document, resolved against `base_url`. A path is resolved against the current working directory instead. |
 
-Returns the source. Raises `ValueError` if `uri` cannot be resolved to a URL, and
-[`LoadError`](#loaderror) if the document cannot be read.
+Returns a [`Fetched`](#fetched) `(url, source)`. Raises `ValueError` if `uri`
+cannot be resolved to a URL, and [`LoadError`](#loaderror) if the document
+cannot be read.
 
 ```python
-source = await engine.fetch(Path("templates/report.texl"))
+url, source = await engine.fetch(Path("templates/report.texl"))
 ```
 
 #### `engine.render(uri, source)`
@@ -527,7 +550,8 @@ async def load(uri: str | os.PathLike[str]) -> Document
 ```
 
 Reads and renders the document at `uri`: [`fetch`](#enginefetchuri) followed
-by [`render`](#enginerenderuri-source).
+by [`render`](#enginerenderuri-source) at the final URL of the document (the
+one its loader returned, or the URL after HTTP redirects), which is its `uri`.
 
 | Argument | Description                                                          |
 |----------|----------------------------------------------------------------------|
@@ -814,6 +838,23 @@ err.description        # '`text.size` is not defined for the number `1`'
 err.inspect()          # {'type': 'UnaryOperation', 'description': '`text.size` is not defined for the number `1`', 'op': 'text.size', 'val': 1}
 ```
 
+### `Fetched`
+
+```python
+class Fetched(NamedTuple):
+    url: str
+    source: str
+```
+
+The source of a document and its final URL, as
+[`engine.fetch`](#enginefetchuri) returns them. It is a named tuple, so it
+unpacks like the `(final_url, source)` of a loader.
+
+| Attribute | Description                                                         |
+|-----------|---------------------------------------------------------------------|
+| `url`     | The final URL of the document: the one its [loader](#your-own-loaders) returned, or the URL after HTTP redirects, or else the requested URL, without fragment. |
+| `source`  | The template source.                                                |
+
 ### `LoadError`
 
 ```python
@@ -872,12 +913,14 @@ pytexl.normalize({"a": [None, 1], "n": None})  # {"a": [1], "n": None}
 ### `Loader`
 
 ```python
-Loader = Callable[[str], str | Awaitable[str]]
+Loaded = str | tuple[str, str]
+Loader = Callable[[str], Loaded | Awaitable[Loaded]]
 ```
 
 The type of a document loader: a function that takes a URL and returns the
-source of the document, or an awaitable of it. It raises an exception if the
-document cannot be read.
+source of the document, or a tuple `(final_url, source)` with its
+[final URL](#your-own-loaders), or an awaitable of either. It raises an
+exception if the document cannot be read.
 
 ### `loaders`
 
@@ -902,12 +945,13 @@ await loaders.load_file("file:///home/ada/report.texl")
 #### `loaders.load_http(uri, timeout)`
 
 ```python
-async def load_http(uri: str, *, timeout: float = 30.0) -> str
+async def load_http(uri: str, *, timeout: float = 30.0) -> tuple[str, str]
 ```
 
 Fetches a document over HTTP or HTTPS, in a worker thread, with
-`urllib.request`. Redirects are followed, and the body is decoded with the
-charset of the response, UTF-8 by default. Raises `urllib.error.URLError` if
+`urllib.request`, and returns the final URL, after redirects, and the body,
+decoded with the charset of the response, UTF-8 by default. The final URL is
+the `uri` of the document. Raises `urllib.error.URLError` if
 the request fails or the response has an error status, and `ValueError` if
 `uri` is not an HTTP or HTTPS URL.
 

@@ -134,8 +134,24 @@ async function testEngine() {
         check("a failed import gives the reason", failed.rhv, "HTTP status 404");
     }
 
-    const source = await page.fetch(counted);
-    check("fetch gives the source", source, await fetch(counted).then((r) => r.text()));
+    {
+        // The test server redirects `/redirect/<path>` to `/<path>`
+        const greeting = new URL("fixtures/partials/greeting.texl", location.href).href;
+        const redirected = new URL("/redirect" + new URL(greeting).pathname, location.href).href;
+        const doc = await page.load(redirected);
+        check("the http loader gives the URL after redirects", doc.uri, greeting);
+        check("fetch gives the URL after redirects", (await page.fetch(redirected)).url, greeting);
+        check("a redirected document imports relative to its final URL",
+            doc.text.includes("-- the Texl team"), true);
+        check(
+            "a self-import through a redirect gives Undefined",
+            (await page.render(greeting, `<% x = texl.import("${redirected}") %>[<% x %>]`)).text,
+            "[[[Undefined]]]");
+    }
+
+    const fetched = await page.fetch(counted);
+    check("fetch gives the source", fetched.source, await fetch(counted).then((r) => r.text()));
+    check("fetch gives the final URL", fetched.url, new URL(counted, location.href).href);
     {
         const failed = await page.fetch("fixtures/missing.texl").catch((err) => err);
         check("fetch of a missing document rejects with an Error", failed instanceof Error, true);
@@ -145,7 +161,7 @@ async function testEngine() {
     check(
         "load is fetch followed by render",
         (await page.load(counted)).text,
-        (await page.render(counted, source)).text);
+        (await page.render(fetched.url, fetched.source)).text);
 
     for (const method of ["fetch", "load"]) {
         let rejected = false;
@@ -176,7 +192,8 @@ async function testLoaders() {
     check("a sync loader serves load and texl.import", (await engine.load("main.texl")).text, "Hello!");
     check("a loader gets the full URI, without fragment",
         requested.join(" "), "mem://site/docs/main.texl mem://site/docs/part.texl");
-    check("fetch goes through the loader", await engine.fetch("part.texl#x"), "Hello");
+    check("fetch goes through the loader", JSON.stringify(await engine.fetch("part.texl#x")),
+        '{"url":"mem://site/docs/part.texl","source":"Hello"}');
     {
         const failed = await engine.load("missing.texl").catch((err) => err);
         check("a throwing loader gives a LoadError", failed.name, "LoadError");
@@ -190,7 +207,7 @@ async function testLoaders() {
     check("addLoader replaces the loader of the scheme", (await engine.load("part.texl")).text, "async part.texl");
     {
         const failed = await engine.fetch("/bad.texl").catch((err) => err);
-        check("a loader that returns no string fails", failed.reason, "the loader did not return a string");
+        check("a loader that returns no string fails", failed.reason, "the loader did not return a string or {url, source}");
     }
     engine.addLoader("mem", () => Promise.reject(new Error("offline")));
     {
@@ -199,10 +216,44 @@ async function testLoaders() {
         check("a rejecting loader gives its error as the reason", failed.rhv, "Error: offline");
     }
 
+    {
+        // `~` stands for the home folder `mem://site/`, the final URL of what follows it
+        let renderings = 0;
+        const home = new TexlEngine({ rendered: () => { renderings++; } }, "mem://site/docs/main.texl");
+        const homeSources = {
+            "mem://site/lib/x.texl": '<% n = rendered() %><% y = texl.import("~/lib/x.texl") %><% y %>x<% texl.import("y.texl") ~> (doc -> doc.text) %>',
+            "mem://site/lib/y.texl": "y",
+        };
+        const asked = [];
+        home.addLoader("mem", async (uri) => {
+            asked.push(uri);
+            const i = uri.lastIndexOf("/~/");
+            const url = i < 0 ? uri : "mem://site/" + uri.slice(i + 3);
+            if (!(url in homeSources)) throw new Error("not found");
+            return url === uri ? homeSources[url] : { url, source: homeSources[url] };
+        });
+        const doc = await home.render("main.texl",
+            '<% a = texl.import("~/lib/x.texl"), b = texl.import("../lib/x.texl") %><% a %><% b %>');
+        const a = await doc.data.a;
+        check("a loader's final URL is the uri of the document", a.uri, "mem://site/lib/x.texl");
+        check("a self-import through a final URL ends", a.text, "[[Undefined]]xy");
+        check("URLs with one final URL share one document", (await doc.data.b).uri + " " + renderings,
+            "mem://site/lib/x.texl 1");
+        check("each requested URL is loaded once", asked.sort().join(" "),
+            "mem://site/docs/~/lib/x.texl mem://site/lib/x.texl mem://site/lib/y.texl mem://site/lib/~/lib/x.texl");
+        check("load gives the final URL", (await home.load("~/lib/y.texl")).uri, "mem://site/lib/y.texl");
+        check("fetch gives the final URL", (await home.fetch("~/lib/y.texl")).url, "mem://site/lib/y.texl");
+        home.addLoader("mem", () => ({ url: null, source: "no url" }));
+        check("a null url is the requested URL", (await home.load("z.texl")).uri, "mem://site/docs/z.texl");
+        home.addLoader("mem", () => ({ url: 42, source: "bad" }));
+        check("a url that is not a string fails",
+            (await home.load("z.texl").catch((err) => err)).reason, "the loader did not return a string or {url, source}");
+    }
+
     const web = new TexlEngine();
     web.addLoader("https", () => "replaced");
     check("addLoader can replace the built-in https loader",
-        await web.fetch("https://example.invalid/doc.texl"), "replaced");
+        (await web.fetch("https://example.invalid/doc.texl")).source, "replaced");
     web.setDefaultLoader(() => "default");
     check("setDefaultLoader does not change full URLs", (await web.load("fixtures/partials/counted.texl")).text,
         "counted.texl has been evaluated 1 time(s)\n");

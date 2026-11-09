@@ -57,6 +57,37 @@ export class Tuple<T = any> extends Array<T> {}
  * (JavaScript string indices): `source.slice(tag.start, tag.end)` is the tag
  * and `text.slice(tag.out_start, tag.out_end)` what it rendered.
  */
+/**
+ * What a loader returns: the source of a document, or the source and the final
+ * URL of the document, the way an HTTP redirect gives one.
+ *
+ * The document is the one at its final URL: that is its `uri`, the URL its
+ * relative imports resolve against, and its identity within one rendering, so
+ * imports of URLs with the same final URL share one document. A relative
+ * `url` resolves against the requested URL.
+ */
+export type TexlLoaded = string | {
+    /** The final URL of the document. Defaults to the requested URL. */
+    url?: string | null;
+    /** The template source. */
+    source: string;
+};
+
+/** The source of a document and its final URL, as `TexlEngine.fetch` gives them. */
+export interface TexlFetched {
+    /**
+     * The final URL of the document: the one its loader returned, or the URL
+     * after HTTP redirects, or else the requested URL (without fragment).
+     * `load` renders the document at it.
+     */
+    url: string;
+    /** The template source. */
+    source: string;
+}
+
+/** A document loader: takes a URI and returns the source, or a promise of it. */
+export type TexlLoader = (uri: string) => TexlLoaded | Promise<TexlLoaded>;
+
 export interface TexlTag {
     /** Where the tag starts in the source (at `<%`). */
     start: number;
@@ -226,14 +257,19 @@ impl TexlEngine {
     ///
     /// The loader serves `fetch`, `load` and `texl.import`. Nothing is cached: wrap the
     /// loader to cache sources.
+    ///
+    /// A loader that resolves URIs (aliases, links, redirects) returns `{url, source}`
+    /// with the URL it resolved to: the document then is the one at that URL, which is
+    /// its `uri` and the base of its relative imports, and imports of URIs with the same
+    /// final URL share one document within a rendering.
     #[wasm_bindgen(js_name = addLoader)]
     pub fn add_loader(
         &self,
         #[wasm_bindgen(param_description = "The URI scheme, without the colon, such as `\"mem\"`. It is case-insensitive.")]
         scheme: &str,
         #[wasm_bindgen(
-            unchecked_param_type = "(uri: string) => string | Promise<string>",
-            param_description = "A function that takes the full URI and returns the source of the document, or a promise of it. If it throws, its promise rejects, or its result is not a string, the document cannot be loaded."
+            unchecked_param_type = "TexlLoader",
+            param_description = "A function that takes the full URI and returns the source of the document, or `{url, source}` with its final URL, or a promise of either. If it throws, its promise rejects, or its result is neither, the document cannot be loaded."
         )]
         loader: js_sys::Function,
     ) {
@@ -251,7 +287,7 @@ impl TexlEngine {
     pub fn set_default_loader(
         &self,
         #[wasm_bindgen(
-            unchecked_param_type = "(path: string) => string | Promise<string>",
+            unchecked_param_type = "TexlLoader",
             param_description = "A function that takes the path and returns the source of the document, or a promise of it, like the loaders of `addLoader`."
         )]
         loader: js_sys::Function,
@@ -259,7 +295,9 @@ impl TexlEngine {
         self.engine.add_default_loader(loader::js_loader(loader));
     }
 
-    /// Fetches and renders the document at `uri`: `fetch` followed by `render`.
+    /// Fetches and renders the document at `uri`: `fetch` followed by `render` of the
+    /// source as the document at its final URL (the one its loader returned, or the
+    /// URL after HTTP redirects), which is the `uri` of the document.
     ///
     /// The promise rejects with an `Error` if `uri` cannot be resolved to a URL or the
     /// document cannot be loaded. For a failed load, the `name` of the error is
@@ -304,15 +342,17 @@ impl TexlEngine {
         })
     }
 
-    /// Fetches the source of the document at `uri`, without rendering it. Nothing is
-    /// cached: every call fetches again.
+    /// Fetches the source of the document at `uri` and its final URL, without rendering it.
+    /// Nothing is cached: every call fetches again. The final URL is the one the loader
+    /// returned, or the URL after HTTP redirects, or else the requested URL (without
+    /// fragment): `load(uri)` is `render(fetched.url, fetched.source)`.
     ///
     /// The promise rejects with an `Error` if `uri` cannot be resolved to a URL or the
     /// document cannot be fetched. For a failed load, the `name` of the error is
     /// `"LoadError"`, and it has the URL in `uri` and the reason in `reason`.
     #[wasm_bindgen(
-        unchecked_return_type = "Promise<string>",
-        return_description = "The source."
+        unchecked_return_type = "Promise<TexlFetched>",
+        return_description = "The final URL and the source."
     )]
     pub fn fetch(
         &self,
@@ -323,7 +363,11 @@ impl TexlEngine {
         let url = loader::resolve_document_url(uri, self.base_url.as_ref());
         wasm_bindgen_futures::future_to_promise(async move {
             let url = url.map_err(|e| JsValue::from(js_sys::Error::new(&e)))?;
-            Ok(JsValue::from_str(&engine.fetch(&url).await.map_err(|undefined| load_error(&undefined))?))
+            let fetched = engine.fetch(&url).await.map_err(|undefined| load_error(&undefined))?;
+            let object = Object::new();
+            Reflect::set(&object, &JsValue::from_str("url"), &JsValue::from_str(&fetched.url))?;
+            Reflect::set(&object, &JsValue::from_str("source"), &JsValue::from_str(&fetched.source))?;
+            Ok(object.into())
         })
     }
 

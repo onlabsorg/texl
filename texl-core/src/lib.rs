@@ -48,5 +48,5 @@ pub mod document;
 pub mod template;
 pub mod engine;
 
-pub use engine::{Engine, LoaderFn, loader_fn};
+pub use engine::{Engine, Fetched, Loaded, LoaderFn, loader_fn};
 pub use document::Document;

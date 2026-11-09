@@ -57,7 +57,13 @@ class LoadHttpTest(unittest.IsolatedAsyncioTestCase):
 
     async def test_fetches_documents(self):
         expected = (FIXTURES / "partials" / "counted.texl").read_text(encoding="utf-8")
-        self.assertEqual(await loaders.load_http(self.server.origin + "/partials/counted.texl"), expected)
+        url = self.server.origin + "/partials/counted.texl"
+        self.assertEqual(await loaders.load_http(url), (url, expected))
+
+    async def test_gives_the_url_after_redirects(self):
+        expected = (FIXTURES / "partials" / "counted.texl").read_text(encoding="utf-8")
+        final_url, source = await loaders.load_http(self.server.origin + "/redirect/partials/counted.texl")
+        self.assertEqual((final_url, source), (self.server.origin + "/partials/counted.texl", expected))
 
     async def test_error_statuses_raise(self):
         with self.assertRaises(urllib.error.HTTPError) as raised:

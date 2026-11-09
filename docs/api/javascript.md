@@ -112,8 +112,29 @@ doc.text;                                 // "Buy 3 apples"
 ```
 
 The loader serves `fetch`, `load` and `texl.import`. If it throws, its promise
-rejects or its result is not a string, the load fails: the reason is the text
-of the error, such as `"Error: no such note"`. Nothing is cached, so a loader
+rejects or its result is neither a string nor `{url, source}`, the load fails:
+the reason is the text of the error, such as `"Error: no such note"`.
+
+A loader that resolves URLs returns `{url, source}`, with the *final URL* of
+the document, the way an HTTP redirect gives one. Here `~` stands for the
+folder of a project:
+
+```js
+engine.addLoader("mem", (uri) => {
+    const i = uri.lastIndexOf("/~/");
+    if (i < 0) return notes[uri];
+    const url = "mem://notes/" + uri.slice(i + 3);
+    return { url, source: notes[url] };
+});
+```
+
+The document then is the one at its final URL: that is its `uri` and the base
+of its relative imports, and within one rendering, imports of URLs with the
+same final URL share one document (see
+[Final URLs](../language.md#final-urls)). A relative `url` resolves against
+the requested URL. The built-in `http` and `https` loader gives the URL after
+the redirects that `fetch` followed, so a server can resolve paths with a
+redirect. Nothing is cached, so a loader
 that reads from a slow source can keep its own cache. A page that renders
 templates it does not trust can replace the `http` and `https` loaders with
 ones that refuse what the templates should not read.
@@ -130,8 +151,11 @@ const doc = await engine.render("docs/report.texl", editor.value);  // imports r
 
 A source with no real location can use any URL, for example one in the folder
 of the documents it imports. `engine.fetch` returns the source of a document
-without rendering it, so `engine.load(uri)` is
-`engine.render(uri, await engine.fetch(uri))`.
+and its [final URL](#custom-loaders) without rendering it, so
+`engine.load(uri)` is `engine.render(url, source)` with the `{url, source}` of
+`await engine.fetch(uri)`. An editor that opens a document with `fetch` and
+renders its edits with `render` passes that `url`, so the document keeps its
+identity.
 
 ## Caching
 
@@ -401,7 +425,10 @@ engine.set("today", new Date().toISOString().slice(0, 10));
 #### `engine.addLoader(scheme, loader)`
 
 ```ts
-addLoader(scheme: string, loader: (uri: string) => string | Promise<string>): void
+addLoader(scheme: string, loader: TexlLoader): void
+
+type TexlLoader = (uri: string) => TexlLoaded | Promise<TexlLoaded>;
+type TexlLoaded = string | { url?: string | null; source: string };
 ```
 
 Registers the [loader](#custom-loaders) of the URLs with a given scheme. It
@@ -411,7 +438,7 @@ replaces any previous loader of the scheme, including the built-in `http` and
 | Argument | Description                                                          |
 |----------|----------------------------------------------------------------------|
 | `scheme` | The URL scheme, without the colon, such as `"mem"`. It is case-insensitive. |
-| `loader` | A function that takes the full URL, without fragment, and returns the source of the document, or a promise of it. If it throws, its promise rejects or its result is not a string, the document cannot be loaded. |
+| `loader` | A function that takes the full URL, without fragment, and returns the source of the document, or `{url, source}` with its [final URL](#custom-loaders), or a promise of either. If it throws, its promise rejects or its result is neither, the document cannot be loaded. |
 
 ```js
 engine.addLoader("mem", (uri) => notes[uri]);
@@ -420,7 +447,7 @@ engine.addLoader("mem", (uri) => notes[uri]);
 #### `engine.setDefaultLoader(loader)`
 
 ```ts
-setDefaultLoader(loader: (path: string) => string | Promise<string>): void
+setDefaultLoader(loader: TexlLoader): void
 ```
 
 Registers the loader of the URLs without a scheme. The engine normalizes the
@@ -433,27 +460,27 @@ without a scheme.
 
 | Argument | Description                                                          |
 |----------|----------------------------------------------------------------------|
-| `loader` | A function that takes the path and returns the source of the document, or a promise of it, like the loaders of [`addLoader`](#engineaddloaderscheme-loader). |
+| `loader` | A function that takes the path and returns the source of the document, or `{url, source}`, or a promise of either, like the loaders of [`addLoader`](#engineaddloaderscheme-loader). |
 
 #### `engine.fetch(uri)`
 
 ```ts
-fetch(uri: string): Promise<string>
+fetch(uri: string): Promise<TexlFetched>
 ```
 
-Fetches the source of the document at `uri`, without rendering it. Nothing is
-cached: every call fetches again.
+Fetches the source of the document at `uri` and its final URL, without
+rendering it. Nothing is cached: every call fetches again.
 
 | Argument | Description                                         |
 |----------|-----------------------------------------------------|
 | `uri`    | The URL of the document, resolved against `baseUrl`. |
 
-Returns a promise of the source. The promise rejects with an `Error` if `uri`
-cannot be resolved to a URL, or with a [`LoadError`](#loading-documents) if the
-document cannot be fetched.
+Returns a promise of a [`TexlFetched`](#texlfetched) `{url, source}`. The
+promise rejects with an `Error` if `uri` cannot be resolved to a URL, or with a
+[`LoadError`](#loading-documents) if the document cannot be fetched.
 
 ```js
-const source = await engine.fetch("templates/report.texl");
+const { url, source } = await engine.fetch("templates/report.texl");
 ```
 
 #### `engine.render(uri, source)`
@@ -486,7 +513,9 @@ load(uri: string): Promise<TexlDocument>
 ```
 
 Fetches and renders the document at `uri`: [`fetch`](#enginefetchuri)
-followed by [`render`](#enginerenderuri-source).
+followed by [`render`](#enginerenderuri-source) at the final URL of the
+document (the one its loader returned, or the URL after HTTP redirects), which
+is its `uri`.
 
 | Argument | Description                                         |
 |----------|-----------------------------------------------------|
@@ -745,6 +774,16 @@ console.log(doc.data.title, doc.text);
 ```
 
 An imported document, in `data` or in a tag value, has the same members.
+
+### `TexlFetched`
+
+The source of a document and its final URL, as
+[`engine.fetch`](#enginefetchuri) gives them.
+
+| Property | Type     | Description                                         |
+|----------|----------|-----------------------------------------------------|
+| `url`    | `string` | The final URL of the document: the one its [loader](#custom-loaders) returned, or the URL after HTTP redirects, or else the requested URL, without fragment. |
+| `source` | `string` | The template source.                                |
 
 ### `TexlRendering`
 

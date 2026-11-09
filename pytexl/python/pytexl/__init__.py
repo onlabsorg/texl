@@ -50,14 +50,14 @@ import threading
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Union
+from typing import Any, NamedTuple, Union
 
 from . import loaders
 from . import _pytexl
 from ._pytexl import Function, NativeContext, NativeEngine, Promise, Undefined
 
 __all__ = [
-    "Context", "Document", "Engine", "Function", "LoadError", "Loader", "Promise", "Rendering", "Tag", "Undefined",
+    "Context", "Document", "Engine", "Function", "Fetched", "LoadError", "Loaded", "Loader", "Promise", "Rendering", "Tag", "Undefined",
     "collect", "loaders", "normalize",
 ]
 
@@ -88,8 +88,12 @@ def _loaded(result: Any) -> Any:
     return result
 
 
-#: A document loader: takes a URI and returns the source, or an awaitable of it.
-Loader = Callable[[str], Union[str, Awaitable[str]]]
+#: What a loader returns: the source, or a tuple ``(final_url, source)``.
+Loaded = Union[str, tuple[str, str]]
+
+#: A document loader: takes a URI and returns the source, or a tuple
+#: ``(final_url, source)``, or an awaitable of either (see :mod:`pytexl.loaders`).
+Loader = Callable[[str], Union[Loaded, Awaitable[Loaded]]]
 
 
 @dataclass(frozen=True)
@@ -116,6 +120,24 @@ class Tag:
     out_start: int
     out_end: int
     value: Any
+
+
+class Fetched(NamedTuple):
+    """The source of a document and its final URL, as returned by
+    :meth:`Engine.fetch`.
+
+    It is a named tuple, so it unpacks like the ``(final_url, source)`` a
+    loader returns: ``url, source = await engine.fetch(uri)``.
+
+    Attributes:
+        url: The final URL of the document: the one its loader returned, or
+            the URL after HTTP redirects, or else the requested URL,
+            normalized. :meth:`Engine.load` renders the document at it.
+        source: The template source.
+    """
+
+    url: str
+    source: str
 
 
 @dataclass(frozen=True)
@@ -261,8 +283,14 @@ class Engine(_ThreadBound):
             scheme: The URI scheme, without the colon, such as ``"mem"``. It is
                 case-insensitive.
             loader: A function that takes the full URI and returns the source
-                of the document, or an awaitable of it. If it raises, or its
-                result is not a string, the document cannot be loaded.
+                of the document, or a tuple ``(final_url, source)`` with the
+                URL it resolved the URI to, or an awaitable of either. If it
+                raises, or its result is neither, the document cannot be
+                loaded.
+
+        The document is the one at its final URL: that is its ``uri`` and
+        the base of its relative imports, and imports whose URIs have the same
+        final URL share one document within a rendering.
 
         Example:
             >>> templates = {"mem://greeting": "Hello <% reader %>!"}
@@ -284,8 +312,8 @@ class Engine(_ThreadBound):
 
         Args:
             loader: A function that takes the path and returns the source of the
-                document, or an awaitable of it, like the loaders of
-                :meth:`add_loader`.
+                document, or ``(final_url, source)``, or an awaitable of
+                either, like the loaders of :meth:`add_loader`.
 
         Example:
             >>> root = Path("site")
@@ -293,10 +321,14 @@ class Engine(_ThreadBound):
         """
         self._native.set_default_loader(loader)
 
-    async def fetch(self, uri: str | os.PathLike[str]) -> str:
-        """Returns the source of a document, without rendering it.
+    async def fetch(self, uri: str | os.PathLike[str]) -> Fetched:
+        """Returns the source of a document and its final URL, without
+        rendering it.
 
-        Nothing is cached: every call runs the loader again.
+        Nothing is cached: every call runs the loader again. The final URL is
+        the one the loader returned (see :mod:`pytexl.loaders`), or the
+        requested URL, normalized (without fragment). ``await
+        engine.load(uri)`` is ``await engine.render(*await engine.fetch(uri))``.
 
         Args:
             uri: The URL of the document, resolved against :attr:`base_url`. A
@@ -304,16 +336,17 @@ class Engine(_ThreadBound):
                 working directory and converted to a ``file://`` URL.
 
         Returns:
-            The source.
+            The final URL and the source.
 
         Raises:
             LoadError: If the document cannot be loaded.
             ValueError: If ``uri`` cannot be resolved to a URL.
 
         Example:
-            >>> source = await engine.fetch("templates/report.texl")
+            >>> url, source = await engine.fetch("templates/report.texl")
         """
-        return _loaded(await self._native.fetch(_uri(uri)))
+        fetched = _loaded(await self._native.fetch(_uri(uri)))
+        return Fetched(fetched["url"], fetched["source"])
 
     async def render(self, uri: str | os.PathLike[str], source: str) -> Document:
         """Renders a source as the document at a URL, without loading it.
@@ -346,6 +379,9 @@ class Engine(_ThreadBound):
 
     async def load(self, uri: str | os.PathLike[str]) -> Document:
         """Loads and renders a document: :meth:`fetch` followed by :meth:`render`.
+
+        The document renders at its final URL: the one its loader returned
+        (``(final_url, source)``, or the URL after HTTP redirects), or ``uri``.
 
         Args:
             uri: The URL of the document, resolved like the URI of

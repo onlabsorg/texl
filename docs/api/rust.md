@@ -110,11 +110,33 @@ async fn main() {
 - `add_default_loader(loader)` handles URIs without a scheme. The engine
   normalizes them into absolute paths, such as `/docs/report.texl`.
 
-Each method does one thing: `Engine::fetch(url)` returns the source of a
-document through its loader, or `Err` with an `Undefined` value (operation
-`document.load`, the URL in `lhv`, the reason in `rhv`) if no loader matches or
-the loader fails, `Engine::render(url, source)` renders it, and
-`Engine::load(url)` is `fetch` followed by `render`. `load` returns `Ok` with the
+A loader's future resolves to the source, either a `String` or a `Loaded`
+with the *final URL* of the document, the way an HTTP redirect gives one:
+
+```rust
+use texl_core::{Loaded, loader_fn};
+
+// `/latest.texl` is the document at `/v2.texl`
+let loader = loader_fn(|uri| async move {
+    match uri.as_str() {
+        "/latest.texl" | "/v2.texl" => Ok(Loaded::redirected("/v2.texl", "version 2")),
+        _ => Err("not found".to_string()),
+    }
+});
+```
+
+The document then is the one at its final URL: its `uri`, the base of its
+relative imports and its identity within a rendering, so URLs with the same
+final URL share one document (see
+[Final URLs](../language.md#final-urls)). A loader that always fails needs a
+type hint: `Err::<String, _>(...)`.
+
+Each method does one thing: `Engine::fetch(url)` returns a `Fetched {url,
+source}` (the final URL and the source) through its loader, or `Err` with an
+`Undefined` value (operation `document.load`, the URL in `lhv`, the reason in
+`rhv`) if no loader matches or the loader fails, `Engine::render(url, source)`
+renders it, and `Engine::load(url)` is `fetch` followed by `render` at the
+final URL. `load` returns `Ok` with the
 document namespace, or `Err` with that `Undefined` if the document cannot be
 fetched. Load a document by an absolute URI, so that the imports inside it resolve against its location. The same
 loaders serve `texl.import` in templates, where a failed load gives the

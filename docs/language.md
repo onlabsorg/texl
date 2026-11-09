@@ -330,6 +330,24 @@ error gives an `Undefined` of the operation `document.load`, with the URL in
 their `Err`, the JavaScript and Python hosts raise it as an error, and
 `texl.import` gives it to the template.
 
+### Final URLs
+
+A loader may also return the *final URL* of the document, the way an HTTP
+redirect does (`Loaded { url: Some(..), source }` in Rust, `{url, source}` in
+JavaScript, `(final_url, source)` in Python). The document then is the one at
+its final URL: that is its `uri`, the URL its relative imports resolve
+against, and its key in the import cache. The final URL resolves against the
+requested one and is normalized like it. The built-in HTTP loaders return the
+URL after redirects.
+
+This lets a host give a URL a meaning of its own without the engine knowing
+about it. A host where `~` stands for a project folder resolves
+`/p/docs/~/lib/x.texl` to `/p/lib/x.texl` in its loader and returns that URL:
+every way of naming the library leads to one document, and a library that
+imports itself through `~` is a cycle, not an ever longer URL. Module systems
+do the same: resolve the specifier to a real path first, then identify the
+module by that path.
+
 ### One cache per rendering (decision D17)
 
 The engine holds configuration only: its globals and loaders. It has no
@@ -340,6 +358,13 @@ rendering and drops it at the end:
   stores the promise as soon as an import starts, so concurrent imports of the
   same document share one load. `a.texl` and `a.texl#top` are the same
   document.
+- **Final URLs.** Until it is fetched, a document is in the cache under the
+  URL that was requested. When the loader returns another final URL, the
+  requested URL becomes an alias of it: the import waits for the document at
+  the final URL, which renders under it unless it is in the cache already, and
+  a later import of the requested URL in the same rendering fetches nothing.
+  Two different URLs with the same final URL are each fetched once (the final
+  URL is not known before), and the document is rendered once.
 - **A failed load** resolves the import to that `Undefined`, placed at the
   import, and removes the entry, so a later import of the same URL in the same
   rendering tries again. A fallback is written with `|`:
@@ -369,6 +394,17 @@ directly or through other documents (X importing itself counts). If so, the
 import returns `Undefined` (operation `import.cycle`) instead of a promise, and
 X renders without it; otherwise the edge X → Y is recorded until Y resolves.
 Importing a document that has finished rendering is never a cycle.
+
+A cycle through a [final URL](#final-urls) is found after the fetch, since the
+engine does not know before which document a requested URL is: while the URL
+is fetched, its importers wait for it under that URL; then, if the document at
+the final URL is pending and waits for them, the import resolves to
+`Undefined` (`import.cycle`), and otherwise their edges move to the final
+URL. All imports that share the fetch of one URL get the same result, so an
+importer outside the cycle that requested the same URL at the same time gets
+`Undefined` too. A document that does not wait for its import is not stuck:
+if it finishes rendering before the fetch ends, the import gets the finished
+document.
 
 ### Contexts
 

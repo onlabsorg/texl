@@ -69,6 +69,15 @@ fn respond(mut stream: TcpStream, pkg_dir: &Path) -> std::io::Result<()> {
     let target = request_line.split_whitespace().nth(1).unwrap_or("/");
     let url_path = target.split(['?', '#']).next().unwrap_or("/");
 
+    // `/redirect/<path>` redirects to `/<path>`, for the loaders' final URLs
+    if let Some(rest) = url_path.strip_prefix("/redirect/") {
+        return write!(
+            stream,
+            "HTTP/1.1 302 Found\r\nLocation: /{rest}\r\nContent-Length: 0\r\n\
+             Cache-Control: no-store\r\nConnection: close\r\n\r\n"
+        );
+    }
+
     let (status, content_type, body) = match file_for(url_path, pkg_dir).and_then(|p| {
         std::fs::read(&p).ok().map(|body| (content_type(&p), body))
     }) {

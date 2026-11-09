@@ -45,11 +45,19 @@ document and a little program that produces it.
   *partials* (reusable text), *libraries* (reusable functions) or *data
   sources*. Relative imports resolve against the importing document's
   location, so a set of documents forms a linked web of content.
+- **Where a document really is.** The program that reads documents (a
+  *loader*) can tell the engine the real location of the document it found,
+  the way a web server redirects a browser. The document is then known by
+  that location: it is its address, its own imports resolve from there, and
+  however many addresses lead to it, it is loaded and rendered once per
+  rendering. A host can thus give addresses a meaning of its own (such as a
+  shortcut for a project's home folder) while Texl gives them none.
 - **Self-contained documents.** An imported document renders on its own: it
   sees the built-in functions and the data the host provides, but not the
   names of the document that imports it, so it renders the same whoever
   imports it. A document that imports itself, directly or through others,
-  gets an `Undefined` value instead of waiting forever.
+  gets an `Undefined` value instead of waiting forever, also when it does so
+  through an address that leads back to it.
 - **Swan, a tolerant expression language.** Swan is small, dynamically typed
   and expression-only: no statements, no exceptions. Every error, including a
   syntax error, becomes an `Undefined` value that flows on like any other
@@ -215,6 +223,14 @@ available to hosts too, but it cannot import documents.
   source. It can also replace the built-in web loader, for example to limit
   what a template may read. A loader for locations without a scheme can be
   set too, as in Python, but the engine does not produce such locations yet.
+- Not released yet (in the repository since 2026-11-09): loaders can give a
+  document's real location, as described under "Where a document really
+  is". The built-in web loaders of JavaScript and Python report the address
+  a web server redirected to. This changes the host interface: fetching a
+  document's source now returns its real location together with the source,
+  in all three languages, instead of the source alone, so a program that
+  fetches a source and renders it later renders it as the right document.
+  Python's built-in web loader, if called directly, also returns both.
 - Available: browser/JavaScript, Python, Rust.
 - The `texl` command-line tool (`texl-cli`) has been removed from the
   repository; its last release was 0.2.0 (2026-10-25), and its binaries

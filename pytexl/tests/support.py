@@ -12,7 +12,17 @@ FIXTURES = Path(__file__).resolve().parent / "fixtures"
 
 
 class _QuietHandler(http.server.SimpleHTTPRequestHandler):
-    """Serves files without logging every request to stderr."""
+    """Serves files without logging every request to stderr. ``/redirect/<path>``
+    redirects to ``/<path>``."""
+
+    def do_GET(self) -> None:
+        if self.path.startswith("/redirect/"):
+            self.send_response(302)
+            self.send_header("Location", self.path.removeprefix("/redirect"))
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+            return
+        super().do_GET()
 
     def log_message(self, format: str, *args: object) -> None:
         pass

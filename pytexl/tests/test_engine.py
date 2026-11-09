@@ -135,10 +135,13 @@ class RenderTest(unittest.IsolatedAsyncioTestCase):
 
 
 class FetchTest(unittest.IsolatedAsyncioTestCase):
-    async def test_fetch_returns_the_source(self):
+    async def test_fetch_returns_the_url_and_the_source(self):
         engine, requested = memory_engine({"mem://doc": "<% 1 + 1 %>"})
-        self.assertEqual(await engine.fetch("mem://doc#part"), "<% 1 + 1 %>")
-        self.assertEqual(await engine.fetch("mem://doc"), "<% 1 + 1 %>")
+        fetched = await engine.fetch("mem://doc#part")
+        self.assertIsInstance(fetched, pytexl.Fetched)
+        self.assertEqual((fetched.url, fetched.source), ("mem://doc", "<% 1 + 1 %>"))
+        url, source = await engine.fetch("mem://doc")
+        self.assertEqual((url, source), ("mem://doc", "<% 1 + 1 %>"))
         self.assertEqual(requested, ["mem://doc", "mem://doc"])
 
     async def test_fetch_of_a_missing_document_raises(self):
@@ -151,8 +154,9 @@ class FetchTest(unittest.IsolatedAsyncioTestCase):
     async def test_fetch_resolves_uris_like_load(self):
         engine = pytexl.Engine(base_url=FIXTURES)
         expected = (FIXTURES / "lib" / "format.texl").read_text(encoding="utf-8")
-        self.assertEqual(await engine.fetch("partials/../lib/format.texl"), expected)
-        self.assertEqual(await engine.fetch(FIXTURES / "lib" / "format.texl"), expected)
+        url = (FIXTURES / "lib" / "format.texl").as_uri()
+        self.assertEqual(await engine.fetch("partials/../lib/format.texl"), (url, expected))
+        self.assertEqual(await engine.fetch(FIXTURES / "lib" / "format.texl"), (url, expected))
 
     async def test_fetch_of_an_invalid_uri_raises(self):
         with self.assertRaises(ValueError):
@@ -241,7 +245,7 @@ class LoadTest(unittest.IsolatedAsyncioTestCase):
     async def test_load_is_fetch_and_render(self):
         engine, _ = memory_engine({"mem://host/main.texl": f'main <% texl.import("lib.texl") {RENDERING} %>', "mem://host/lib.texl": "lib"})
         loaded = await engine.load("mem://host/main.texl")
-        rendered = await engine.render("mem://host/main.texl", await engine.fetch("mem://host/main.texl"))
+        rendered = await engine.render(*await engine.fetch("mem://host/main.texl"))
         self.assertEqual((loaded.uri, loaded.source, loaded.text), (rendered.uri, rendered.source, rendered.text))
         self.assertEqual(loaded.text, "main lib")
 
@@ -350,6 +354,95 @@ class LoaderTest(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(pytexl.LoadError):
             await engine.load("mem://a")
         self.assertEqual((await engine.load("mem://a")).text, "second attempt")
+
+
+def home_engine(docs):
+    """Returns an engine whose `mem` loader resolves a `~` segment the way a project home
+    does: `.../~/rest` is the document at `mem://host/rest`, its final URL. Sources come
+    from `docs`, keyed by final URL. Also returns the list of the URIs it was asked for."""
+    requested = []
+
+    async def loader(uri):
+        requested.append(uri)
+        head, sep, rest = uri.rpartition("/~/")
+        final_url = "mem://host/" + rest if sep else uri
+        return docs[final_url] if final_url == uri else (final_url, docs[final_url])
+
+    engine = pytexl.Engine()
+    engine.add_loader("mem", loader)
+    return engine, requested
+
+
+class FinalUrlTest(unittest.IsolatedAsyncioTestCase):
+    async def test_load_gives_the_final_url(self):
+        engine, requested = home_engine({"mem://host/lib/x.texl": "x"})
+        doc = await engine.load("mem://host/docs/~/lib/x.texl#top")
+        self.assertEqual((doc.uri, doc.text), ("mem://host/lib/x.texl", "x"))
+        self.assertEqual(await engine.fetch("mem://host/docs/~/lib/x.texl"), ("mem://host/lib/x.texl", "x"))
+        # load is render at the fetched URL
+        self.assertEqual((await engine.render(*await engine.fetch("mem://host/docs/~/lib/x.texl"))).uri, doc.uri)
+        self.assertEqual(requested, ["mem://host/docs/~/lib/x.texl"] * 3)
+
+    async def test_relative_final_urls_resolve_against_the_requested_url(self):
+        engine = pytexl.Engine()
+        engine.add_loader("mem", lambda uri: ("../b/new.texl", "moved"))
+        self.assertEqual((await engine.load("mem://host/a/old.texl")).uri, "mem://host/b/new.texl")
+
+    async def test_a_self_import_through_a_final_url_ends(self):
+        engine, requested = home_engine({"mem://host/lib/x.texl": '<% y = texl.import("~/lib/x.texl") %>[<% y %>]'})
+        doc = await engine.load("mem://host/lib/x.texl")
+        self.assertEqual(doc.text, "[[[Undefined]]]")
+        self.assertEqual(requested, ["mem://host/lib/x.texl", "mem://host/lib/~/lib/x.texl"])
+
+    async def test_uris_with_one_final_url_share_one_rendering(self):
+        renderings = []
+        engine, requested = home_engine({
+            "mem://host/lib/x.texl": '<% n = rendered() %>x',
+            "mem://host/docs/sub/c.texl": '<% texl.import("~/lib/x.texl") ~> (doc -> bind "x" doc) %>',
+        })
+        engine.set("rendered", lambda: renderings.append(1))
+        doc = await engine.render("mem://host/docs/main.texl", (
+            '<% texl.import("~/lib/x.texl") ~> (doc -> bind "a" doc) %>'
+            '<% texl.import("sub/c.texl") ~> (doc -> bind "c" doc) %>'
+            '<% texl.import("../lib/x.texl") ~> (doc -> bind "b" doc) %>'
+        ))
+        self.assertEqual(doc.data["a"]["uri"], "mem://host/lib/x.texl")
+        self.assertEqual(doc.data["b"]["uri"], "mem://host/lib/x.texl")
+        self.assertEqual(len(renderings), 1)
+        self.assertEqual(requested, [
+            "mem://host/docs/~/lib/x.texl", "mem://host/docs/sub/c.texl", "mem://host/docs/sub/~/lib/x.texl",
+        ])
+
+    async def test_redirected_documents_import_relative_to_their_final_url(self):
+        engine, requested = home_engine({
+            "mem://host/lib/x.texl": f'x<% texl.import("y.texl") {RENDERING} %>',
+            "mem://host/lib/y.texl": "y",
+        })
+        self.assertEqual(await render(engine, f'<% texl.import("~/lib/x.texl") {RENDERING} %>', "mem://host/docs/main.texl"), "xy")
+        self.assertEqual(requested, ["mem://host/docs/~/lib/x.texl", "mem://host/lib/y.texl"])
+
+    async def test_a_cycle_with_one_redirected_leg_ends(self):
+        engine, _ = home_engine({
+            "mem://host/a.texl": '<% texl.import("b.texl") ~> (doc -> bind "b" doc) %>a',
+            "mem://host/b.texl": '<% x = texl.import("~/a.texl") %>[<% x %>]',
+        })
+        doc = await engine.load("mem://host/a.texl")
+        self.assertEqual(doc.data["b"]["text"], "[[[Undefined]]]")
+
+    async def test_other_results_fail(self):
+        engine = pytexl.Engine()
+        for result in (["mem://host/a", "list"], ("mem://host/a",), ("mem://host/a", 42), (1, "source")):
+            engine.add_loader("mem", lambda uri, result=result: result)
+            with self.subTest(result=result):
+                with self.assertRaises(pytexl.LoadError) as raised:
+                    await engine.load("mem://host/z")
+                self.assertEqual(raised.exception.reason, "the loader did not return a string or a (final_url, source) tuple")
+
+    async def test_http_redirects_give_the_final_url(self):
+        with FileServer() as server:
+            doc = await pytexl.Engine().load(server.origin + "/redirect/partials/greeting.texl")
+            self.assertEqual(doc.uri, server.origin + "/partials/greeting.texl")
+            self.assertIn("-- the Texl team", doc.text)
 
 
 class ImportTest(unittest.IsolatedAsyncioTestCase):
