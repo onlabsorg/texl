@@ -28,7 +28,7 @@ Without a bundler, import the module from a CDN that serves npm packages, with
 the version you want:
 
 ```js
-import init, { TexlEngine } from "https://cdn.jsdelivr.net/npm/@onlabsorg/texl@0.8.0/texl_wasm.js";
+import init, { TexlEngine } from "https://cdn.jsdelivr.net/npm/@onlabsorg/texl@0.9.0/texl_wasm.js";
 ```
 
 You can also build the package from a clone of the repository with
@@ -43,7 +43,7 @@ wasm-pack build texl-wasm --target web
 
 ```html
 <script type="module">
-import init, { TexlEngine } from "https://cdn.jsdelivr.net/npm/@onlabsorg/texl@0.8.0/texl_wasm.js";
+import init, { TexlEngine } from "https://cdn.jsdelivr.net/npm/@onlabsorg/texl@0.9.0/texl_wasm.js";
 
 await init();                                  // load the WebAssembly module
 
