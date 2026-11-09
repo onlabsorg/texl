@@ -131,8 +131,8 @@ available to hosts too, but it cannot import documents.
 ## Status
 
 - MIT licensed; source at <https://github.com/onlabsorg/texl>.
-- Latest releases (2026-11-09): `texl-wasm` 0.8.0, `pytexl` 0.8.0. The Rust
-  crates (`swan-core` 0.5.0, `texl-core` 0.7.0) are used
+- Latest releases (2026-11-09): `texl-wasm` 0.9.0, `pytexl` 0.9.0. The Rust
+  crates (`swan-core` 0.6.0, `texl-core` 0.7.1) are used
   from the repository; they are not on crates.io.
 - Version 0.4.0 changed how hosts use the engine: rendering text now needs a
   location, documents are no longer cached between renderings, imported
@@ -231,7 +231,7 @@ available to hosts too, but it cannot import documents.
   in all three languages, instead of the source alone, so a program that
   fetches a source and renders it later renders it as the right document.
   Python's built-in web loader, if called directly, also returns both.
-- Since 0.8.0 (not released yet): a new built-in, `text.template`, turns a
+- Version 0.9.0 (2026-11-09) adds a built-in, `text.template`, that turns a
   text with `{name}` placeholders into a function that fills them from a
   namespace, e.g. `text.template "My car is {color}." {color: "white"}`.
   Each value is shown exactly as a tag would show it; a missing name gives
