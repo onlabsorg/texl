@@ -63,8 +63,12 @@ fn with_handles<R>(f: impl FnOnce(&mut Handles) -> R) -> R {
 /// when the object made a handle of it with [`register`] is collected.
 pub fn insert(value: Value) -> u32 {
     with_handles(|handles| {
-        let key = handles.next;
-        handles.next = handles.next.wrapping_add(1);
+        // Keys wrap around after 2^32 handles: one still in use is skipped
+        let mut key = handles.next;
+        while handles.values.contains_key(&key) {
+            key = key.wrapping_add(1);
+        }
+        handles.next = key.wrapping_add(1);
         handles.values.insert(key, value);
         key
     })

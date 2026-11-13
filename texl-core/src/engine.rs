@@ -112,11 +112,12 @@ use std::rc::{Rc, Weak};
 use url::Url;
 
 use swan_core::builtins::root_scope;
+use swan_core::expression;
 use swan_core::gc;
 use swan_core::value::{BuiltinFn, Namespace, Promise, Scope, Value};
 
 use crate::helpers::{spawn, SpawnFn};
-use crate::document::{self, Document};
+use crate::document::{self, Document, TagOrigin};
 use crate::template;
 
 /// A host-provided function that fetches the source of a document.
@@ -602,6 +603,15 @@ impl Engine {
     /// URL (rendered under it, unless it is in the cache already), or resolves to `Undefined`
     /// if waiting for that document would never end.
     fn import(&self, imports: &Rc<RefCell<Imports>>, importer: &str, url: String) -> Value {
+        // The document that waits for this import is the one whose tag, or
+        // whose `~>`, is running: not `importer`, the document `import` was
+        // called in, when a function of that document is called by another.
+        // `importer` is the one only when Swan was not entered from a tag
+        // (a host calling a function of a document).
+        let waiter = expression::entry()
+            .and_then(|entry| TagOrigin::of(&entry).and_then(|tag| tag.document.uri.clone()));
+        let importer = waiter.as_deref().unwrap_or(importer);
+
         let mut state = imports.borrow_mut();
         let url = state.aliases.get(&url).cloned().unwrap_or(url);
 
@@ -1073,6 +1083,30 @@ mod tests {
 
         assert_eq!(rendering(b_doc.clone()), "b");
         assert!(matches!(data(b_doc).get("x"), Value::Undefined(_)));
+    }
+
+    #[test]
+    fn test_engine_import_cycle_through_a_function_of_another_document() {
+        // Y waits for Z, which a function of X imported for it; Z imports Y.
+        // The document that waits is Y, not X, where the function is from.
+        let x = r#"<% load = () -> texl.import("z.texl") %>"#;
+        let z = r#"<% y = texl.import("y.texl") %>[<% y %>]"#;
+        // Called from a `~>` of Y ...
+        let chained = r#"<% texl.import("x.texl") ~> (doc -> doc.data.load ()) %>"#;
+        // ... and from a tag of Y
+        let direct = r#"<% texl.import("x.texl") ~> (doc -> bind "x" doc) %><% x.data.load () %>"#;
+
+        for y in [chained, direct] {
+            let (engine, _) = engine_with_docs(&[("/x.texl", x), ("/z.texl", z)]);
+            let Value::Namespace(y_doc) = block_on(engine.render("/y.texl", y)) else { panic!() };
+            // The last tag of Y waited for Z: its value is the document
+            let Value::List(tags) = y_doc.get("tags") else { panic!() };
+            let Some(Value::Namespace(tag)) = tags.last() else { panic!() };
+            let z_doc = tag.get("value");
+            assert_eq!(rendering(z_doc.clone()), "[[[Undefined]]]", "{y}");
+            let Value::Undefined(undef) = data(z_doc).get("y") else { panic!("{y}: no cycle found") };
+            assert_eq!(undef.describe(), "import cycle: `/y.texl` is already being imported");
+        }
     }
 
     #[test]

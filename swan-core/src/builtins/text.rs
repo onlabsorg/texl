@@ -7,7 +7,8 @@
 //! characters, not bytes.
 
 use crate::evaluator::apply;
-use crate::value::{BuiltinFn, Namespace, Value};
+use std::rc::Rc;
+use crate::value::{BuiltinFn, Namespace, Promise, Value};
 use super::helpers::*;
 
 
@@ -130,22 +131,38 @@ pub fn to_text(val: Value) -> Value {
 /// | `Tuple`                | items converted and joined with `", "`        |
 /// | `Promise` (resolved)   | the text of the resolved value                |
 /// | `Promise` (pending)    | `[[Pending Promise]]`                         |
+/// | `Promise` holding itself | `[[Promise]]` where it is met again         |
 /// | anything `to_text` cannot convert | `[[Undefined]]`                    |
 ///
 /// Used by Texl's template renderer and by `text.template`, so a placeholder
 /// shows a value the way a tag does. A pending promise is not awaited.
 pub fn to_rendered_text(val: Value) -> String {
+    rendered_text(val, &mut Vec::new())
+}
+
+/// [`to_rendered_text`], with the promises being rendered around `val`: a
+/// promise that holds itself (`promise.resolve p p`) is met again while it
+/// is rendered, and gives `[[Promise]]` instead of being followed forever.
+fn rendered_text(val: Value, rendering: &mut Vec<Promise>) -> String {
     match val {
         Value::Nothing => String::new(),
         Value::Tuple(items) => {
-            let item_strs: Vec<String> = items.iter().cloned().map(to_rendered_text).collect();
+            let item_strs: Vec<String> = items.iter().cloned().map(|item| rendered_text(item, rendering)).collect();
             item_strs.join(", ")
         }
         // Non-blocking: read the promise's current value without awaiting it.
         Value::Promise(promise) => {
+            if rendering.iter().any(|p| Rc::ptr_eq(&p.0, &promise.0)) {
+                return "[[Promise]]".to_string();
+            }
             let inner_value = promise.0.borrow().value.clone();
             match inner_value {
-                Some(resolved_val) => to_rendered_text(resolved_val),
+                Some(resolved_val) => {
+                    rendering.push(promise);
+                    let text = rendered_text(resolved_val, rendering);
+                    rendering.pop();
+                    text
+                }
                 None => "[[Pending Promise]]".to_string(),
             }
         }
@@ -236,7 +253,7 @@ fn char_position(haystack: &str, byte_pos: Option<usize>) -> Value {
 fn text_find(needle: Value, haystack: Value) -> Value {
     match (&needle, haystack) {
         (Value::Text(n), Value::Text(h)) => char_position(&h, h.find(n.as_ref())),
-        (_, other) => Value::undef_unary("text.find", other),
+        (_, other) => Value::undef_binary("text.find", needle.clone(), other),
     }
 }
 
@@ -244,7 +261,7 @@ fn text_find(needle: Value, haystack: Value) -> Value {
 fn text_rfind(needle: Value, haystack: Value) -> Value {
     match (&needle, haystack) {
         (Value::Text(n), Value::Text(h)) => char_position(&h, h.rfind(n.as_ref())),
-        (_, other) => Value::undef_unary("text.rfind", other),
+        (_, other) => Value::undef_binary("text.rfind", needle.clone(), other),
     }
 }
 
@@ -270,7 +287,7 @@ fn text_head(n: Value, s: Value) -> Value {
             let result: String = chars[..end].iter().collect();
             Value::Text(result.into())
         }
-        (_, other) => Value::undef_unary("text.head", other),
+        (_, other) => Value::undef_binary("text.head", n.clone(), other),
     }
 }
 
@@ -283,7 +300,7 @@ fn text_tail(n: Value, s: Value) -> Value {
             let result: String = chars[start..].iter().collect();
             Value::Text(result.into())
         }
-        (_, other) => Value::undef_unary("text.tail", other),
+        (_, other) => Value::undef_binary("text.tail", n.clone(), other),
     }
 }
 
@@ -301,7 +318,7 @@ fn text_split(sep: Value, target: Value) -> Value {
                 .collect();
             Value::tuple(parts)
         }
-        (_, other) => Value::undef_unary("text.split", other),
+        (_, other) => Value::undef_binary("text.split", sep.clone(), other),
     }
 }
 
@@ -557,6 +574,19 @@ mod tests {
         assert_eq!(to_rendered_text(Value::tuple(vec![Value::Numb(1.0), Value::Text("a".into())])), "1, a");
         let pending = crate::value::Promise::new();
         assert_eq!(to_rendered_text(Value::Promise(pending)), "[[Pending Promise]]");
+
+        // A promise that holds itself is not followed twice
+        let own = crate::value::Promise::new();
+        own.resolve(Value::Promise(own.clone()));
+        assert_eq!(to_rendered_text(Value::Promise(own)), "[[Promise]]");
+        let in_tuple = crate::value::Promise::new();
+        in_tuple.resolve(Value::tuple(vec![Value::Numb(1.0), Value::Promise(in_tuple.clone())]));
+        assert_eq!(to_rendered_text(Value::Promise(in_tuple)), "1, [[Promise]]");
+        // The same resolved promise twice in a tuple is not a cycle
+        let twice = crate::value::Promise::new();
+        twice.resolve(Value::Numb(2.0));
+        let pair = Value::tuple(vec![Value::Promise(twice.clone()), Value::Promise(twice)]);
+        assert_eq!(to_rendered_text(pair), "2, 2");
     }
 
     #[test]

@@ -236,6 +236,36 @@ available to hosts too, but it cannot import documents.
   namespace, e.g. `text.template "My car is {color}." {color: "white"}`.
   Each value is shown exactly as a tag would show it; a missing name gives
   empty text; `{{` and `}}` give literal braces.
+- Not released yet (in the repository since 2026-11-13): a review of the
+  language and its hosts fixed crashes, hangs and wrong results.
+  - A function that calls itself without end now gives an `Undefined`
+    value ("recursion too deep") instead of crashing the program; so do
+    expressions nested too deeply. The limit is about 160 nested calls by
+    default, 320 in the browser and 640 in Python's main thread on most
+    systems. Very long
+    expressions and long chains of promises no longer crash either.
+  - A syntax error anywhere in a tag, also inside brackets, now makes the
+    whole tag `[[Undefined]]`, and nothing in it runs; before, an error
+    inside brackets was sometimes silently lost (`{a = 1` gave an empty
+    namespace).
+  - A promise that resolves to itself no longer crashes or freezes the
+    rendering.
+  - A document that imports itself through a function defined in another
+    document now gets the import error instead of waiting forever.
+  - Built-ins: `time.from_date` and `time.from_string` reject values out of
+    range (month 13, huge years) and roll months over correctly;
+    `math.max` and `math.min` give `NaN` if any value is `NaN`;
+    `numb.from` no longer accepts `"inf"` or `"nan"`; errors of built-ins
+    that take two arguments one at a time (such as `text.find`) name both.
+  - Hosts: a JavaScript or Python value that contains itself is now an
+    error (a `TypeError` in JavaScript, an `Undefined` value in Python)
+    instead of crashing; the browser library prints the message of an
+    internal failure to the console; the Python library no longer stops
+    running renderings after an internal failure or after an event loop
+    was closed with work pending.
+  - Functions no longer copy their code each time they are passed around,
+    which makes recursive functions faster. Rust programs that read the
+    syntax tree see a small change in its types.
 - Available: browser/JavaScript, Python, Rust.
 - The `texl` command-line tool (`texl-cli`) has been removed from the
   repository; its last release was 0.2.0 (2026-10-25), and its binaries
@@ -252,8 +282,7 @@ available to hosts too, but it cannot import documents.
   examples. The former documentation site and its build are gone.
 - Planned next: a Node.js library, editor support (`texl.nvim`,
   `vscode-texl`), and Swan language extensions (operator overloading on
-  namespaces via `__add__`-style members, a recursion depth limit, a `filter`
-  built-in).
+  namespaces via `__add__`-style members, a `filter` built-in).
 
 ## Memory
 
@@ -263,9 +292,10 @@ never free it. Swan therefore has a memory cleaner (a cycle collector, the
 technique Python uses) that finds such self-held documents once nothing else
 uses them, and frees them. The engine runs it after every rendering, so
 programs that keep rendering for a long time, such as an editor or a server,
-no longer grow in memory with each rendering. Hosts that render into a
-*context* call `collect` themselves after dropping it; it is available in
-Rust, JavaScript and Python. A Swan function held by a JavaScript or Python
+no longer grow in memory with each rendering. Rendering into a *context*
+runs it too in JavaScript and Python (not released yet); hosts call
+`collect` themselves after dropping a context; it is available in Rust,
+JavaScript and Python. A Swan function held by a JavaScript or Python
 program keeps its document alive while the program holds it; once the
 program's own memory manager drops it, the next cleanup frees the document.
 The browser tests check this. The developer example that measured what each
@@ -283,3 +313,6 @@ with it.
   Swan and JavaScript or Python objects, are not cleaned up. The JavaScript and
   Python guides describe the common case (a host function that refers to its
   own context) and how to avoid it.
+- Recursion is Swan's only way to loop, and it stops at a fixed depth (see
+  "Status"), so a template cannot loop more than a few hundred times
+  through recursion.

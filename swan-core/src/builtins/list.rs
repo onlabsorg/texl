@@ -70,7 +70,7 @@ fn list_find(item: Value, list: Value) -> Value {
         Value::List(l) => Value::Numb(
             l.iter().position(|x| x == &item).map_or(-1.0, |i| i as f64)
         ),
-        other => Value::undef_unary("list.find", other),
+        other => Value::undef_binary("list.find", item, other),
     }
 }
 
@@ -81,7 +81,7 @@ fn list_rfind(item: Value, list: Value) -> Value {
         Value::List(l) => Value::Numb(
             l.iter().rposition(|x| x == &item).map_or(-1.0, |i| i as f64)
         ),
-        other => Value::undef_unary("list.rfind", other),
+        other => Value::undef_binary("list.rfind", item, other),
     }
 }
 
@@ -110,7 +110,7 @@ fn list_head(n: Value, list: Value) -> Value {
             let end = resolve_count(*n, l.len());
             Value::list(l[..end].to_vec())
         }
-        (_, other) => Value::undef_unary("list.head", other),
+        (_, other) => Value::undef_binary("list.head", n.clone(), other),
     }
 }
 
@@ -123,7 +123,7 @@ fn list_tail(n: Value, list: Value) -> Value {
             let start = resolve_count(*n, l.len());
             Value::list(l[start..].to_vec())
         }
-        (_, other) => Value::undef_unary("list.tail", other),
+        (_, other) => Value::undef_binary("list.tail", n.clone(), other),
     }
 }
 

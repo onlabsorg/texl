@@ -211,6 +211,10 @@ The values you pass to the engine and to contexts become Swan values:
 | [`Promise`](#promise), [`Function`](#function), [`Undefined`](#undefined) | the Swan value they wrap |
 | anything else                               | `Nothing`                                     |
 
+A list, tuple or mapping that contains itself (`items.append(items)`) cannot
+be converted: the item that closes the cycle becomes an `Undefined` of type
+`HostError`.
+
 Values that come back to Python, from `context.get`, from document data and
 as function arguments, are converted the other way:
 
@@ -373,9 +377,9 @@ fetch URLs in worker threads, so they do not block the event loop.
 A function defined in a template holds the scope it was defined in, so a
 scope that stores one keeps itself alive: a reference cycle. The cycle
 collector, [`pytexl.collect`](#collect), frees the scopes that nothing
-outside such cycles refers to any more. `engine.render` and `engine.load` run
-it when they are done, so a program that only renders documents has nothing
-to do. After dropping a context that defined functions, call `collect`:
+outside such cycles refers to any more. `engine.render`, `engine.load` and
+`context.render` run it when they are done, so a program that only renders
+has nothing to do. After dropping a context that defined functions, call `collect`:
 
 ```python
 del context

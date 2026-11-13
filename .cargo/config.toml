@@ -1,0 +1,8 @@
+# The stack of the web build (texl-wasm). The default of the wasm linker is
+# 1 MB; Swan evaluates by recursion, so the depth it can reach is bound by the
+# stack. texl-wasm sets the evaluator's depth limit to match this size (see
+# `STACK_MEGABYTES` in texl-wasm/src/lib.rs): change both together. A larger
+# stack would not allow a higher limit: beyond this, the browser's own call
+# stack ends first.
+[target.wasm32-unknown-unknown]
+rustflags = ["-C", "link-arg=-zstack-size=2097152"]

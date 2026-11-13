@@ -113,6 +113,18 @@ mod tests {
     }
 
     #[test]
+    fn test_resolve_with_itself() {
+        // A promise may be resolved with itself, alone or in a tuple
+        for src in [
+            "p = promise.create(), promise.resolve p p, p",
+            "p = promise.create(), promise.resolve p (p, 1), p",
+        ] {
+            let Value::Promise(p) = run(src) else { panic!("{src}: not a promise") };
+            assert!(p.0.borrow().value.is_some(), "{src}: not resolved");
+        }
+    }
+
+    #[test]
     fn test_create() {
         // promise.create() returns a Value::Promise
         assert!(matches!(run("promise.create()"), Value::Promise(_)));

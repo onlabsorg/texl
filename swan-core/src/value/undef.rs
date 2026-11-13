@@ -336,6 +336,8 @@ fn describe_unary(op: &str, val: &Value) -> String {
     match (op, val) {
         ("negation", _) => format!("cannot negate {}", a_value(val)),
         ("lifting", _) => "`$` must be followed by a name".to_string(),
+        ("recursion", _) => "recursion too deep".to_string(),
+        ("nesting", _) => "the expression is nested too deep".to_string(),
         ("import.cycle", Value::Text(url)) => format!("import cycle: `{url}` is already being imported"),
         ("import.invalid_uri", Value::Text(err)) => format!("invalid URI: {err}"),
         _ => format!("`{op}` is not defined for {}", a_value(val)),
@@ -581,14 +583,27 @@ mod tests {
     }
 
     #[test]
+    fn test_describe_curried_builtins() {
+        // The argument that is wrong is the one named, whichever it is
+        assert_eq!(describe(r#"text.find 5 "abc""#), "`text.find` is not defined for the number `5` and the text `\"abc\"`");
+        assert_eq!(describe(r#"text.find "a" 5"#), "`text.find` is not defined for the text `\"a\"` and the number `5`");
+        assert_eq!(describe(r#"text.head "x" "abc""#), "`text.head` is not defined for the text `\"x\"` and the text `\"abc\"`");
+        assert_eq!(describe(r#"text.split 1 "abc""#), "`text.split` is not defined for the number `1` and the text `\"abc\"`");
+        assert_eq!(describe(r#"list.head "x" [1,2]"#), "`list.head` is not defined for the text `\"x\"` and a list");
+        assert_eq!(describe("list.tail 1 5"), "`list.tail` is not defined for the number `1` and the number `5`");
+        assert_eq!(describe("list.find 1 5"), "`list.find` is not defined for the number `1` and the number `5`");
+    }
+
+    #[test]
     fn test_describe_syntax_errors_and_values() {
         assert_eq!(describe("(1 + 2"), "missing closing `)`");
-        assert_eq!(describe("2 * {1"), "cannot multiply the number `2` by a namespace");
+        // A syntax error is the value of the whole expression, wherever it is
+        assert_eq!(describe("2 * {1"), "missing closing `}`");
         assert_eq!(describe(")"), "unexpected `)`");
-        assert_eq!(describe("1 + )"), "cannot add the number `1` and an undefined value");
-        assert_eq!(undef_of("1 + )").cause().unwrap().describe(), "unexpected `)`");
+        assert_eq!(describe("1 + )"), "unexpected `)`");
+        assert!(undef_of("1 + )").cause().is_none());
         assert_eq!(describe("@"), "unexpected `@`");
-        assert_eq!(undef_of("1 +").cause().unwrap().describe(), "unexpected end of expression");
+        assert_eq!(describe("1 +"), "unexpected end of expression");
         assert_eq!(describe("undef.from 5"), "Custom undefined value: 5");
         assert_eq!(describe("undef.from {}"), "Custom undefined value: a namespace");
         let name = Undef::Name { pos: None, expression: None };
@@ -598,8 +613,7 @@ mod tests {
     #[test]
     fn test_unexpected_token_keeps_source_text() {
         // The token is described as written, not re-formatted
-        let u = undef_of("2 + %");
-        assert_eq!(u.cause().unwrap().describe(), "unexpected `%`");
+        assert_eq!(undef_of("2 + %").describe(), "unexpected `%`");
         assert_eq!(undef_of("12abc").describe(), "unexpected `12abc`");
     }
 

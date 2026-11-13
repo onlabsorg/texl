@@ -43,8 +43,9 @@
 //!   are the members of `ns` (see [`Scope::subcontext`]): `X` sees the members
 //!   and the names of the current scope, and cannot bind names.
 
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
-use crate::ast::Node;
+use crate::ast::{BinaryOp, Leaf, Node, UnaryOp};
 use crate::expression;
 use crate::value::{BuiltinFn, Namespace, Scope, Undef, Value};
 
@@ -135,6 +136,142 @@ macro_rules! map_values {
 
 
 // ----------------------------------------------------------------------------
+//  DEPTH LIMIT
+// ----------------------------------------------------------------------------
+//
+// Evaluation is recursive: every nested operation, and every call of a Swan
+// function, goes one level deeper on the native stack. Recursion is Swan's
+// only loop, so a function that never stops calling itself would overflow
+// the stack and kill the host. Instead, evaluation stops at a fixed depth:
+// the call that would go deeper gives an `Undefined` ("recursion too deep"),
+// and that value is returned as it is by every evaluation in progress, up to
+// the outermost one. It is not wrapped level after level like other undefined
+// values: that would build a chain as deep as the recursion itself.
+
+/// The default of [`max_depth`]: a depth that fits in 1 MB of stack with
+/// room to spare, whatever the code (a level takes up to about 0.8 kB of
+/// stack in an optimized build and 1.7 kB in an unoptimized one, which is why
+/// the default is lower there). A typical recursive function uses four or
+/// five levels for each call.
+pub const DEFAULT_MAX_DEPTH: usize = if cfg!(debug_assertions) { 400 } else { 800 };
+
+thread_local! {
+    static DEPTH: Cell<usize> = const { Cell::new(0) };
+    static MAX_DEPTH: Cell<usize> = const { Cell::new(DEFAULT_MAX_DEPTH) };
+    /// The value of an evaluation that went too deep, until the outermost
+    /// evaluation in progress returns it.
+    static TOO_DEEP: RefCell<Option<Value>> = const { RefCell::new(None) };
+}
+
+/// The depth at which evaluation stops on this thread, in levels: one for
+/// each nested operation being evaluated and one for each call in progress.
+///
+/// An evaluation that would go deeper gives an `Undefined` value, described
+/// as "recursion too deep", instead of overflowing the stack.
+pub fn max_depth() -> usize {
+    MAX_DEPTH.with(Cell::get)
+}
+
+/// Sets [`max_depth`] for this thread. A host that runs on a larger or smaller
+/// stack than the default assumes can raise or lower it.
+///
+/// # Examples
+///
+/// ```
+/// use swan_core::evaluator;
+///
+/// let default = evaluator::max_depth();
+/// evaluator::set_max_depth(100);
+/// assert_eq!(evaluator::max_depth(), 100);
+/// evaluator::set_max_depth(default);
+/// ```
+pub fn set_max_depth(levels: usize) {
+    MAX_DEPTH.with(|max| max.set(levels));
+}
+
+/// Levels of depth in use, counted until this is dropped (see [`descend`]).
+pub struct Levels(usize);
+
+/// Goes `levels` deeper for as long as the returned [`Levels`] lives. `Err`
+/// holds the value to return instead of going on: [`max_depth`] is reached.
+///
+/// The evaluator counts its own levels. This is for a host function that
+/// uses a lot of stack that the evaluator cannot see before Swan code runs
+/// again inside it: a function of a JavaScript or Python host that calls
+/// back into Swan goes through the host's interpreter on the way. Counting
+/// it as several levels makes a recursion through such a function end with
+/// "recursion too deep" before the stack does.
+///
+/// # Examples
+///
+/// ```
+/// use swan_core::evaluator;
+///
+/// let before = evaluator::max_depth();
+/// evaluator::set_max_depth(10);
+/// {
+///     let _levels = evaluator::descend(8).ok().unwrap();
+///     assert!(evaluator::descend(8).is_err());    // 16 levels: too deep
+/// }
+/// assert!(evaluator::descend(8).is_ok());
+/// evaluator::set_max_depth(before);
+/// ```
+pub fn descend(levels: usize) -> Result<Levels, Value> {
+    Levels::enter(levels, None)
+}
+
+impl Levels {
+    /// Goes `levels` deeper. `Err` holds the value to return instead: the
+    /// evaluation went too deep, here (at `pos`) or further in.
+    fn enter(levels: usize, pos: Option<usize>) -> Result<Levels, Value> {
+        if let Some(value) = too_deep() {
+            return Err(value);
+        }
+        let depth = DEPTH.with(Cell::get);
+        if depth.saturating_add(levels) > max_depth() {
+            let value = match pos {
+                Some(pos) => Value::undef_unary_at("recursion", Value::Nothing, pos),
+                None => Value::undef_unary("recursion", Value::Nothing),
+            };
+            // Every evaluation in progress returns it; the outermost one
+            // clears it. With none in progress, there is nothing to unwind.
+            if depth > 0 {
+                TOO_DEEP.with(|t| *t.borrow_mut() = Some(value.clone()));
+            }
+            return Err(value);
+        }
+        DEPTH.with(|d| d.set(depth + levels));
+        Ok(Levels(levels))
+    }
+
+    /// Returns `value`, or the value of the evaluation that went too deep
+    /// while `value` was computed.
+    fn leave(self, value: Value) -> Value {
+        too_deep().unwrap_or(value)
+    }
+}
+
+impl Drop for Levels {
+    fn drop(&mut self) {
+        let depth = DEPTH.with(|d| {
+            d.set(d.get().saturating_sub(self.0));
+            d.get()
+        });
+        if depth == 0 {
+            let _ = TOO_DEEP.try_with(|t| t.try_borrow_mut().map(|mut t| t.take()));
+        }
+    }
+}
+
+/// The value of the evaluation that went too deep, if one did and the
+/// outermost evaluation has not returned yet.
+fn too_deep() -> Option<Value> {
+    TOO_DEEP.with(|t| t.borrow().clone())
+}
+
+
+
+// ----------------------------------------------------------------------------
 //  PUBLIC ENTRY POINT
 // ----------------------------------------------------------------------------
 
@@ -175,8 +312,22 @@ macro_rules! map_values {
 /// assert!(matches!(eval(&ast, &scope), Value::Undefined(_)));
 /// ```
 pub fn eval(node: &Node, scope: &Scope) -> Value {
-    match node {
+    let level = match Levels::enter(1, Some(node.position())) {
+        Ok(level) => level,
+        Err(too_deep) => return too_deep,
+    };
+    let value = eval_node(node, scope);
+    level.leave(value)
+}
 
+/// [`eval`], one level deeper.
+///
+/// It only dispatches: every kind of node is evaluated by a function of its
+/// own, which is not inlined. Evaluation recurses through this function, so
+/// its stack frame is paid at every level of a nested expression and of a
+/// recursion; holding the locals of every operation, it was some kilobytes.
+fn eval_node(node: &Node, scope: &Scope) -> Value {
+    match node {
 
         // ===== Literals / Leafs =====
 
@@ -192,322 +343,296 @@ pub fn eval(node: &Node, scope: &Scope) -> Value {
         // Identifier lookup
         Node::Identifier(leaf) => scope.get(&leaf.val),
 
-
-
         // ===== Grouping =====
-
-        // List creation: `[X]` - the evaluated operand is flattened into the list items (Nothing is skipped)
-        Node::List(unary) => {
-            let val = eval(&unary.opd, scope);
-            let vec: Vec<_> = val.items().collect();
-            Value::list(vec)
-        }
-
-        // Namespace creation: `{X}` - body is evaluated for side effects (bindings), result is discarded.
-        // The namespace is a snapshot of the bindings of the child scope.
-        Node::Namespace(unary) => {
-            let child_scope = scope.new_child();
-            eval(&unary.opd, &child_scope);
-            Value::Namespace(child_scope.namespace())
-        }
-
-
+        Node::List(unary)      => eval_list(unary, scope),
+        Node::Namespace(unary) => eval_namespace(unary, scope),
 
         // ===== Unary Operations =====
-
-        // Unary affirm operation: `+X`
-        // (not broadcast via map_values!: the sub-module handles any value itself)
-        Node::AffirmOp(unary) => {
-            let val = eval(&unary.opd, scope);
-            affirm_operation::eval(val)
-        }
-
-        // Unary negation operation: `-X`
-        Node::NegateOp(unary) => {
-            let val = eval(&unary.opd, scope);
-            map_values!(val, |v| negation_operation::eval(v, unary.pos))
-        }
-
-        // Unary logical negation operation: `!X`
-        Node::LogicalNegationOp(unary) => {
-            let val = eval(&unary.opd, scope);
-            map_values!(val, logical_negation_operation::eval)
-        }
-
-        // Unary lifting operation: `$X`
-        Node::LiftingOp(unary) => {
-            let names = eval_names(&unary.opd);
-            map_values!(names, |n| lifting_operation::eval(n, scope, unary.pos))
-        }
-
-
+        Node::AffirmOp(unary)          => eval_affirm(unary, scope),
+        Node::NegateOp(unary)          => eval_negate(unary, scope),
+        Node::LogicalNegationOp(unary) => eval_logical_negation(unary, scope),
+        Node::LiftingOp(unary)         => eval_lifting(unary, scope),
 
         // ===== Core Operations =====
-
-        // Function definition: `A -> B` - LHO is resolved as names, not evaluated. Captures current scope.
-        Node::FunctionDefinitionOp(bin) => {
-            let names = eval_names(&bin.lho);
-            if matches!(names, Value::Undefined(_)) {
-                invalid_names("function_definition", names, bin.pos)
-            } else {
-                Value::Func{
-                    params: Box::new(names),
-                    body: bin.rho.clone(),
-                    closure: scope.clone(),
-                    expression: expression::current(),
-                }
-            }
-        }
-
-        // `f x` — function application.
-        Node::ApplicationOp(bin) => {
-            // The left-hand operand must evaluate to a callable (Builtin or Func).
-            // The right-hand operand is the argument (possibly a Tuple for multiple
-            // arguments).
-            // Functions are broadcast: for a tuple of callables each one receives the same whole argument.
-            let func = eval(&bin.lho, scope);
-            let args = eval(&bin.rho, scope);
-            map_values!(func, |f| eval_apply(f, args.clone(), bin.pos))
-        }
-
-        // Pairing: `X , Y` - flattens both sides into a normalized tuple.
-        Node::PairingOp(bin) => {
-            let lhv = eval(&bin.lho, scope);
-            let rhv = eval(&bin.rho, scope);
-            pairing_operation::eval(lhv, rhv)
-        }
-
-        // Mapping: `T => F` - outer `map_values!` iterates over args, inner over funcs. Every arg to every func.
-        Node::MappingOp(bin) => {
-            let args = eval(&bin.lho, scope);
-            let func = eval(&bin.rho, scope);
-            map_values!(args, |a: Value| map_values!(func.clone(), |f| eval_apply(f, a.clone(), bin.pos)))
-        }
-
-        // Promise chaining: `P ~> F` - each promise in `P` (tuples are broadcast) is chained to `F`; the result of each is a new promise.
-        Node::ThenOp(bin) => {
-            let promises = eval(&bin.lho, scope);
-            let func     = eval(&bin.rho, scope);
-            map_values!(promises, |p| then_operation::eval(p, func.clone(), bin.pos))
-        }
-
-        // Assignment: `name = V` - evaluates to Nothing, binds names in scope. Invalid names, or a
-        // frozen scope, give an Undefined and nothing is bound.
-        Node::AssignmentOp(bin) => {
-            let names = eval_names(&bin.lho);
-            if matches!(names, Value::Undefined(_)) {
-                return invalid_names("assignment", names, bin.pos);
-            }
-            if scope.is_frozen() {
-                return frozen_scope("assignment", scope, bin.pos);
-            }
-
-            let values = eval(&bin.rho, scope);
-            assignment_operation::eval(scope, &names, &values);
-            Value::Nothing
-        }
-
-        // Labelling: `name : V` - evaluates to V, binds names in scope. Invalid names, or a
-        // frozen scope, give an Undefined and nothing is bound.
-        Node::LabellingOp(bin) => {
-            let names = eval_names(&bin.lho);
-            if matches!(names, Value::Undefined(_)) {
-                return invalid_names("labelling", names, bin.pos);
-            }
-            if scope.is_frozen() {
-                return frozen_scope("labelling", scope, bin.pos);
-            }
-
-            let values = eval(&bin.rho, scope);
-            assignment_operation::eval(scope, &names, &values);
-            values
-        }
-
-        // `ns.expression` — namespace sub-contexting
-        Node::SubcontextingOp(bin) => {
-            // The left-hand side must evaluate to a `Value::Namespace`.
-            // The right-hand side may be any expression. It is evaluated in a frozen child of
-            // the current scope that holds the members of the namespace, so it cannot bind names.
-            // A non-namespace left side gives an `Undefined`.
-            let nst = eval(&bin.lho, scope);
-            map_values!(nst, |ns| match ns {
-                Value::Namespace(ns) => {
-                    eval(&bin.rho, &scope.subcontext(ns))
-                }
-                lhv => Value::undef_binary_at("subcontexting", lhv, Value::Nothing, bin.pos),
-            })
-        }
-
-
+        Node::FunctionDefinitionOp(bin) => eval_function_definition(bin, scope),
+        Node::ApplicationOp(bin)        => eval_application(bin, scope),
+        Node::PairingOp(bin)            => eval_pairing(bin, scope),
+        Node::MappingOp(bin)            => eval_mapping(bin, scope),
+        Node::ThenOp(bin)               => eval_then(bin, scope),
+        Node::AssignmentOp(bin)         => eval_binding(bin, scope, "assignment"),
+        Node::LabellingOp(bin)          => eval_binding(bin, scope, "labelling"),
+        Node::SubcontextingOp(bin)      => eval_subcontexting(bin, scope),
 
         // ===== Arithmetic Operations =====
-
-        // Sum: `A + B`
-        Node::SumOp(bin) => {
-            let lhv = eval(&bin.lho, scope);
-            let rhv = eval(&bin.rho, scope);
-            map_pairs!(lhv, rhv, |l,r| arithmetic_operations::eval_add(l, r, bin.pos))
-        }
-
-        // Subtraction: `A - B`
-        Node::SubtractionOp(bin) => {
-            let lhv = eval(&bin.lho, scope);
-            let rhv = eval(&bin.rho, scope);
-            map_pairs!(lhv, rhv, |l,r| arithmetic_operations::eval_subtraction(l, r, bin.pos))
-        }
-
-        // Product: `A * B`
-        Node::ProductOp(bin) => {
-            let lhv = eval(&bin.lho, scope);
-            let rhv = eval(&bin.rho, scope);
-            map_pairs!(lhv, rhv, |l,r| arithmetic_operations::eval_product(l, r, bin.pos))
-        }
-
-        // Division: `A / B`
-        Node::DivisionOp(bin) => {
-            let lhv = eval(&bin.lho, scope);
-            let rhv = eval(&bin.rho, scope);
-            map_pairs!(lhv, rhv, |l,r| arithmetic_operations::eval_division(l, r, bin.pos))
-        }
-
-        // Modulo: `A % B`
-        Node::ModuloOp(bin) => {
-            let lhv = eval(&bin.lho, scope);
-            let rhv = eval(&bin.rho, scope);
-            map_pairs!(lhv, rhv, |l,r| arithmetic_operations::eval_modulo(l, r, bin.pos))
-        }
-
-        // Exponentiation: `A ^ B`
-        Node::PowerOp(bin) => {
-            let lhv = eval(&bin.lho, scope);
-            let rhv = eval(&bin.rho, scope);
-            map_pairs!(lhv, rhv, |l,r| arithmetic_operations::eval_power(l, r, bin.pos))
-        }
-
-
+        Node::SumOp(bin)         => eval_paired_at(bin, scope, arithmetic_operations::eval_add),
+        Node::SubtractionOp(bin) => eval_paired_at(bin, scope, arithmetic_operations::eval_subtraction),
+        Node::ProductOp(bin)     => eval_paired_at(bin, scope, arithmetic_operations::eval_product),
+        Node::DivisionOp(bin)    => eval_paired_at(bin, scope, arithmetic_operations::eval_division),
+        Node::ModuloOp(bin)      => eval_paired_at(bin, scope, arithmetic_operations::eval_modulo),
+        Node::PowerOp(bin)       => eval_paired_at(bin, scope, arithmetic_operations::eval_power),
 
         // ===== Comparison Operations =====
-
-        // Equal: `A == B`
-        Node::EqualToOp(bin) => {
-            let lhv = eval(&bin.lho, scope);
-            let rhv = eval(&bin.rho, scope);
-            map_pairs!(lhv, rhv, |l,r| comparison_operations::eval_equal_to(l, r))
-        }
-
-        // Non-equal: `A != B`
-        Node::NotEqualToOp(bin) => {
-            let lhv = eval(&bin.lho, scope);
-            let rhv = eval(&bin.rho, scope);
-            map_pairs!(lhv, rhv, |l,r| comparison_operations::eval_not_equal_to(l, r))
-        }
-
-        // Greater-than: `A > B`
-        Node::GreaterThanOp(bin) => {
-            let lhv = eval(&bin.lho, scope);
-            let rhv = eval(&bin.rho, scope);
-            map_pairs!(lhv, rhv, |l,r| comparison_operations::eval_greater_than(l, r, bin.pos))
-        }
-
-        // Greater-than-or-equal: `A >= B`
+        Node::EqualToOp(bin)     => eval_paired(bin, scope, comparison_operations::eval_equal_to),
+        Node::NotEqualToOp(bin)  => eval_paired(bin, scope, comparison_operations::eval_not_equal_to),
+        Node::GreaterThanOp(bin) => eval_paired_at(bin, scope, comparison_operations::eval_greater_than),
         Node::GreaterThanOrEqualToOp(bin) => {
-            let lhv = eval(&bin.lho, scope);
-            let rhv = eval(&bin.rho, scope);
-            map_pairs!(lhv, rhv, |l,r| comparison_operations::eval_greater_than_or_equal_to(l, r, bin.pos))
+            eval_paired_at(bin, scope, comparison_operations::eval_greater_than_or_equal_to)
         }
-
-        // Less than: `A < B`
-        Node::LessThanOp(bin) => {
-            let lhv = eval(&bin.lho, scope);
-            let rhv = eval(&bin.rho, scope);
-            map_pairs!(lhv, rhv, |l,r| comparison_operations::eval_less_than(l, r, bin.pos))
-        }
-
-        // Less-than-or-equal: `A <= B`
+        Node::LessThanOp(bin)    => eval_paired_at(bin, scope, comparison_operations::eval_less_than),
         Node::LessThanOrEqualToOp(bin) => {
-            let lhv = eval(&bin.lho, scope);
-            let rhv = eval(&bin.rho, scope);
-            map_pairs!(lhv, rhv, |l,r| comparison_operations::eval_less_than_or_equal_to(l, r, bin.pos))
+            eval_paired_at(bin, scope, comparison_operations::eval_less_than_or_equal_to)
         }
 
-
-
-        // ===== Logic Operations =====
-
-        // And: `A & B` - short-circuits: `B` is evaluated only if `A` is truthy.
-        // `A` is cast to bool as a whole (a tuple is truthy if any item is), there is no pairing.
-        Node::AndOp(bin) => {
-            let lhv = eval(&bin.lho, scope);
-            if bool::from(lhv.clone()) { eval(&bin.rho, scope) } else { lhv }
-        }
-
-        // Or: `A | B` - short-circuits: `B` is evaluated only if `A` is falsy.
-        // `A` is cast to bool as a whole, there is no pairing.
-        Node::OrOp(bin) => {
-            let lhv = eval(&bin.lho, scope);
-            if bool::from(lhv.clone()) { lhv } else { eval(&bin.rho, scope) }
-        }
-
-
-
-        // ===== Conditional operations =====
-
-        // Conditional: `A ? B` - short-circuits: `B` is evaluated only if `A` is truthy, else the result is `Nothing`.
-        // `A` is cast to bool as a whole, there is no pairing.
-        Node::ConditionalOp(bin) => {
-            let lhv = eval(&bin.lho, scope);
-            if bool::from(lhv) { eval(&bin.rho, scope) } else { Value::Nothing }
-        }
-
-        // Alternative: `A ; B` - RHO is evaluated lazily, and only if LHO is exactly Nothing (a tuple is never Nothing, so it is returned as is).
-        Node::AlternativeOp(bin) => {
-            let lhv = eval(&bin.lho, scope);
-            match lhv {
-                Value::Nothing => eval(&bin.rho, scope),
-                _ => lhv
-            }
-        }
-
-
+        // ===== Logic and conditional operations (short-circuit) =====
+        Node::AndOp(bin)         => eval_and(bin, scope),
+        Node::OrOp(bin)          => eval_or(bin, scope),
+        Node::ConditionalOp(bin) => eval_conditional(bin, scope),
+        Node::AlternativeOp(bin) => eval_alternative(bin, scope),
 
         // ===== Composition operations =====
-
-        // Composition: `F << G` - apply `G` first, then `F`.
-        Node::CompositionOp(bin) => {
-            let lhv = eval(&bin.lho, scope);
-            let rhv = eval(&bin.rho, scope);
-            map_pairs!(lhv, rhv, |l,r| eval_composition(l, r))
-        }
-
-        // Reverse composition: `F >> G` - apply `F` first, then `G`. (Swapped operands to eval_composition).
-        Node::ReverseCompositionOp(bin) => {
-            let lhv = eval(&bin.lho, scope);
-            let rhv = eval(&bin.rho, scope);
-            map_pairs!(lhv, rhv, |l,r| eval_composition(r, l))
-        }
-
-
+        // `F << G` applies `G` first, then `F`; `F >> G` the other way round.
+        Node::CompositionOp(bin)        => eval_paired(bin, scope, eval_composition),
+        Node::ReverseCompositionOp(bin) => eval_paired(bin, scope, |f, g| eval_composition(g, f)),
 
         // ===== Syntax Errors =====
+        Node::Unclosed(leaf)        => eval_unclosed(leaf),
+        Node::UnexpectedToken(leaf) => eval_unexpected_token(leaf),
+        Node::TooDeep(leaf)         => Value::undef_unary_at("nesting", Value::Nothing, leaf.pos),
+    }
+}
 
-        // Missing closing bracket - turn parse errors into Undefined values
-        Node::Unclosed(leaf) => {
-            Value::Undefined(Undef::Termination{
-                expected: leaf.val,
-                pos: Some(leaf.pos),
-                expression: expression::current(),
-            })
-        }
 
-        // Undefined token - turn parse errors into Undefined values
-        Node::UnexpectedToken(leaf) => {
-            Value::Undefined(Undef::Token{
-                token: leaf.val.clone(),
-                pos: Some(leaf.pos),
-                expression: expression::current(),
-            })
+// NODE EVALUATION
+//
+// One function per kind of node, none inlined into `eval_node` (see there).
+
+/// List creation: `[X]` - the evaluated operand is flattened into the list
+/// items (Nothing is skipped).
+#[inline(never)]
+fn eval_list(unary: &UnaryOp, scope: &Scope) -> Value {
+    let val = eval(&unary.opd, scope);
+    let vec: Vec<_> = val.items().collect();
+    Value::list(vec)
+}
+
+/// Namespace creation: `{X}` - the body is evaluated for its bindings and its
+/// result is discarded. The namespace is a snapshot of the bindings of the
+/// child scope.
+#[inline(never)]
+fn eval_namespace(unary: &UnaryOp, scope: &Scope) -> Value {
+    let child_scope = scope.new_child();
+    eval(&unary.opd, &child_scope);
+    Value::Namespace(child_scope.namespace())
+}
+
+/// Unary affirm operation: `+X` (not broadcast via `map_values!`: the
+/// sub-module handles any value itself).
+#[inline(never)]
+fn eval_affirm(unary: &UnaryOp, scope: &Scope) -> Value {
+    let val = eval(&unary.opd, scope);
+    affirm_operation::eval(val)
+}
+
+/// Unary negation operation: `-X`.
+#[inline(never)]
+fn eval_negate(unary: &UnaryOp, scope: &Scope) -> Value {
+    let val = eval(&unary.opd, scope);
+    map_values!(val, |v| negation_operation::eval(v, unary.pos))
+}
+
+/// Unary logical negation operation: `!X`.
+#[inline(never)]
+fn eval_logical_negation(unary: &UnaryOp, scope: &Scope) -> Value {
+    let val = eval(&unary.opd, scope);
+    map_values!(val, logical_negation_operation::eval)
+}
+
+/// Unary lifting operation: `$X`.
+#[inline(never)]
+fn eval_lifting(unary: &UnaryOp, scope: &Scope) -> Value {
+    let names = eval_names(&unary.opd);
+    map_values!(names, |n| lifting_operation::eval(n, scope, unary.pos))
+}
+
+/// Function definition: `A -> B` - the left side is resolved as names, not
+/// evaluated. Captures the current scope.
+#[inline(never)]
+fn eval_function_definition(bin: &BinaryOp, scope: &Scope) -> Value {
+    let names = eval_names(&bin.lho);
+    if matches!(names, Value::Undefined(_)) {
+        invalid_names("function_definition", names, bin.pos)
+    } else {
+        Value::Func{
+            params: Box::new(names),
+            body: bin.rho.clone(),
+            closure: scope.clone(),
+            expression: expression::current(),
         }
     }
+}
+
+/// `f x` — function application.
+///
+/// The left-hand operand must evaluate to a callable or indexable value. The
+/// right-hand operand is the argument (possibly a tuple for multiple
+/// arguments). Functions are broadcast: for a tuple of callables each one
+/// receives the same whole argument.
+#[inline(never)]
+fn eval_application(bin: &BinaryOp, scope: &Scope) -> Value {
+    let func = eval(&bin.lho, scope);
+    let args = eval(&bin.rho, scope);
+    map_values!(func, |f| eval_apply(f, args.clone(), bin.pos))
+}
+
+/// Pairing: `X , Y` - flattens both sides into a normalized tuple.
+///
+/// `a, b, c, …` parses as a chain nested on the left, `((a, b), c), …`. The
+/// chain is walked in a loop, not by recursion, so a long list of items (a
+/// table of data written in a document) does not use a level of depth, and
+/// of stack, for each item.
+#[inline(never)]
+fn eval_pairing(bin: &BinaryOp, scope: &Scope) -> Value {
+    let mut operands = vec![&*bin.rho];
+    let mut left = &*bin.lho;
+    while let Node::PairingOp(inner) = left {
+        operands.push(&inner.rho);
+        left = &inner.lho;
+    }
+    operands.push(left);
+
+    // Left to right, each operand flattened into the items of the tuple
+    let mut items = Vec::with_capacity(operands.len());
+    for operand in operands.into_iter().rev() {
+        items.extend(eval(operand, scope).items());
+    }
+    Value::tuple(items)
+}
+
+/// Mapping: `T => F` - every item of `T` is applied to every function of `F`.
+#[inline(never)]
+fn eval_mapping(bin: &BinaryOp, scope: &Scope) -> Value {
+    let args = eval(&bin.lho, scope);
+    let func = eval(&bin.rho, scope);
+    map_values!(args, |a: Value| map_values!(func.clone(), |f| eval_apply(f, a.clone(), bin.pos)))
+}
+
+/// Promise chaining: `P ~> F` - each promise in `P` (tuples are broadcast) is
+/// chained to `F`; the result of each is a new promise.
+#[inline(never)]
+fn eval_then(bin: &BinaryOp, scope: &Scope) -> Value {
+    let promises = eval(&bin.lho, scope);
+    let func     = eval(&bin.rho, scope);
+    map_values!(promises, |p| then_operation::eval(p, func.clone(), bin.pos))
+}
+
+/// Assignment `name = V` (`op` is `"assignment"`; evaluates to Nothing) and
+/// labelling `name : V` (`"labelling"`; evaluates to V): both bind the names
+/// in `scope`. Invalid names, or a frozen scope, give an Undefined and
+/// nothing is bound.
+#[inline(never)]
+fn eval_binding(bin: &BinaryOp, scope: &Scope, op: &'static str) -> Value {
+    let names = eval_names(&bin.lho);
+    if matches!(names, Value::Undefined(_)) {
+        return invalid_names(op, names, bin.pos);
+    }
+    if scope.is_frozen() {
+        return frozen_scope(op, scope, bin.pos);
+    }
+
+    let values = eval(&bin.rho, scope);
+    assignment_operation::eval(scope, &names, &values);
+    if op == "labelling" { values } else { Value::Nothing }
+}
+
+/// `ns.expression` — namespace sub-contexting.
+///
+/// The left-hand side must evaluate to a `Value::Namespace`. The right-hand
+/// side may be any expression. It is evaluated in a frozen child of the
+/// current scope that holds the members of the namespace, so it cannot bind
+/// names. A non-namespace left side gives an `Undefined`.
+#[inline(never)]
+fn eval_subcontexting(bin: &BinaryOp, scope: &Scope) -> Value {
+    let nst = eval(&bin.lho, scope);
+    map_values!(nst, |ns| match ns {
+        Value::Namespace(ns) => {
+            eval(&bin.rho, &scope.subcontext(ns))
+        }
+        lhv => Value::undef_binary_at("subcontexting", lhv, Value::Nothing, bin.pos),
+    })
+}
+
+/// A binary operation paired over tuples (`map_pairs!`) whose errors need the
+/// position of the operator: arithmetic and ordering.
+#[inline(never)]
+fn eval_paired_at(bin: &BinaryOp, scope: &Scope, op: fn(Value, Value, usize) -> Value) -> Value {
+    let lhv = eval(&bin.lho, scope);
+    let rhv = eval(&bin.rho, scope);
+    map_pairs!(lhv, rhv, |l, r| op(l, r, bin.pos))
+}
+
+/// A binary operation paired over tuples (`map_pairs!`) that cannot fail:
+/// `==`, `!=` and the compositions.
+#[inline(never)]
+fn eval_paired(bin: &BinaryOp, scope: &Scope, op: fn(Value, Value) -> Value) -> Value {
+    let lhv = eval(&bin.lho, scope);
+    let rhv = eval(&bin.rho, scope);
+    map_pairs!(lhv, rhv, op)
+}
+
+/// And: `A & B` - short-circuits: `B` is evaluated only if `A` is truthy.
+/// `A` is cast to bool as a whole (a tuple is truthy if any item is), there is no pairing.
+#[inline(never)]
+fn eval_and(bin: &BinaryOp, scope: &Scope) -> Value {
+    let lhv = eval(&bin.lho, scope);
+    if bool::from(lhv.clone()) { eval(&bin.rho, scope) } else { lhv }
+}
+
+/// Or: `A | B` - short-circuits: `B` is evaluated only if `A` is falsy.
+/// `A` is cast to bool as a whole, there is no pairing.
+#[inline(never)]
+fn eval_or(bin: &BinaryOp, scope: &Scope) -> Value {
+    let lhv = eval(&bin.lho, scope);
+    if bool::from(lhv.clone()) { lhv } else { eval(&bin.rho, scope) }
+}
+
+/// Conditional: `A ? B` - short-circuits: `B` is evaluated only if `A` is
+/// truthy, else the result is `Nothing`. `A` is cast to bool as a whole,
+/// there is no pairing.
+#[inline(never)]
+fn eval_conditional(bin: &BinaryOp, scope: &Scope) -> Value {
+    let lhv = eval(&bin.lho, scope);
+    if bool::from(lhv) { eval(&bin.rho, scope) } else { Value::Nothing }
+}
+
+/// Alternative: `A ; B` - `B` is evaluated only if `A` is exactly Nothing (a
+/// tuple is never Nothing, so it is returned as is).
+#[inline(never)]
+fn eval_alternative(bin: &BinaryOp, scope: &Scope) -> Value {
+    let lhv = eval(&bin.lho, scope);
+    match lhv {
+        Value::Nothing => eval(&bin.rho, scope),
+        _ => lhv
+    }
+}
+
+/// Missing closing bracket: a syntax error, as an Undefined value.
+#[inline(never)]
+fn eval_unclosed(leaf: &Leaf<char>) -> Value {
+    Value::Undefined(Undef::Termination{
+        expected: leaf.val,
+        pos: Some(leaf.pos),
+        expression: expression::current(),
+    })
+}
+
+/// Unexpected token: a syntax error, as an Undefined value.
+#[inline(never)]
+fn eval_unexpected_token(leaf: &Leaf<String>) -> Value {
+    Value::Undefined(Undef::Token{
+        token: leaf.val.clone(),
+        pos: Some(leaf.pos),
+        expression: expression::current(),
+    })
 }
 
 
@@ -621,6 +746,16 @@ pub fn apply(func: Value, arg: Value) -> Value {
 /// [`eval_apply`] at position `pos` of the current expression, or with no
 /// position ([`apply`]).
 fn apply_at(func: Value, arg: Value, pos: Option<usize>) -> Value {
+    let level = match Levels::enter(1, pos) {
+        Ok(level) => level,
+        Err(too_deep) => return too_deep,
+    };
+    let value = apply_value(func, arg, pos);
+    level.leave(value)
+}
+
+/// [`apply_at`], one level deeper.
+fn apply_value(func: Value, arg: Value, pos: Option<usize>) -> Value {
     match func {
         // A built-in cannot know where it is called from: the undefined values
         // it returns with no position get the position of the call.
@@ -629,13 +764,7 @@ fn apply_at(func: Value, arg: Value, pos: Option<usize>) -> Value {
             None => f.call(arg),
         },
 
-        Value::Func { params, body, closure, expression: func_expression } => {
-            let local_scope = closure.new_child();
-            expression::with_expression(func_expression, || {
-                assignment_operation::eval(&local_scope, &params, &arg);
-                eval(&body, &local_scope)
-            })
-        }
+        func @ Value::Func { .. } => call_func(func, arg),
 
         // --- List Application ---
         Value::List(list) => {
@@ -678,6 +807,21 @@ fn apply_at(func: Value, arg: Value, pos: Option<usize>) -> Value {
 
         other => application_error(other, arg, pos),
     }
+}
+
+/// Calls the Swan function `func` (a `Value::Func`) with `arg`: binds the
+/// parameters in a child of the closure and evaluates the body there. Not
+/// inlined: it is on the stack once for every call in progress.
+#[inline(never)]
+fn call_func(func: Value, arg: Value) -> Value {
+    let Value::Func { params, body, closure, expression: func_expression } = func else {
+        return Value::Nothing;
+    };
+    let local_scope = closure.new_child();
+    expression::with_expression(func_expression, || {
+        assignment_operation::eval(&local_scope, &params, &arg);
+        eval(&body, &local_scope)
+    })
 }
 
 /// The `Undefined` of an application of `func` to `arg` that is not valid,
@@ -1270,6 +1414,125 @@ mod tests {
             other => panic!("expected Undefined, got {other:?}"),
         }
         assert!(matches!(evaluate("(1 @ 2)"), Value::Undefined(Undef::Token { .. })));
+    }
+
+    #[test]
+    fn syntax_error_in_a_group() {
+        // A syntax error anywhere makes the whole expression undefined: it is
+        // not lost in a group whose value is discarded or never evaluated,
+        // and nothing of the expression runs.
+        assert!(matches!(evaluate("{a = 1"), Value::Undefined(Undef::Termination { expected: '}', .. })));
+        assert!(matches!(evaluate("[1"), Value::Undefined(Undef::Termination { expected: ']', .. })));
+        assert!(matches!(evaluate("TRUE | (1 +"), Value::Undefined(Undef::Token { .. })));
+        assert!(matches!(evaluate("FALSE ? (1 @ 2)"), Value::Undefined(Undef::Token { .. })));
+        assert!(matches!(evaluate("f = x -> (x +"), Value::Undefined(Undef::Token { .. })));
+        assert!(matches!(evaluate("{a = 1 +}"), Value::Undefined(Undef::Token { .. })));
+
+        let scope = Scope::new();
+        let ast = Parser::new(Lexer::new("x = 1, (2 +")).parse();
+        assert!(matches!(eval(&ast, &scope), Value::Undefined(_)));
+        assert_eq!(scope.get("x"), Value::Nothing);
+    }
+
+    // ----- Depth limit -----
+
+    /// Evaluates `src` with the built-ins; `Err` holds the description of an undefined result.
+    fn run(src: &str) -> Result<Value, String> {
+        let scope = crate::builtins::root_scope();
+        match eval(&Parser::new(Lexer::new(src)).parse(), &scope) {
+            Value::Undefined(u) => Err(u.describe()),
+            value => Ok(value),
+        }
+    }
+
+    #[test]
+    fn recursion_without_end_is_undefined() {
+        let too_deep = Err("recursion too deep".to_string());
+        assert_eq!(run("f = n -> f (n + 1), f 0"), too_deep);
+        // Not in tail position: the value is not wrapped at every level
+        assert_eq!(run("g = n -> 1 + g (n + 1), g 0"), too_deep);
+        assert_eq!(run("even = n -> odd (n + 1), odd = n -> even (n + 1), even 0"), too_deep);
+        // Through built-ins that call Swan values
+        assert_eq!(run("f = x -> x, h = n -> (f >> h) n, h 0"), too_deep);
+        assert_eq!(run("ns = {__text__: s -> text.from s}, text.from ns"), too_deep);
+        assert_eq!(run("p = n -> (n ~> p), p 0"), too_deep);
+
+        // One value, with no chain of causes as deep as the recursion
+        let scope = crate::builtins::root_scope();
+        let value = eval(&Parser::new(Lexer::new("g = n -> [1 + g (n + 1)], x = g 0, x")).parse(), &scope);
+        let Value::Undefined(u) = value else { panic!("expected Undefined, got {value:?}") };
+        assert_eq!(u.describe(), "recursion too deep");
+        assert!(u.cause().is_none());
+        assert!(u.pos().is_some());
+
+        // The next evaluation starts clean
+        assert_eq!(eval(&Parser::new(Lexer::new("1 + 1")).parse(), &scope), Value::Numb(2.0));
+        assert_eq!(DEPTH.with(Cell::get), 0);
+    }
+
+    #[test]
+    fn functions_share_their_body() {
+        // Defining, reading and calling a function copies a pointer, not its syntax tree
+        let scope = crate::builtins::root_scope();
+        let ast = Parser::new(Lexer::new("f = x -> x + 1, g = f, (f, g)")).parse();
+        let Value::Tuple(items) = eval(&ast, &scope) else { panic!() };
+        let (Value::Func { body: a, .. }, Value::Func { body: b, .. }) = (&items[0], &items[1]) else { panic!() };
+        assert!(Rc::ptr_eq(a, b));
+        let Value::Func { body: c, .. } = scope.get("f") else { panic!() };
+        assert!(Rc::ptr_eq(a, &c));
+        // The function outlives the tree it was parsed in
+        drop(ast);
+        assert_eq!(eval(&Parser::new(Lexer::new("g 2")).parse(), &scope), Value::Numb(3.0));
+    }
+
+    #[test]
+    fn recursion_within_the_limit() {
+        assert_eq!(run("f = n -> n > 0 ? n + f (n - 1) ; 0, f 50"), Ok(Value::Numb(1275.0)));
+
+        // The limit is a setting of the thread
+        let default = max_depth();
+        assert_eq!(default, DEFAULT_MAX_DEPTH);
+        set_max_depth(20);
+        assert_eq!(run("f = n -> n > 0 ? n + f (n - 1) ; 0, f 50"), Err("recursion too deep".to_string()));
+        assert_eq!(run("1 + 2 * 3"), Ok(Value::Numb(7.0)));
+        set_max_depth(0);
+        assert_eq!(run("1"), Err("recursion too deep".to_string()));
+        set_max_depth(default);
+        assert_eq!(run("1"), Ok(Value::Numb(1.0)));
+    }
+
+    #[test]
+    fn long_and_deep_expressions() {
+        // A long tuple is not deep: its items are evaluated in a loop
+        let items = vec!["1"; 100_000].join(", ");
+        assert_eq!(run(&format!("list.size [{items}]")), Ok(Value::Numb(100_000.0)));
+        // ... and binding its surplus items to the last name takes one step
+        assert_eq!(run(&format!("(a, b) = ({items}), a + list.size [b]")), Ok(Value::Numb(100_000.0)));
+
+        // A chain of another operator is as deep as it is long
+        assert_eq!(run(&vec!["1"; 100].join(" + ")), Ok(Value::Numb(100.0)));
+        assert_eq!(run(&vec!["1"; 100_000].join(" + ")), Err("recursion too deep".to_string()));
+
+        // Nesting is limited by the parser
+        let nested = format!("{}1{}", "[".repeat(100_000), "]".repeat(100_000));
+        assert_eq!(run(&nested), Err("the expression is nested too deep".to_string()));
+    }
+
+    #[test]
+    fn long_promise_chains_resolve_without_recursion() {
+        use crate::value::Promise;
+        let first = Promise::new();
+        let mut last = Value::Promise(first.clone());
+        for _ in 0..100_000 {
+            let Value::Promise(p) = &last else { panic!() };
+            last = p.then(|v| match v {
+                Value::Numb(n) => Value::Numb(n + 1.0),
+                other => other,
+            });
+        }
+        first.resolve(Value::Numb(0.0));
+        let Value::Promise(p) = &last else { panic!() };
+        assert_eq!(p.0.borrow().value, Some(Value::Numb(100_000.0)));
     }
 
     // ----- Positions of built-in errors -----

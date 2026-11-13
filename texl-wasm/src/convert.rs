@@ -21,6 +21,10 @@
 //! itself), and undefined values become `TexlUndefined` objects (see
 //! [`crate::undefined`]).
 //!
+//! A Swan promise that holds itself (`promise.resolve p [p]`) gives one JS
+//! Promise, which holds itself the same way; resolved with itself alone, it
+//! gives a JS Promise of `null`, since JS has no such promise.
+//!
 //! A JS function called from Swan gets the items of the Swan argument as its
 //! arguments: Swan `f(a, b)` calls it with `a` and `b`, `f(a)` with `a`, and
 //! `f()` with none. A JS call of a Swan function does the same the other way. Positions are
@@ -29,6 +33,9 @@
 //! [`texl_core::engine::convert_tag_positions`]). An object with the members
 //! of a document gets its tag spans converted back to bytes, so a document
 //! passed back to Swan keeps its positions.
+
+use std::cell::RefCell;
+use std::rc::Rc;
 
 use js_sys::{Array, Function, Object, Reflect};
 use texl_core::document::{utf16_offset, utf16_to_byte_offset};
@@ -63,6 +70,42 @@ extern "C" {
     /// JavaScript's `String(value)`, which throws for some objects.
     #[wasm_bindgen(catch, js_name = String)]
     pub(crate) fn js_string(value: &JsValue) -> Result<String, JsValue>;
+}
+
+/// The depth a call of a JS function counts for (see
+/// `swan_core::evaluator::descend`). A round trip from Swan through a JS
+/// function and back into Swan uses the browser's call stack, about as much
+/// as this many levels of evaluation (measured in Chrome).
+const HOST_CALL_LEVELS: usize = 16;
+
+thread_local! {
+    // The Swan promises whose value is being converted to JS, each with the
+    // JS Promise made for it (see `swan_value_to_js`).
+    static CONVERTING: RefCell<Vec<(*const (), JsValue)>> = const { RefCell::new(Vec::new()) };
+}
+
+thread_local! {
+    // The JS arrays and objects being converted to Swan or normalized, from
+    // the outermost in: one met again inside itself is a cycle.
+    static PATH: RefCell<Vec<JsValue>> = const { RefCell::new(Vec::new()) };
+}
+
+/// Runs `f`, which converts the items or members of the array or object
+/// `val`. A value that contains itself (`a.self = a`, a DOM node, `window`)
+/// would be followed forever: it is a `TypeError` instead.
+fn inside<R>(val: &JsValue, f: impl FnOnce() -> Result<R, JsValue>) -> Result<R, JsValue> {
+    if PATH.with(|path| path.borrow().iter().any(|outer| Object::is(outer, val))) {
+        return Err(js_sys::TypeError::new("cannot convert a value that contains itself").into());
+    }
+    PATH.with(|path| path.borrow_mut().push(val.clone()));
+    let result = f();
+    PATH.with(|path| path.borrow_mut().pop());
+    result
+}
+
+/// The JS Promise of the Swan promise at `key`, if its value is being converted.
+fn converting(key: *const ()) -> Option<JsValue> {
+    CONVERTING.with(|c| c.borrow().iter().find(|(k, _)| *k == key).map(|(_, js)| js.clone()))
 }
 
 /// The `Undefined` of what JS threw or rejected with, an `Error` or any other value.
@@ -136,9 +179,9 @@ pub fn js_to_swan_value(val: JsValue) -> Result<Value, JsValue> {
         Ok(value)
     } else if val.is_instance_of::<Tuple>() {
         // Before the array test, since a Tuple is also an array
-        Ok(Value::tuple(array_items(&Array::from(&val))?))
+        inside(&val, || Ok(Value::tuple(array_items(val.unchecked_ref())?)))
     } else if Array::is_array(&val) {
-        Ok(Value::list(array_items(&Array::from(&val))?))
+        inside(&val, || Ok(Value::list(array_items(val.unchecked_ref())?)))
     } else if is_thenable(&val) {
         let swan_promise = Promise::new();
         let sp = swan_promise.clone();
@@ -155,6 +198,11 @@ pub fn js_to_swan_value(val: JsValue) -> Result<Value, JsValue> {
         let js_fn: Function = val.into();
         let host_fn = js_fn.clone();
         let builtin = BuiltinFn::new("js_callback", move |arg: Value| {
+            // A JS function that calls back into Swan uses the browser's stack
+            let _levels = match swan_core::evaluator::descend(HOST_CALL_LEVELS) {
+                Ok(levels) => levels,
+                Err(too_deep) => return too_deep,
+            };
             // The items of the argument are the arguments
             let args = Array::new();
             match &arg {
@@ -170,7 +218,7 @@ pub fn js_to_swan_value(val: JsValue) -> Result<Value, JsValue> {
     } else if val.is_object() {
         // Convert JS Object to nested Swan Namespace
         let mut ns = Namespace::new();
-        for_each_entry(&val.into(), |key, value| ns.insert(key, value))?;
+        inside(&val, || for_each_entry(val.unchecked_ref(), |key, value| ns.insert(key, value)))?;
         // A document comes back with its tag positions in bytes
         let ns = texl_core::engine::convert_tag_positions(&ns, utf16_to_byte_offset).unwrap_or(ns);
         Ok(Value::Namespace(ns))
@@ -213,7 +261,7 @@ pub fn normalize(val: JsValue) -> Result<JsValue, JsValue> {
     } else if js_to_undefined(&val).is_some() {
         Ok(val)
     } else if val.is_instance_of::<Tuple>() {
-        let mut items = normalized_items(&Array::from(&val))?;
+        let mut items = inside(&val, || normalized_items(val.unchecked_ref()))?;
         Ok(match items.len() {
             0 => JsValue::NULL,
             1 => items.remove(0),
@@ -225,7 +273,7 @@ pub fn normalize(val: JsValue) -> Result<JsValue, JsValue> {
         })
     } else if Array::is_array(&val) {
         let arr = Array::new();
-        normalized_items(&Array::from(&val))?.iter().for_each(|item| { arr.push(item); });
+        inside(&val, || normalized_items(val.unchecked_ref()))?.iter().for_each(|item| { arr.push(item); });
         Ok(arr.into())
     } else if is_thenable(&val) || !is_plain_object(&val) {
         Ok(val)
@@ -233,10 +281,13 @@ pub fn normalize(val: JsValue) -> Result<JsValue, JsValue> {
         // Members are kept, also when they are `null`
         let obj = Object::new();
         let keys = Object::keys(val.unchecked_ref::<Object>());
-        for i in 0..keys.length() {
-            let key = keys.get(i);
-            Reflect::set(&obj, &key, &normalize(Reflect::get(&val, &key)?)?)?;
-        }
+        inside(&val, || {
+            for i in 0..keys.length() {
+                let key = keys.get(i);
+                Reflect::set(&obj, &key, &normalize(Reflect::get(&val, &key)?)?)?;
+            }
+            Ok(())
+        })?;
         Ok(obj.into())
     }
 }
@@ -273,15 +324,29 @@ pub fn swan_value_to_js(val: &Value) -> JsValue {
             obj.into()
         }
         Value::Promise(swan_promise) => {
-            let swan_promise = swan_promise.clone();
-            let js_promise = js_sys::Promise::new(&mut |resolve: Function, _reject: Function| {
-                // `then` fires immediately if already resolved, otherwise on resolution.
-                swan_promise.then(move |v| {
-                    let _ = resolve.call1(&JsValue::UNDEFINED, &swan_value_to_js(&v));
-                    Value::Nothing
-                });
+            // A promise whose value is being converted, met again inside that
+            // value (`promise.resolve p [p]`): the JS Promise being made for it
+            let key = Rc::as_ptr(&swan_promise.0) as *const ();
+            if let Some(js_promise) = converting(key) {
+                return js_promise;
+            }
+            let mut resolver = None;
+            let js_promise: JsValue = js_sys::Promise::new(&mut |resolve: Function, _reject: Function| {
+                resolver = Some(resolve);
+            }).into();
+            let Some(resolve) = resolver else { return js_promise };
+            let own = js_promise.clone();
+            // `then` fires immediately if already resolved, otherwise on resolution.
+            swan_promise.then(move |v| {
+                CONVERTING.with(|c| c.borrow_mut().push((key, own.clone())));
+                let value = swan_value_to_js(&v);
+                CONVERTING.with(|c| c.borrow_mut().pop());
+                // JS rejects a promise resolved with itself
+                let value = if Object::is(&value, &own) { JsValue::NULL } else { value };
+                let _ = resolve.call1(&JsValue::UNDEFINED, &value);
+                Value::Nothing
             });
-            js_promise.into()
+            js_promise
         }
         Value::Undefined(undef) => undefined_to_js(undef),
         Value::Func { .. } | Value::Builtin(_) => function_to_js(val),

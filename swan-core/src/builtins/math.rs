@@ -94,6 +94,8 @@ fn math_max(arg: Value) -> Value {
 
     for item in arg.items() {
         match item {
+            // A NaN among the items is the result: it is not less than anything
+            Value::Numb(n) if n.is_nan() => return Value::Numb(n),
             Value::Numb(n) => {
                 if n > max_val {
                     max_val = n;
@@ -125,6 +127,7 @@ fn math_min(arg: Value) -> Value {
 
     for item in arg.items() {
         match item {
+            Value::Numb(n) if n.is_nan() => return Value::Numb(n),
             Value::Numb(n) => {
                 if n < min_val {
                     min_val = n;
@@ -223,6 +226,17 @@ mod tests {
     // ---------------------------------------------------------------------
     //  Single-argument functions (builtin_f64_1)
     // ---------------------------------------------------------------------
+
+    #[test]
+    fn test_max_and_min_of_nan() {
+        let is_nan = |src: &str| matches!(run(src), Value::Numb(n) if n.is_nan());
+        assert!(is_nan("math.max(0/0)"));
+        assert!(is_nan("math.min(0/0)"));
+        assert!(is_nan("math.max(1, 0/0, 3)"));
+        assert!(is_nan("math.min(1, 0/0, 3)"));
+        assert_eq!(run("math.max(1, 3, 2)"), Value::Numb(3.0));
+        assert_eq!(run("math.min(1/0, 3, 2)"), Value::Numb(2.0));
+    }
 
     #[test]
     fn test_sqrt() {

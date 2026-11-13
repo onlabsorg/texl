@@ -159,8 +159,8 @@ mod tests {
         assert_eq!(evaluate_bool("(-[]) == (-{})"), false);
         assert_eq!(evaluate_bool("([]^2) == ([]^2)"), true);
         assert_eq!(evaluate_bool("([]^2) == ({}^2)"), false);
-        assert_eq!(evaluate_bool("(@) == (@)"), true);
-        assert_eq!(evaluate_bool("(~) == (@)"), false);
+        assert_eq!(evaluate("@"), evaluate(" @"));
+        assert_ne!(evaluate("~"), evaluate("@"));
         assert_eq!(evaluate("(1,2"), evaluate("(1,2 "));
     }
 
@@ -220,8 +220,6 @@ mod tests {
         assert_eq!(evaluate_bool("(-[]) != (-{})"), true);
         assert_eq!(evaluate_bool("([]^2) != ([]^2)"), false);
         assert_eq!(evaluate_bool("([]^2) != ({}^2)"), true);
-        assert_eq!(evaluate_bool("(@) != (@)"), false);
-        assert_eq!(evaluate_bool("(~) != (@)"), true);
         assert_ne!(evaluate("(1,2"), evaluate("[1,2"));
     }
 

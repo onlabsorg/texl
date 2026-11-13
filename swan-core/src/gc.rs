@@ -396,7 +396,7 @@ mod tests {
             "g = (() -> (y = 1, () -> y))()",
             "p = promise.create(), q = p ~> (x -> x)",
             "f = x -> x, h = f >> f",
-            "f = x -> x, m = list.map f",
+            "f = x -> x, j = text.join f",
             "u = undef.from (x -> x)",
             "f = x -> x, ns = {a: {b: [f]}}",
         ];

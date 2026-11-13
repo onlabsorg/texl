@@ -311,6 +311,25 @@ async function testContext() {
     check("Swan promises come back as JS promises", r instanceof Promise, true);
     check("Swan promises resolve in JS", await r, 20);
 
+    // Recursion without end is an undefined value, not a crash
+    const deep = await context.render("<% f = n -> 1 + f (n + 1) %><% f 0 %>|<% s = n -> n > 0 ? n + s (n - 1) ; 0, s 120 %>");
+    check("recursion without end is undefined", deep.tags[1].value.description, "recursion too deep");
+    check("it has no chain of causes", deep.tags[1].value.cause, null);
+    check("a recursion that ends is not cut short", deep.text, "[[Undefined]]|7260");
+    check("recursion without end, called from JS", context.get("f")(0).description, "recursion too deep");
+    context.set("again", n => context.get("h")(n + 1));
+    check("recursion without end through a JS function", (await context.render("<% h = n -> again n %><% h 0 %>")).tags[1].value.description, "recursion too deep");
+    check("an expression nested too deep is a syntax error", (await context.render("<% " + "(".repeat(5000) + " %>")).tags[0].value.description, "the expression is nested too deep");
+    check("a long chain is too deep, not a crash", (await context.render("<% " + Array(20000).fill("1").join(" + ") + " %>")).tags[0].value.description, "recursion too deep");
+    check("a long tuple is not deep", (await context.render("<% list.size [" + Array(20000).fill("1").join(", ") + "] %>")).text, "20000");
+
+    // A promise that holds itself is followed once (T21)
+    const own = await context.render("<% own = promise.create(), promise.resolve own own, own %>|<% boxed = promise.create(), promise.resolve boxed [boxed], boxed %>");
+    check("a promise resolved with itself is rendered once", own.text, "[[Promise]]|[[List of 1]]");
+    check("a promise resolved with itself is a JS promise of null", await context.get("own"), null);
+    const boxed = context.get("boxed");
+    check("a promise that holds itself gives one JS promise", (await boxed)[0] === boxed, true);
+
     check("contexts cannot import", Object.keys(context.get("texl")).length, 0);
 }
 
@@ -542,6 +561,20 @@ async function testNormalize() {
     check("normalize returns functions as they are", normalize(fn), fn);
     check("normalize returns promises as they are", normalize(promise), promise);
     check("normalize returns class instances as they are", normalize(date), date);
+
+    // A value that contains itself is an error, not an endless conversion
+    const loop = { name: "loop" }; loop.self = loop;
+    const ring = [1]; ring.push([ring]);
+    const cyclic = (f) => { try { f(); return "converted"; } catch (err) { return err instanceof TypeError ? "TypeError" : String(err); } };
+    check("a global that contains itself is a TypeError", cyclic(() => new TexlEngine({ loop })), "TypeError");
+    check("an array that contains itself is a TypeError", cyclic(() => new TexlEngine().createContext().set("ring", ring)), "TypeError");
+    check("normalize of a value that contains itself is a TypeError", cyclic(() => normalize(loop)), "TypeError");
+    check("normalize of an array that contains itself is a TypeError", cyclic(() => normalize(ring)), "TypeError");
+    const twice = { a: [1] }; twice.b = twice.a;
+    check("a value met twice is not a cycle", cyclic(() => normalize({ twice, again: twice })), "converted");
+    const cyclicContext = new TexlEngine().createContext({ loopy: () => loop });
+    check("a function result that contains itself is a host error", (await cyclicContext.render("<% loopy() %>")).tags[0].value.type, "HostError");
+    check("conversion works after a cycle", (await cyclicContext.render("<% [1, 2] %>")).tags[0].value.length, 2);
 
     const context = new TexlEngine().createContext();
     await context.render('<% u = 1 + "a" %>');

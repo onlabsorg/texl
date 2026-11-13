@@ -12,6 +12,35 @@ class ContextTest(unittest.IsolatedAsyncioTestCase):
         self.engine = pytexl.Engine({"g": "global"})
         self.context = self.engine.create_context({"a": 10, "b": 20, "name": "World"})
 
+    async def test_recursion_without_end_is_undefined(self):
+        rendering = await self.context.render("<% f = n -> 1 + f (n + 1) %><% f 0 %>|<% 1 + 1 %>")
+        self.assertEqual(rendering.text, "[[Undefined]]|2")
+        undefined = rendering.tags[1].value
+        self.assertEqual(undefined.description, "recursion too deep")
+        self.assertIsNone(undefined.cause)
+        # Called from Python, and through a Python function
+        self.assertEqual(self.context.get("f")(0).description, "recursion too deep")
+        self.context.set("again", lambda n: self.context.get("g")(n + 1))
+        deep = await self.context.render("<% g = n -> again n %><% g 0 %>")
+        self.assertEqual(deep.tags[1].value.description, "recursion too deep")
+        # A recursion that ends is not cut short
+        self.assertEqual((await self.context.render("<% s = n -> n > 0 ? n + s (n - 1) ; 0, s 150 %>")).text, "11325")
+
+    def test_recursion_without_end_is_undefined_on_another_thread(self):
+        import threading
+
+        result = []
+
+        async def render():
+            context = pytexl.Engine().create_context()
+            rendering = await context.render("<% f = n -> 1 + f (n + 1), f 0 %>")
+            result.append(rendering.tags[0].value.description)
+
+        thread = threading.Thread(target=lambda: asyncio.run(render()))
+        thread.start()
+        thread.join()
+        self.assertEqual(result, ["recursion too deep"])
+
     async def test_names_lists_the_context_bindings(self):
         self.assertEqual(self.context.names(), ["a", "b", "name", "texl"])
         self.assertEqual(self.engine.create_context().names(), ["texl"])

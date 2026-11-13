@@ -96,6 +96,7 @@ Everything is `Rc`-based and single-threaded. See
 | Async runtime   | the `SpawnFn` passed to `Engine::new`, or `helpers::run_pending` | `spawn_local` (built in) | the asyncio loop (built in)  |
 | Built-ins       | `swan_core::builtins::set_builtin(name, value)` | —                        | —                             |
 | Memory          | `swan_core::gc::collect()`                   | `collect()`                 | `pytexl.collect()`            |
+| Depth limit     | `swan_core::evaluator::set_max_depth(levels)` | set for the browser's stack | set for the thread's stack   |
 
 - **Globals** are copied into the scope of every document and context created
   afterwards. A global can be any value; a host function is a `BuiltinFn` in

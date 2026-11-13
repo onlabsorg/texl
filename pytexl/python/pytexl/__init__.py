@@ -245,6 +245,7 @@ class Engine(_ThreadBound):
         base_url: str | os.PathLike[str] | None = None,
     ) -> None:
         super().__init__(NativeEngine(_base_url(base_url)))
+        _pytexl.set_stack_megabytes(_stack_megabytes())
         self._native.add_loader("file", loaders.load_file)
         self._native.set_default_loader(loaders.load_file)
         self._native.add_loader("http", loaders.load_http)
@@ -573,6 +574,28 @@ def _normalized_items(items: list[Any] | tuple[Any, ...]) -> list[Any]:
         elif item is not None:
             result.append(item)
     return result
+
+
+def _stack_megabytes() -> int:
+    """Returns the stack Swan may use on the current thread, in megabytes.
+
+    Swan evaluates by recursion, and stops with an ``Undefined`` ("recursion
+    too deep") at a depth that fits its stack. The depth is set for 1 MB
+    unless more is known to be there: the main thread has the stack limit of
+    the process (8 MB on most systems), and a thread started after
+    ``threading.stack_size(n)`` has ``n`` bytes. Half of it is left to Python.
+    """
+    size = threading.stack_size()
+    if size == 0 and threading.current_thread() is threading.main_thread():
+        try:
+            import resource
+
+            size = resource.getrlimit(resource.RLIMIT_STACK)[0]
+            if size == resource.RLIM_INFINITY:
+                size = 8 * 2**20
+        except (ImportError, OSError, ValueError):
+            size = 0  # not Unix: assume the least
+    return max(1, min(size // 2**21, 16))
 
 
 def _uri(uri: str | os.PathLike[str]) -> str:

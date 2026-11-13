@@ -168,7 +168,10 @@ impl NativeContext {
         let scope = self.scope.clone();
         Promise { inner: runtime::promise_of(async move {
             let rendering = template::render(template, &scope).await;
-            Value::Namespace(rendering.to_namespace(char_offset))
+            let rendering = Value::Namespace(rendering.to_namespace(char_offset));
+            // As `Engine.render` does: free what only reference cycles keep alive
+            swan_core::gc::collect();
+            rendering
         }) }
     }
 }
@@ -213,6 +216,13 @@ fn collect() -> usize {
     swan_core::gc::collect()
 }
 
+/// Sets the depth at which evaluation stops on this thread, as a multiple of
+/// the default, which assumes 1 MB of stack (see `swan_core::evaluator::max_depth`).
+#[pyfunction]
+fn set_stack_megabytes(megabytes: usize) {
+    swan_core::evaluator::set_max_depth(megabytes.max(1) * swan_core::evaluator::DEFAULT_MAX_DEPTH);
+}
+
 /// The native module of the `pytexl` package.
 #[pymodule(gil_used = true)]
 fn _pytexl(m: &Bound<'_, PyModule>) -> PyResult<()> {
@@ -222,6 +232,7 @@ fn _pytexl(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<Function>()?;
     m.add_class::<Undefined>()?;
     m.add_function(wrap_pyfunction!(collect, m)?)?;
+    m.add_function(wrap_pyfunction!(set_stack_megabytes, m)?)?;
     Ok(())
 }
 

@@ -205,6 +205,29 @@ class EventLoopTest(unittest.TestCase):
         self.assertEqual(asyncio.run(render(engine, "<% x + 1 %>")), "2")
 
 
+class ClosedLoopTest(unittest.TestCase):
+    def test_rendering_works_after_a_loop_that_never_ran_its_tasks(self):
+        """A loop stopped with engine work scheduled on it must not block later loops."""
+        engine = pytexl.Engine()
+        context = engine.create_context({"a": 1})
+        promises = []
+
+        async def start_and_stop():
+            asyncio.get_running_loop().stop()
+            promises.append(engine._native.render("mem://lost", "<% 1 %>"))
+
+        loop = asyncio.new_event_loop()
+        loop.create_task(start_and_stop())
+        loop.run_forever()
+        loop.close()
+
+        async def render():
+            return (await asyncio.wait_for(context.render("<% a + 1 %>"), 5)).text
+
+        self.assertEqual(asyncio.run(render()), "2")
+        self.assertEqual(asyncio.run(render()), "2")
+
+
 class LoadTest(unittest.IsolatedAsyncioTestCase):
     async def test_load_returns_the_document(self):
         engine, _ = memory_engine({"mem://doc": "<% x = 6 %>x * 7 = <% x * 7 %>"})

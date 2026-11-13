@@ -181,6 +181,13 @@ export interface TexlUndefined {
 /// starts from a new scope and a new import cache: within one rendering, each imported
 /// document is fetched and rendered once; the next rendering fetches it again. An imported
 /// document renders in its own scope, and does not see the names of its importer.
+/// The size of the stack this module is linked with, in megabytes: the
+/// `stack-size` of the wasm target in `.cargo/config.toml`. The depth limit
+/// of the evaluator is its default, which assumes 1 MB, times this. Measured
+/// in Chrome, that is about 40% of the depth at which the browser's own call
+/// stack ends (which a larger wasm stack does not move).
+const STACK_MEGABYTES: usize = 2;
+
 #[wasm_bindgen]
 pub struct TexlEngine {
     engine: Engine,
@@ -221,10 +228,13 @@ impl TexlEngine {
             None => None,
         };
 
+        report_panics();
         let engine = Engine::new(Some(spawner_fn(wasm_bindgen_futures::spawn_local)));
         engine.add_loader("http", loader_fn(loader::load_http));
         engine.add_loader("https", loader_fn(loader::load_http));
         use_js_clock(&engine);
+        // The limit of the evaluator assumes 1 MB of stack; this module has more
+        swan_core::evaluator::set_max_depth(STACK_MEGABYTES * swan_core::evaluator::DEFAULT_MAX_DEPTH);
 
         if let Some(globals) = globals {
             for_each_entry(&globals, |name, value| engine.add_builtin(&name, value))?;
@@ -444,7 +454,10 @@ impl TexlContext {
         let scope = self.scope.clone();
         wasm_bindgen_futures::future_to_promise(async move {
             let rendering = template::render(template, &scope).await;
-            Ok(swan_value_to_js(&Value::Namespace(rendering.to_namespace(utf16_offset))))
+            let rendering = swan_value_to_js(&Value::Namespace(rendering.to_namespace(utf16_offset)));
+            // As `TexlEngine.render` does: free what only reference cycles keep alive
+            swan_core::gc::collect();
+            Ok(rendering)
         })
     }
 }
@@ -504,6 +517,22 @@ pub fn is_swan_function(
 }
 
 /// `location.href` of the current page or worker, if any.
+#[wasm_bindgen]
+extern "C" {
+    #[wasm_bindgen(js_namespace = console, js_name = error)]
+    fn console_error(message: &str);
+}
+
+/// Makes a panic write its message to the console. A panic is a bug of this
+/// library: it stops the module with `RuntimeError: unreachable`, which says
+/// nothing of what went wrong.
+fn report_panics() {
+    static HOOK: std::sync::Once = std::sync::Once::new();
+    HOOK.call_once(|| {
+        std::panic::set_hook(Box::new(|info| console_error(&format!("texl: {info}"))));
+    });
+}
+
 fn location_href() -> Option<String> {
     let location = Reflect::get(&js_sys::global(), &JsValue::from_str("location")).ok()?;
     Reflect::get(&location, &JsValue::from_str("href")).ok()?.as_string()

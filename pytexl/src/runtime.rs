@@ -58,6 +58,9 @@ struct Executor {
     ready: Arc<ReadyQueue>,
     /// True while `drain` runs: tasks woken meanwhile are polled by the same call.
     draining: Cell<bool>,
+    /// The event loop on which a call of `drain` is scheduled, while
+    /// `ready.scheduled` is set.
+    scheduled_on: RefCell<Option<Py<PyAny>>>,
 }
 
 thread_local! {
@@ -106,7 +109,34 @@ pub fn promise_of(fut: impl Future<Output = swan_core::value::Value> + 'static) 
 pub fn kick() {
     let ready = EXECUTOR.with(|ex| ex.ready.clone());
     if !ready.is_empty() {
+        forget_stale_schedule(&ready);
         schedule(&ready);
+    }
+}
+
+/// Clears `scheduled` if the loop `drain` was scheduled on will never call
+/// it: the loop was closed, or stopped and replaced by another, before it
+/// ran the call. Without this, the flag would stay set and no task of the
+/// thread would ever be polled again.
+fn forget_stale_schedule(ready: &ReadyQueue) {
+    if !ready.scheduled.load(Ordering::Acquire) || EXECUTOR.with(|ex| ex.draining.get()) {
+        return;
+    }
+    let stale = Python::attach(|py| {
+        let scheduled_on = EXECUTOR.with(|ex| ex.scheduled_on.borrow().as_ref().map(|l| l.clone_ref(py)));
+        let Some(scheduled_on) = scheduled_on else { return true };
+        let scheduled_on = scheduled_on.bind(py);
+        match asyncio(py).and_then(|a| a.call_method0("get_running_loop")) {
+            Ok(running) => {
+                !running.is(scheduled_on)
+                    || scheduled_on.call_method0("is_closed").and_then(|c| c.is_truthy()).unwrap_or(true)
+            }
+            // No running loop: nothing can be scheduled now anyway
+            Err(_) => false,
+        }
+    });
+    if stale {
+        ready.scheduled.store(false, Ordering::Release);
     }
 }
 
@@ -119,6 +149,7 @@ fn schedule(ready: &ReadyQueue) {
     let scheduled = Python::attach(|py| -> PyResult<()> {
         let event_loop = asyncio(py)?.call_method0("get_running_loop")?;
         event_loop.call_method1("call_soon", (wrap_pyfunction!(drain, py)?,))?;
+        EXECUTOR.with(|ex| *ex.scheduled_on.borrow_mut() = Some(event_loop.unbind()));
         Ok(())
     });
     if scheduled.is_err() {
@@ -130,9 +161,20 @@ fn schedule(ready: &ReadyQueue) {
 /// Polls the ready tasks, until none is left. Called by the asyncio loop.
 #[pyfunction]
 fn drain() {
+    // Clears `draining` when the drain ends, also if a task panics: the flag
+    // left set would stop every later drain from being scheduled.
+    struct Draining<'a>(&'a Cell<bool>);
+    impl Drop for Draining<'_> {
+        fn drop(&mut self) {
+            self.0.set(false);
+        }
+    }
+
     EXECUTOR.with(|ex| {
         ex.ready.scheduled.store(false, Ordering::Release);
+        ex.scheduled_on.borrow_mut().take();
         ex.draining.set(true);
+        let _draining = Draining(&ex.draining);
         loop {
             let ids = ex.ready.take();
             if ids.is_empty() {
@@ -147,7 +189,6 @@ fn drain() {
                 }
             }
         }
-        ex.draining.set(false);
     });
 }
 

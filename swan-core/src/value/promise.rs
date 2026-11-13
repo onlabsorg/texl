@@ -46,9 +46,10 @@ impl PromiseCallback {
     fn call(&self, v: Value) -> Value {
         match self {
             PromiseCallback::Native(f) => f(v),
-            PromiseCallback::Apply(f, pos, expression) => {
+            // The `~>` is where this evaluation enters Swan (see `expression::entry`)
+            PromiseCallback::Apply(f, pos, expression) => expression::with_entry(expression.clone(), || {
                 expression::with_expression(expression.clone(), || eval_apply(f.clone(), v, *pos))
-            }
+            }),
         }
     }
 }
@@ -198,32 +199,56 @@ impl Promise {
     /// - The internal borrow is released before callbacks run, so callbacks may
     ///   safely call `then` on this promise (they will see it already resolved).
     pub fn resolve(&self, v: Value) {
-        let mut inner = self.0.borrow_mut();
-
-        // Promises resolve only once
-        if inner.value.is_some() {
-            return;
+        // The callbacks waiting for a promise are run from a list, not by
+        // recursion: a callback resolves its child promise, whose callbacks
+        // resolve theirs, and a long chain (`p ~> f ~> f ~> …`) would use a
+        // level of stack for each link. The list is a stack, and the children
+        // of a promise go on it in reverse, so the order is the one recursion
+        // would give: a callback's own chain runs before the next callback.
+        let mut pending: Vec<(PromiseCallback, Value, Value)> = Vec::new();
+        self.settle(v, &mut pending);
+        while let Some((callback, child, value)) = pending.pop() {
+            let result = callback.call(value);
+            if let Value::Promise(child) = child {
+                child.settle(result, &mut pending);
+            }
         }
+    }
+
+    /// Stores `v` as the value of this promise, if it is pending, and adds
+    /// its callbacks to `pending`, each with its child promise and the value
+    /// to call it with.
+    fn settle(&self, v: Value, pending: &mut Vec<(PromiseCallback, Value, Value)>) {
+        // Promises resolve only once
+        let placement = {
+            let inner = self.0.borrow();
+            if inner.value.is_some() {
+                return;
+            }
+            inner.placement.clone()
+        };
 
         // A Swan promise never rejects, and an undefined value is not a
         // rejection: it is stored like any other value (T9). Its undefined
         // values with no position get that of the call that returned it.
-        let resolve_val = match &inner.placement {
+        // The promise is not borrowed meanwhile: the value may be, or hold,
+        // this very promise, which placing borrows.
+        let resolve_val = match &placement {
             Some((pos, expression)) => v.place_undefined_in(*pos, expression),
             None => v,
         };
 
+        let mut inner = self.0.borrow_mut();
+        if inner.value.is_some() {
+            return;
+        }
         inner.value = Some(resolve_val.clone());
 
-        // Drain children to drop mutable borrow on inner before invoking closures
+        // Drained, so that no borrow is held when the callbacks run
         let children = std::mem::take(&mut inner.children);
         drop(inner);
-
-        for (f, child_val) in children {
-            let res = f.call(resolve_val.clone());
-            if let Value::Promise(child) = child_val {
-                child.resolve(res);
-            }
+        for (callback, child) in children.into_iter().rev() {
+            pending.push((callback, child, resolve_val.clone()));
         }
     }
 }

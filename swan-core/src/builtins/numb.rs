@@ -49,10 +49,14 @@ fn numb_from(val: Value) -> Value {
     match &val {
         Value::Numb(n) => Value::Numb(*n),
         Value::Bool(b) => Value::Numb(if *b { 1.0 } else { 0.0 }),
-        Value::Text(s) => match s.parse::<f64>() {
-            Ok(n)  => Value::Numb(n),
-            Err(_) => Value::undef_unary("numb.from", val), // not a valid number literal
-        },
+        // A number as Swan writes it, with an optional sign: Rust's parser
+        // also takes "inf", "nan" and "infinity", which are names in Swan
+        Value::Text(s) if s.chars().all(|c| c.is_ascii_digit() || "+-.eE".contains(c)) => {
+            match s.parse::<f64>() {
+                Ok(n)  => Value::Numb(n),
+                Err(_) => Value::undef_unary("numb.from", val), // not a valid number literal
+            }
+        }
         _ => Value::undef_unary("numb.from", val),          // unsupported type
     }
 }
@@ -104,6 +108,12 @@ mod tests {
         assert_eq!(run(r#"numb.from "-3.5""#) , Value::Numb(-3.5));
         assert_eq!(run(r#"numb.from "1e3""#)  , Value::Numb(1000.0));
         assert!(matches!(run(r#"numb.from " 42""#), Value::Undefined(_)));
+
+        // Only what can be written as a number in Swan, with a sign
+        assert_eq!(run(r#"numb.from "+7""#), Value::Numb(7.0));
+        for text in ["inf", "-inf", "infinity", "NaN", "nan", "+Infinity", "0x10", "1_000"] {
+            assert!(matches!(run(&format!("numb.from \"{text}\"")), Value::Undefined(_)), "{text}");
+        }
 
         // Invalid Text
         assert!(matches!(run(r#"numb.from "abc""#), Value::Undefined(_)));

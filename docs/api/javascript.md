@@ -187,6 +187,11 @@ The objects you pass to the engine and to contexts become Swan values:
 | a function that came from Swan      | the original `Func`                            |
 | other object                        | `Namespace` of its own enumerable properties   |
 
+An array or object that contains itself (`a.self = a`, a DOM node, `window`)
+cannot be converted: `set`, `createContext` and the constructor throw a
+`TypeError`, as does [`normalize`](#normalize), and a function that returns
+one gives an `Undefined` of type `HostError`.
+
 Values that come back to JavaScript, from `context.get`, from document data
 and as function arguments, are converted the other way:
 
@@ -317,8 +322,9 @@ function imported from another document, `uri` is that document's URL and
 A function defined in a template holds the scope it was defined in, so a
 scope that stores one keeps itself alive: a reference cycle. The cycle
 collector, [`collect`](#collect), frees the scopes that nothing outside such
-cycles refers to any more. `engine.render` and `engine.load` run it when they
-are done, so a page that only renders documents has nothing to do. After
+cycles refers to any more. `engine.render`, `engine.load` and
+`context.render` run it when they are done, so a page that only renders has
+nothing to do. After
 freeing a context that defined functions, call `collect`:
 
 ```js

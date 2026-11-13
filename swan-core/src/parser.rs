@@ -5,10 +5,11 @@
 //! [`Node::Unclosed`] and [`Node::UnexpectedToken`] leaves, which evaluate to
 //! `Undefined` values. Comments are skipped.
 //!
-//! The whole source must be one expression: when tokens are left over after
-//! it (a stray `)`, an unknown character), [`Parser::parse`] returns the
-//! first syntax error of the source instead of the expression, so nothing is
-//! silently dropped.
+//! The whole source must be one valid expression: when it has a syntax
+//! error, anywhere (an unclosed group, a wrong token, tokens left over after
+//! the expression), [`Parser::parse`] returns the first syntax error of the
+//! source instead of the expression, so nothing is silently dropped and
+//! nothing of a broken expression runs.
 //!
 //! # Precedence
 //!
@@ -80,6 +81,7 @@
 // • Vaughan Pratt, "Top Down Operator Precedence" (1973)
 // • https://matklad.github.io/2020/04/13/simple-but-powerful-pratt-parsing.html
 
+use std::rc::Rc;
 use crate::ast::{BinaryOp, Leaf, Node, UnaryOp};
 use crate::lexer::Lexer;
 use crate::token::Token;
@@ -190,6 +192,14 @@ fn rbp(token: &Token) -> u32 {
 /// The left *and* right binding power of the implicit application operator.
 const APPLICATION_BP: u32 = 28;
 
+/// How deep an expression can be nested: groups inside groups (`((…))`,
+/// `[[…]]`), chains of prefix operators (`- - - x`) and of right-associative
+/// operators (`a -> b -> c -> …`). The parser goes one level of its own
+/// recursion deeper for each, so it stops there with a syntax error
+/// ([`Node::TooDeep`]) instead of overflowing the stack. Chains of the other
+/// operators (`1, 2, 3, …`) are parsed in a loop and are not limited.
+pub const MAX_NESTING: usize = 256;
+
 /// Returns `true` when `token` can start a new expression (prefix position).
 ///
 /// These are exactly the tokens for which `parse_prefix` has a real (non-`_`)
@@ -247,9 +257,12 @@ pub struct Parser<'a> {
     /// Position just past the look-ahead token.
     peek_end:   usize,
 
-    /// The first syntax-error node built while parsing, reported by `parse`
-    /// when tokens are left over after the expression.
+    /// The first syntax-error node built while parsing, which `parse` returns
+    /// instead of the expression.
     first_error: Option<Node>,
+
+    /// How many `parse_expr` calls are in progress (see [`MAX_NESTING`]).
+    depth: usize,
 }
 
 impl<'a> Parser<'a> {
@@ -274,6 +287,7 @@ impl<'a> Parser<'a> {
             peek_pos,
             peek_end,
             first_error: None,
+            depth: 0,
         }
     }
 
@@ -373,6 +387,27 @@ impl<'a> Parser<'a> {
     ///    d. Recursively parse the rhs with `min_bp = rbp(infix_token)`.
     ///    e. Combine lhs + rhs into a new node; that becomes the new lhs.
     pub fn parse_expr(&mut self, min_bp: u32) -> Node {
+        if self.depth >= MAX_NESTING {
+            return self.too_deep();
+        }
+        self.depth += 1;
+        let node = self.parse_expr_at(min_bp);
+        self.depth -= 1;
+        node
+    }
+
+    /// A [`Node::TooDeep`] at the look-ahead token. The rest of the source is
+    /// skipped, so that every `parse_expr` in progress ends at once.
+    fn too_deep(&mut self) -> Node {
+        let pos = self.peek_pos;
+        while !matches!(self.peek_token, Token::EndOfExpression) {
+            self.advance();
+        }
+        self.syntax_error(Node::TooDeep(Leaf { pos, val: () }))
+    }
+
+    /// [`parse_expr`](Self::parse_expr), one level deeper.
+    fn parse_expr_at(&mut self, min_bp: u32) -> Node {
 
         // --- Step 1: prefix production ----------------------------------------
         self.skip_comments();
@@ -404,7 +439,7 @@ impl<'a> Parser<'a> {
                 lhs = Node::ApplicationOp(BinaryOp {
                     pos,
                     lho: Box::new(lhs),
-                    rho: Box::new(rhs),
+                    rho: Rc::new(rhs),
                 });
                 continue;
             }
@@ -598,7 +633,7 @@ impl<'a> Parser<'a> {
         let bin = |lho: Node, rho: Node| BinaryOp {
             pos,
             lho: Box::new(lho),
-            rho: Box::new(rho),
+            rho: Rc::new(rho),
         };
 
         match token {
@@ -682,16 +717,19 @@ impl<'a> Parser<'a> {
         // The expression must use up the whole source. `parse_expr` stops at
         // the first token that cannot continue it (a stray closing bracket,
         // an unknown character); dropping the rest silently would turn
-        // `2 + 1e3 ) 1` into 1002. Report the first syntax error instead:
-        // an earlier one (`(1 ] 2)` leaves `2)` over, but the error is `]`)
-        // or else the first left-over token.
+        // `2 + 1e3 ) 1` into 1002. That token is a syntax error too.
         self.skip_comments();
-        if matches!(self.peek_token, Token::EndOfExpression) {
-            return node;
+        if !matches!(self.peek_token, Token::EndOfExpression) {
+            self.advance();
+            self.unexpected_token();
         }
-        self.advance();
-        let stray = self.unexpected_token();
-        self.first_error.take().unwrap_or(stray)
+
+        // A syntax error anywhere makes the whole expression that error, the
+        // first of the source: in `(1 ] 2)` the left-over is the final `)`,
+        // but the mistake is the `]`. An error node left inside the tree
+        // could be lost (`{a = 1` discards the value of its body, `TRUE | (1 +`
+        // never evaluates its right side) or run half of the expression.
+        self.first_error.take().unwrap_or(node)
     }
 }
 
@@ -782,7 +820,7 @@ mod tests {
             Node::ApplicationOp(BinaryOp {
                 pos: 2,
                 lho: Box::new(Node::Identifier(Leaf { pos: 0, val: "f".to_string() })),
-                rho: Box::new(Node::Nothing(Leaf { pos: 2, val: () })),
+                rho: Rc::new(Node::Nothing(Leaf { pos: 2, val: () })),
             })
         );
     }
@@ -816,7 +854,7 @@ mod tests {
             Node::SumOp(BinaryOp {
                 pos: 2,
                 lho: Box::new(Node::Numb(Leaf { pos: 0, val: 1.0 })),
-                rho: Box::new(Node::Numb(Leaf { pos: 4, val: 2.0 })),
+                rho: Rc::new(Node::Numb(Leaf { pos: 4, val: 2.0 })),
             })
         );
     }
@@ -828,10 +866,10 @@ mod tests {
         let expected = Node::SumOp(BinaryOp {
             pos: 2,
             lho: Box::new(Node::Numb(Leaf { pos: 0, val: 1.0 })),
-            rho: Box::new(Node::ProductOp(BinaryOp {
+            rho: Rc::new(Node::ProductOp(BinaryOp {
                 pos: 6,
                 lho: Box::new(Node::Numb(Leaf { pos: 4, val: 2.0 })),
-                rho: Box::new(Node::Numb(Leaf { pos: 8, val: 3.0 })),
+                rho: Rc::new(Node::Numb(Leaf { pos: 8, val: 3.0 })),
             })),
         });
         assert_eq!(parse("1 + 2 * 3"), expected);
@@ -846,9 +884,9 @@ mod tests {
             lho: Box::new(Node::SumOp(BinaryOp {
                 pos: 2,
                 lho: Box::new(Node::Numb(Leaf { pos: 0, val: 1.0 })),
-                rho: Box::new(Node::Numb(Leaf { pos: 4, val: 2.0 })),
+                rho: Rc::new(Node::Numb(Leaf { pos: 4, val: 2.0 })),
             })),
-            rho: Box::new(Node::Numb(Leaf { pos: 8, val: 3.0 })),
+            rho: Rc::new(Node::Numb(Leaf { pos: 8, val: 3.0 })),
         });
         assert_eq!(parse("1 + 2 + 3"), expected);
     }
@@ -859,10 +897,10 @@ mod tests {
         let expected = Node::PowerOp(BinaryOp {
             pos: 2,
             lho: Box::new(Node::Numb(Leaf { pos: 0, val: 2.0 })),
-            rho: Box::new(Node::PowerOp(BinaryOp {
+            rho: Rc::new(Node::PowerOp(BinaryOp {
                 pos: 6,
                 lho: Box::new(Node::Numb(Leaf { pos: 4, val: 3.0 })),
-                rho: Box::new(Node::Numb(Leaf { pos: 8, val: 4.0 })),
+                rho: Rc::new(Node::Numb(Leaf { pos: 8, val: 4.0 })),
             })),
         });
         assert_eq!(parse("2 ^ 3 ^ 4"), expected);
@@ -878,9 +916,9 @@ mod tests {
             lho: Box::new(Node::ThenOp(BinaryOp {
                 pos: 2,
                 lho: ident(0, "p"),
-                rho: ident(5, "f"),
+                rho: ident(5, "f").into(),
             })),
-            rho: ident(10, "g"),
+            rho: ident(10, "g").into(),
         });
         assert_eq!(parse("p ~> f ~> g"), expected);
     }
@@ -906,7 +944,7 @@ mod tests {
             Node::SumOp(BinaryOp {
                 pos: 3,
                 lho: Box::new(Node::Numb(Leaf { pos: 1, val: 1.0 })),
-                rho: Box::new(Node::Numb(Leaf { pos: 5, val: 2.0 })),
+                rho: Rc::new(Node::Numb(Leaf { pos: 5, val: 2.0 })),
             })
         );
     }
@@ -949,7 +987,7 @@ mod tests {
             Node::ApplicationOp(BinaryOp {
                 pos: 2,
                 lho: Box::new(Node::Numb(Leaf { pos: 0, val: 1.0 })),
-                rho: Box::new(Node::Numb(Leaf { pos: 2, val: 2.0 })),
+                rho: Rc::new(Node::Numb(Leaf { pos: 2, val: 2.0 })),
             })
         );
     }
@@ -963,9 +1001,9 @@ mod tests {
             lho: Box::new(Node::ApplicationOp(BinaryOp {
                 pos: 2,
                 lho: Box::new(Node::Numb(Leaf { pos: 0, val: 1.0 })),
-                rho: Box::new(Node::Numb(Leaf { pos: 2, val: 2.0 })),
+                rho: Rc::new(Node::Numb(Leaf { pos: 2, val: 2.0 })),
             })),
-            rho: Box::new(Node::Numb(Leaf { pos: 4, val: 3.0 })),
+            rho: Rc::new(Node::Numb(Leaf { pos: 4, val: 3.0 })),
         });
         assert_eq!(parse("1 2 3"), expected);
     }
@@ -979,9 +1017,9 @@ mod tests {
             lho: Box::new(Node::ApplicationOp(BinaryOp {
                 pos: 2,
                 lho: Box::new(Node::Numb(Leaf { pos: 0, val: 1.0 })),
-                rho: Box::new(Node::Numb(Leaf { pos: 2, val: 2.0 })),
+                rho: Rc::new(Node::Numb(Leaf { pos: 2, val: 2.0 })),
             })),
-            rho: Box::new(Node::Numb(Leaf { pos: 6, val: 3.0 })),
+            rho: Rc::new(Node::Numb(Leaf { pos: 6, val: 3.0 })),
         });
         assert_eq!(parse("1 2 + 3"), expected);
     }
@@ -996,7 +1034,7 @@ mod tests {
             Node::ApplicationOp(BinaryOp {
                 pos: 1,
                 lho: Box::new(Node::Numb(Leaf { pos: 0, val: 1.0 })),
-                rho: Box::new(Node::Numb(Leaf { pos: 2, val: 2.0 })),
+                rho: Rc::new(Node::Numb(Leaf { pos: 2, val: 2.0 })),
             })
         );
     }
@@ -1029,23 +1067,42 @@ mod tests {
     #[test]
     fn test_unclosed_group() {
         assert_eq!(parse("(1, 2"), Node::Unclosed(Leaf { pos: 5, val: ')' }));
-        assert_eq!(
-            parse("[1"),
-            Node::List(UnaryOp {
-                pos: 0,
-                opd: Box::new(Node::Unclosed(Leaf { pos: 2, val: ']' })),
-            })
-        );
+        // The error is the whole expression, not a node inside the group
+        assert_eq!(parse("[1"), Node::Unclosed(Leaf { pos: 2, val: ']' }));
+        assert_eq!(parse("{a = 1"), Node::Unclosed(Leaf { pos: 6, val: '}' }));
+        assert_eq!(parse("x = 1, [2"), Node::Unclosed(Leaf { pos: 9, val: ']' }));
     }
 
     #[test]
     fn test_wrong_token_closing_a_group() {
         // Not "missing `)`": the error is the token found instead.
         assert_eq!(parse("(1 @ 2)"), unexpected(3, "@"));
-        assert_eq!(parse("{a = 1 )"), Node::Namespace(UnaryOp {
-            pos: 0,
-            opd: Box::new(unexpected(7, ")")),
-        }));
+        assert_eq!(parse("{a = 1 )"), unexpected(7, ")"));
+        assert_eq!(parse("TRUE | (1 +"), unexpected(11, "end of expression"));
+    }
+
+    #[test]
+    fn test_nesting_too_deep() {
+        let nested = |n: usize| format!("{}1{}", "(".repeat(n), ")".repeat(n));
+        assert_eq!(parse(&nested(MAX_NESTING - 1)), Node::Numb(Leaf { pos: MAX_NESTING - 1, val: 1.0 }));
+        assert!(matches!(parse(&nested(MAX_NESTING)), Node::TooDeep(_)));
+        // Far beyond the limit, and the other forms of nesting
+        assert!(matches!(parse(&nested(200_000)), Node::TooDeep(_)));
+        assert!(matches!(parse(&"[".repeat(200_000)), Node::TooDeep(_)));
+        assert!(matches!(parse(&format!("{}1", "-".repeat(200_000))), Node::TooDeep(_)));
+        assert!(matches!(parse(&format!("{}1", "x -> ".repeat(200_000))), Node::TooDeep(_)));
+        assert!(matches!(parse(&format!("{}1", "2 ^ ".repeat(200_000))), Node::TooDeep(_)));
+    }
+
+    #[test]
+    fn test_long_chains_are_not_nesting() {
+        // Left-associative chains are parsed in a loop, and their tree is freed in one
+        let items = vec!["1"; 200_000].join(", ");
+        assert!(matches!(parse(&items), Node::PairingOp(_)));
+        let sum = vec!["1"; 200_000].join(" + ");
+        assert!(matches!(parse(&sum), Node::SumOp(_)));
+        let calls = vec!["f"; 200_000].join(" ");
+        assert!(matches!(parse(&calls), Node::ApplicationOp(_)));
     }
 
     #[test]

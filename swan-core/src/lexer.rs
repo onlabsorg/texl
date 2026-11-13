@@ -195,7 +195,7 @@ impl<'a> Lexer<'a> {
         }
 
         // Trailing word-boundary check: numbers cannot be directly adjacent to identifier chars
-        if matches!(self.peek_char(), Some('_') | Some('a'..='z' | 'A'..='Z')) {
+        if self.peek_char().is_some_and(|ch| ch == '_' || ch.is_alphabetic()) {
             while let Some(ch) = self.peek_char() {
                 if ch == '_' || ch.is_alphanumeric() {
                     self.next_char();
@@ -474,6 +474,8 @@ mod tests {
         assert_token!("12.3e+", Token::Undefined("12.3e+"), 0);
         assert_token!("12.3E-", Token::Undefined("12.3E-"), 0);
         assert_token!("12.3abc", Token::Undefined("12.3abc"), 0);
+        assert_token!("12é", Token::Undefined("12é"), 0);
+        assert_token!("12.5μm", Token::Undefined("12.5μm"), 0);
 
         // Text Literal
         assert_token!("\"abc\"", Token::Text("abc"), 0);

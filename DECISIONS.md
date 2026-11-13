@@ -440,3 +440,144 @@ Treating a missing name as Nothing follows Swan's name lookup and the
 renderer (`<% colr %>` renders nothing); the price is that a misspelled name
 is silent, as it is in a tag. Python-style brace escapes are familiar, and
 leaving other braces literal lets texts like JSON pass through unchanged.
+
+## T20 — 2026-11-12 — A syntax error anywhere is the whole expression (extends T7)
+
+`Parser::parse` returns the first syntax error of the source whenever the
+source has one, not only when tokens are left over after the expression: an
+unclosed group (`{a = 1`, `[1`), a wrong token inside a group (`1 + )`), an
+error in a part that is not evaluated (`TRUE | (1 +`, the body of a function).
+The whole expression is that `Undefined`, nothing of it runs, and the error
+is the value itself, no longer the cause of an operation that received it
+(`1 + )` is ``unexpected `)` ``, not "cannot add the number `1` and an
+undefined value").
+*Reason:* T7 made a syntax error the whole expression only for left-over
+tokens. An error node left inside the tree could still be lost: `{a = 1` gave
+an empty namespace (a namespace discards the value of its body), `TRUE | (1 +`
+gave `TRUE`, `f = x -> (x +` defined a function, and in `x = 1, (2 +` the
+assignment ran. That is the silent loss T7 set out to remove ("a syntax error
+must not produce a value").
+
+## T21 — 2026-11-12 — A promise that holds itself is followed once
+
+A promise can be resolved with itself, alone or inside a tuple or list
+(`promise.resolve p p`). Whoever follows resolved promises stops at one it is
+already following: the renderer awaits each promise of a tag once and then
+takes it as the value; the text form (`to_rendered_text`, so tags and
+`text.template`) writes `[[Promise]]` where a promise is met again inside its
+own value; the JavaScript conversion gives the JS Promise already being made
+for it. `Promise::resolve` no longer holds its borrow while it places the
+positions of the value.
+*Reason:* each of these followed the promise forever: the renderer looped
+without end, the text form and the JavaScript conversion overflowed the
+stack, and `resolve` panicked on a double borrow. Forbidding the value was
+not an option: a cycle through a list cannot be seen when the promise
+resolves.
+
+## T22 — 2026-11-12 — Evaluation stops at a depth limit
+
+Evaluation counts its depth in *levels*, one for each nested operation being
+evaluated and each call in progress, and stops at `evaluator::max_depth()`
+(per thread, `set_max_depth`). The call that would go deeper gives an
+`Undefined` ("recursion too deep", op `recursion`), and every evaluation in
+progress returns that same value, up to the outermost one: it is the result
+of the whole expression, not wrapped by the operations on the way. The
+default is 800 levels (400 in unoptimized builds), sized for 1 MB of stack;
+texl-wasm links a 2 MB stack and sets twice the default, pytexl sets the
+default times half the megabytes of the thread's stack when it knows it (the
+main thread on Unix, or `threading.stack_size`). A host function call counts
+for 16 levels in both bindings (`evaluator::descend`, public for Rust hosts).
+The parser stops at 256 levels of nesting with a syntax error (`Node::TooDeep`,
+"the expression is nested too deep"). To make the limit worth having, the
+stack each level uses was cut: every kind of node is evaluated by its own
+function instead of one large `eval`, a chain of `,` is evaluated in a loop,
+promises run their callbacks from a list instead of by recursion, and a
+syntax tree is freed without recursion.
+*Reason:* unbounded recursion overflowed the stack and killed the host: the
+one case where an error was not a value. Recursion is Swan's only loop, so
+the limit has to be as high as the stack allows, and measuring showed the
+stack was the problem: `eval` used about 3 kB per level (19 kB unoptimized),
+so 1 MB held about 100 recursive calls, and a tuple of 350 items written in a
+tag overflowed it. After the split a level takes at most 0.8 kB (1.7 kB), and
+1 MB holds about 600 calls before overflowing; the limit is set at a fraction
+of that. Levels rather than bytes, because the wasm build cannot see the
+stack that ends first (the browser's, measured in Chrome at about 4000 levels
+whatever the wasm stack size). Returning the one value unwrapped avoids a
+chain of causes as deep as the recursion, which the conversions to
+JavaScript and the collector would then walk by recursion themselves.
+
+## T23 — 2026-11-12 — An import is waited for by the document whose tag is running
+
+swan-core keeps an *entry expression* next to the current one
+(`expression::entry`, `with_entry`): the expression at which the evaluation in
+progress entered Swan. `template::render` sets it to the tag, and a function
+chained with `~>` runs with the expression of its `~>`; function calls and
+built-ins do not change it. `texl.import` records its edge of the wait-for
+graph, and checks for a cycle, for the document of the entry expression,
+falling back to the document the call is written in when Swan was not entered
+from a tag (a host calling a function). Relative URIs still resolve against
+the document the call is written in.
+*Reason:* the edge was recorded for the document that defined the function
+calling `texl.import`. When a tag of Y called a function of X that imported
+Z, the graph held X → Z while it was Y that waited; Z importing Y then passed
+the cycle check and the two waited for each other forever. The current
+expression cannot tell who waits: a function body runs with the expression
+that defined it (T6), and a built-in with none.
+
+## T24 — 2026-11-12 — Built-ins: date ranges, NaN in max and min, strict numb.from, both arguments in errors
+
+- `time.from_date` rolls fields over, months included (month 13 is January of
+  the next year, month 0 December of the one before), and gives `Undefined`
+  for a field that is not finite or beyond ±1e9; the functions that take a
+  timestamp give `Undefined` for one that is not finite or beyond ±1e15
+  seconds. `time.from_string` also checks the hour (0–24), minute and second,
+  and the size of the year. `time.to_string` rounds to milliseconds before
+  it splits the fields.
+- `math.max` and `math.min` return `NaN` if an item is `NaN`.
+- `numb.from` accepts only digits, a sign, a decimal point and an exponent:
+  no longer `"inf"`, `"nan"`, `"infinity"`.
+- A number followed by any letter is one invalid token (`12é`), as it was for
+  ASCII letters (`12abc`).
+- A two-argument built-in called with an argument of the wrong type gives an
+  `Undefined` with both arguments (`text.find 5 "abc"`: "`text.find` is not
+  defined for the number `5` and the text `"abc"`"), for `text.find`,
+  `rfind`, `head`, `tail`, `split` and `list.find`, `rfind`, `head`, `tail`.
+- Binding surplus values to the last name (`(a, b) = (1, 2, 3, …)`) takes one
+  step, not one for each value.
+*Reason:* large date fields overflowed 64-bit integers (a panic in unoptimized
+builds, a meaningless number otherwise) and months beyond 12 gave a wrong
+date while days and hours already rolled over; `math.max` of a `NaN` gave
+`-INF`; `numb.from` accepted texts that are names, not numbers, in Swan; the
+two-argument built-ins reported the valid argument as the invalid one.
+
+## T25 — 2026-11-13 — Host values that contain themselves are errors; contexts run the collector
+
+- A JavaScript array or object that contains itself is a `TypeError` when it
+  is converted to Swan or normalized (a function that returns one gives an
+  `Undefined` host error). A Python list, tuple or mapping that contains
+  itself converts with an `Undefined` host error in place of the item that
+  closes the cycle, since the Python conversion cannot raise.
+- `TexlContext.render` and `Context.render` run the cycle collector when they
+  are done, as `Engine::render` does.
+- texl-wasm writes the message of a panic to the console; a handle key still
+  in use is not given out again when the keys wrap around.
+- The pytexl executor clears its "draining" flag also when a task panics, and
+  schedules its drain again when the event loop it was scheduled on was
+  closed or replaced before running it.
+*Reason:* both conversions followed a cycle forever and overflowed the stack,
+which in Python took the interpreter down; Swan values are immutable and
+cannot hold a cycle, so there is nothing to convert it to. Garbage made by
+context renderings stayed until the host called `collect()`, which a host
+that only renders had no reason to do. A panic in the browser showed as
+`RuntimeError: unreachable`, with nothing to report. Either executor flag
+left set stopped every later rendering on the thread, without an error.
+
+
+## T26 — 2026-11-13 — A function shares its body with the syntax tree
+
+The right operand of a binary node is an `Rc<Node>` (`ast::BinaryOp.rho`), and
+`Value::Func.body` is that same `Rc`: defining a function, reading it from a
+scope and calling it copy a pointer.
+*Reason:* the body was a `Box<Node>`, so every clone of a function value
+copied its whole syntax tree, and a value is cloned each time its name is
+read: a recursive function copied its tree at every call.

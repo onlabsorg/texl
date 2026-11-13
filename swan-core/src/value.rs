@@ -107,7 +107,7 @@ pub enum Value {
         /// Parameter pattern: a `Name` or a tuple of names.
         params:  Box<Value>,
         /// Unevaluated body expression.
-        body:    Box<Node>,
+        body:    Rc<Node>,
         /// Scope captured at definition time.
         closure: Scope,
         /// The expression the function was defined in: its body runs with it

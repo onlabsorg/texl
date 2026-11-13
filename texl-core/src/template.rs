@@ -17,8 +17,8 @@
 //!   in one tag are therefore visible in later tags
 //!   (e.g. `<% count = 1 %>Count is <% count %>`).
 //! - If an expression yields a [`Value::Promise`], rendering suspends until the promise
-//!   resolves (repeating if the result is itself a promise) and then renders the resolved
-//!   value. This is why [`render`] is `async`.
+//!   resolves (repeating if the result is itself a promise, unless it is one already
+//!   awaited: a promise can resolve to itself) and then renders the resolved value. This is why [`render`] is `async`.
 //! - The future is single-threaded: it holds `Rc` values and is not `Send`.
 //!
 //! # Output format
@@ -37,6 +37,7 @@
 //! | `Undefined`            | `[[Undefined]]`                                     |
 //! | `Promise` (resolved)   | the rendered resolved value                         |
 //! | `Promise` (pending)    | `[[Pending Promise]]`                               |
+//! | `Promise` holding itself | `[[Promise]]` where it is met again               |
 //!
 //! Promises returned by a tag are awaited, so `[[Pending Promise]]` only
 //! appears for promises nested inside other values, such as tuple items.
@@ -70,7 +71,7 @@ use swan_core::evaluator::eval;
 use swan_core::lexer::Lexer;
 use swan_core::parser::Parser;
 use swan_core::expression::{self, Expression};
-use swan_core::value::{Namespace, Scope, Value};
+use swan_core::value::{Namespace, Promise, Scope, Value};
 use std::cell::RefCell;
 use std::future::Future;
 use std::pin::Pin;
@@ -122,8 +123,15 @@ impl Future for WaitForValue {
 ///
 /// Promises never reject in Swan, so this function cannot fail.
 async fn resolve_promises(mut val: Value) -> Value {
+    // A promise can resolve to itself (`promise.resolve p p`), or to a promise
+    // that resolves back to it: one awaited already is the value, as it is.
+    let mut awaited: Vec<Promise> = Vec::new();
     while let Value::Promise(p) = &val {
+        if awaited.iter().any(|seen| Rc::ptr_eq(&seen.0, &p.0)) {
+            break;
+        }
         let p = p.clone();
+        awaited.push(p.clone());
         let shared = Rc::new(RefCell::new(Shared { value: None, waker: None }));
         let cb_shared = shared.clone();
 
@@ -267,7 +275,11 @@ pub async fn render(document: impl Into<Document>, scope: &Scope) -> Rendering {
             let origin = TagOrigin { document: document.clone(), tag_start, expr_start };
             let expr = Rc::new(Expression::new(expr_src, Some(Rc::new(origin))));
             let ast = Parser::new(Lexer::new(expr_src)).parse();
-            let value = expression::with_expression(Some(expr), || eval(&ast, scope));
+            // The tag is where the evaluation enters Swan: what it calls, of
+            // this or another document, runs on behalf of this document
+            let value = expression::with_entry(Some(expr.clone()), || {
+                expression::with_expression(Some(expr), || eval(&ast, scope))
+            });
 
             // If the expression yielded a promise, wait for it to resolve
             let value = resolve_promises(value).await;
@@ -332,6 +344,15 @@ mod tests {
                 return v;
             }
         }
+    }
+
+    #[test]
+    /// A promise resolved with itself is rendered once, not followed forever.
+    fn test_promise_resolved_with_itself() {
+        let scope = swan_core::builtins::root_scope();
+        let out = block_on(render("<% p = promise.create(), promise.resolve p p, p %>|<% q = promise.create(), promise.resolve q (1, q), q %>", &scope));
+        assert_eq!(out.text, "[[Promise]]|1, 1, [[Promise]]");
+        assert!(matches!(out.tags[0].value, Value::Promise(_)));
     }
 
     #[test]

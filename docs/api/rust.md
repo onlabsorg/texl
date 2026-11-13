@@ -405,6 +405,25 @@ hold them with `BuiltinFn::capturing` rather than in its closure; otherwise a
 cycle through it is never freed. See
 [Memory management](../language.md#memory-management) for the details.
 
+## Depth
+
+Evaluation is recursive, and stops at a fixed depth instead of overflowing
+the stack: the result is then an `Undefined`, "recursion too deep". The
+default, `swan_core::evaluator::DEFAULT_MAX_DEPTH`, fits in 1 MB of stack. A
+host that runs on a larger stack raises it for its thread:
+
+```rust
+use swan_core::evaluator;
+
+// A thread with 8 MB of stack
+evaluator::set_max_depth(8 * evaluator::DEFAULT_MAX_DEPTH);
+```
+
+A host function that uses a lot of stack before it calls back into Swan
+counts itself for more than one level with `evaluator::descend(levels)`,
+which returns a guard, or the value to return when the limit is reached. See
+[Limits and performance](../language.md#limits-and-performance).
+
 ## API reference
 
 The rustdoc of the two crates (`cargo doc`, see above):

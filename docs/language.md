@@ -37,10 +37,13 @@ Consequences:
 
 - **Each tag is parsed on its own.** A syntax error affects one tag only; the
   next tag starts clean.
-- **A tag is one whole expression.** Nothing in it is silently ignored: a
-  token left over after the expression (`<% 2 + 1e3 ) 1 %>`) makes the whole
-  tag `Undefined`, with the first syntax error of the tag (``unexpected `)` ``),
-  and none of it runs, assignments included. A group closed by the wrong
+- **A tag is one whole, valid expression.** Nothing in it is silently
+  ignored: a syntax error anywhere in the tag makes the whole tag `Undefined`,
+  with the first syntax error of the tag, and none of it runs, assignments
+  included. That holds for a token left over after the expression
+  (`<% 2 + 1e3 ) 1 %>`, ``unexpected `)` ``), for a group that is never closed
+  (`<% {a = 1 %>`, ``missing closing `}` ``) and for an error in a part that
+  would not be evaluated (`<% TRUE | (1 + %>`). A group closed by the wrong
   token, as in `(1 @ 2)`, is an unexpected token at that token; ``missing
   closing `)` `` means the tag ended before the group was closed.
 - **An `Undefined` value records what went wrong.** Its payload (the Rust type
@@ -63,8 +66,9 @@ Consequences:
   and Python bindings turn an exception in a host function into an `Undefined`
   of type `HostError`, whose `error` member holds the host's message.
 
-There is one exception to the rule: infinite recursion overflows the stack and
-stops the host program (see [Limits](#limits-and-performance)).
+Recursion that does not end follows the rule too: evaluation stops at a fixed
+depth, and the result is an `Undefined` described as "recursion too deep"
+(see [Limits](#limits-and-performance)).
 
 ### Everything is a tuple
 
@@ -141,14 +145,15 @@ Twice: 25
   document's `data`, and hosts receive it as a function. A host can make such a
   namespace: a Python dict or a JavaScript object with a `__text__` function
   (decision T16 brings the function back as itself).
-- A hook that converts its own namespace (`text.from` of it) recurses forever,
-  like any other unbounded recursion.
+- A hook that converts its own namespace (`text.from` of it) recurses without
+  end and gives "recursion too deep", like any other unbounded recursion.
 
 What a tag adds to this conversion, for the values it leaves out, is shared
 too (`to_rendered_text`): `Nothing` is empty, a tuple's items are joined with
 `", "`, a resolved promise gives its value's text and a pending one
-`[[Pending Promise]]`, and a value that cannot be converted gives
-`[[Undefined]]`. Swan's `text.template` uses it, so a `{name}` placeholder
+`[[Pending Promise]]`, a promise met again inside its own value
+(`promise.resolve p p`) gives `[[Promise]]`, and a value that cannot be
+converted gives `[[Undefined]]`. Swan's `text.template` uses it, so a `{name}` placeholder
 shows a value exactly as `<% name %>` would:
 
 ```texl
@@ -305,7 +310,9 @@ properties:
 
 `template::render` is an `async` function. When a tag's value is a promise,
 rendering stops at that tag until the promise resolves (again and again, if
-it resolves to another promise), writes the value and moves on. Only the
+it resolves to another promise, but never twice for the same promise: one
+that resolves to itself is written as `[[Promise]]`), writes the value and
+moves on. Only the
 promise that the tag itself returns is awaited: a promise inside a tuple or a
 list is written as its current value, or `[[Pending Promise]]`.
 
@@ -422,6 +429,15 @@ directly or through other documents (X importing itself counts). If so, the
 import returns `Undefined` (operation `import.cycle`) instead of a promise, and
 X renders without it; otherwise the edge X → Y is recorded until Y resolves.
 Importing a document that has finished rendering is never a cycle.
+
+The document that waits, X, is the one whose tag is being evaluated when
+`texl.import` is called, or whose `~>` callback is running: not necessarily
+the document the call is written in. If a tag of X calls a function taken
+from the `data` of a library document L, and that function imports Y, it is X
+that waits for Y (relative URIs still resolve against L, where the call is
+written). Swan keeps this as the *entry expression*
+(`swan_core::expression::entry`): the expression at which the running
+evaluation entered Swan, unchanged through function calls.
 
 A cycle through a [final URL](#final-urls) is found after the fetch, since the
 engine does not know before which document a requested URL is: while the URL
@@ -598,9 +614,9 @@ through such a closure leaks. That is why built-ins that hold Swan values use
 ### When it runs
 
 `Engine::render`, and so `Engine::load`, runs the collector when a rendering
-is done. A host that only renders documents has nothing to do. A host that
-holds contexts, or evaluates Swan code itself, calls it after dropping what it
-no longer needs:
+is done, and so does the `render` of a context in JavaScript and Python. A
+host that only renders has nothing to do. A host that drops contexts, or
+evaluates Swan code itself, calls it after dropping what it no longer needs:
 
 | Host       | Collector                       | Drop first                     |
 |------------|---------------------------------|--------------------------------|
@@ -689,13 +705,15 @@ All time functions work in UTC, so the result does not depend on the host's
 time zone. `nspace.enum` returns names sorted, so the order of a namespace's
 members never shows through.
 
-### No resource limits
+### Resource limits
 
-The engine sets no limit on time, memory or depth. Swan has no loops, so a
-rendering can run forever only through recursion that does not end, which
-overflows the stack, or through a promise that never resolves, which makes the
-rendering wait forever. A host that renders untrusted templates runs them in a
-separate process with its own limits.
+The engine limits depth, and nothing else: there is no limit on time or
+memory. Swan has no loops, so a rendering runs for long only through
+recursion, and a recursion that does not end stops at the depth limit with an
+`Undefined` (see [Limits](#limits-and-performance)). What remains is a promise
+that never resolves, which makes the rendering wait forever, and code that
+builds very large values. A host that renders untrusted templates runs them in
+a separate process with its own limits.
 
 ## Limits and performance
 
@@ -704,9 +722,34 @@ separate process with its own limits.
   that made them; Texl turns them into offsets in the document (see
   [Positions and origins](#positions-and-origins)) and the hosts convert
   them. Errors of built-in functions are at the call.
-- **Recursion** uses the native stack, with no depth limit: a recursion that
-  never ends stops the host program with a stack overflow instead of producing
-  `Undefined`. This is a known issue.
+- **Depth.** Evaluation uses the native stack: one *level* for each nested
+  operation being evaluated and for each call in progress. It stops at a
+  fixed number of levels (`swan_core::evaluator::max_depth`, per thread): the
+  call that would go deeper gives an `Undefined`, "recursion too deep", and
+  that value becomes the result of the whole expression (of the tag, of a
+  function called by the host). It is not wrapped by the operations it passes
+  through, as other undefined values are: that would make a chain of causes
+  as deep as the recursion. A typical recursive function uses four or five
+  levels for each call. The default, 800 levels (400 in an unoptimized
+  build), fits in 1 MB of stack; the hosts set it for the stack they have:
+
+  | Host       | Levels                                  | Recursive calls, about |
+  |------------|-----------------------------------------|------------------------|
+  | Rust       | the default; `evaluator::set_max_depth` | 160                    |
+  | JavaScript | twice the default (the browser's own call stack is the bound) | 320 |
+  | Python     | the default, times half the megabytes of stack: 4 times on the main thread of most systems | 640 |
+
+  A call of a host function counts for 16 levels in JavaScript and Python,
+  since a function that calls back into Swan uses the host's own stack on the
+  way. A Rust host function that does the same asks for levels with
+  `evaluator::descend`.
+- **Nesting.** The parser stops at 256 levels of nesting (groups in groups,
+  chains of prefix or right-associative operators) with a syntax error, "the
+  expression is nested too deep". Chains of the other operators are parsed in
+  a loop. A chain of `,` is also evaluated in a loop, so a tuple or list of
+  any length can be written out; a chain of another operator
+  (`1 + 1 + 1 + …`) is as deep as it is long, and gives "recursion too deep"
+  beyond the depth limit.
 - **Single-threaded.** Values use `Rc` and nothing is `Send`. An engine, its
   scopes and its values stay on the thread that created them (the Python
   bindings raise `RuntimeError` on another thread). Each thread has its own

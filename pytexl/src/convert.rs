@@ -38,6 +38,12 @@ use crate::runtime::{self, AwaitPy};
 /// Integers up to this magnitude are exact as `f64`, and come back to Python as `int`.
 const MAX_SAFE_INTEGER: f64 = 9_007_199_254_740_991.0;
 
+/// The depth a call of a Python function counts for (see
+/// `swan_core::evaluator::descend`): a round trip from Swan through a Python
+/// function and back into Swan goes through the interpreter, which uses more
+/// stack than a level of evaluation.
+const HOST_CALL_LEVELS: usize = 16;
+
 /// A Swan promise. Await it to get its value, converted to a Python value.
 ///
 /// Promises never fail: a promise of an operation that fails resolves to an
@@ -354,6 +360,26 @@ pub fn for_each_entry(mapping: &Bound<'_, PyAny>, mut f: impl FnMut(String, Valu
     Ok(())
 }
 
+thread_local! {
+    // The Python lists, tuples and mappings being converted to Swan, from the
+    // outermost in: one met again inside itself is a cycle.
+    static PATH: std::cell::RefCell<Vec<usize>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// Runs `f`, which converts the items of the container `obj`. A container
+/// that contains itself (`l.append(l)`) would be followed forever: it is an
+/// `Undefined` host error instead.
+fn inside(obj: &Bound<'_, PyAny>, f: impl FnOnce() -> Value) -> Value {
+    let id = obj.as_ptr() as usize;
+    if PATH.with(|path| path.borrow().contains(&id)) {
+        return Value::undef_host_error("ValueError: cannot convert a value that contains itself");
+    }
+    PATH.with(|path| path.borrow_mut().push(id));
+    let value = f();
+    PATH.with(|path| path.borrow_mut().pop());
+    value
+}
+
 /// Converts a Python value to a Swan value. See the [module documentation](self).
 pub fn py_to_swan(obj: &Bound<'_, PyAny>) -> Value {
     let py = obj.py();
@@ -372,18 +398,20 @@ pub fn py_to_swan(obj: &Bound<'_, PyAny>) -> Value {
     } else if let Ok(s) = obj.cast::<PyString>() {
         s.to_str().map(|s| Value::Text(s.into())).unwrap_or(Value::Nothing)
     } else if let Ok(list) = obj.cast::<PyList>() {
-        Value::list(list.iter().map(|item| py_to_swan(&item)).collect())
+        inside(obj, || Value::list(list.iter().map(|item| py_to_swan(&item)).collect()))
     } else if let Ok(tuple) = obj.cast::<PyTuple>() {
-        Value::tuple(tuple.iter().map(|item| py_to_swan(&item)).collect())
+        inside(obj, || Value::tuple(tuple.iter().map(|item| py_to_swan(&item)).collect()))
     } else if obj.is_instance_of::<PyDict>() || mapping_type(py).is_ok_and(|m| obj.is_instance(m).unwrap_or(false)) {
-        let mut ns = Namespace::new();
-        match for_each_entry(obj, |key, value| ns.insert(key, value)) {
-            // A document comes back with its tag positions in bytes
-            Ok(()) => Value::Namespace(
-                texl_core::engine::convert_tag_positions(&ns, char_to_byte_offset).unwrap_or(ns),
-            ),
-            Err(_) => Value::Nothing,
-        }
+        inside(obj, || {
+            let mut ns = Namespace::new();
+            match for_each_entry(obj, |key, value| ns.insert(key, value)) {
+                // A document comes back with its tag positions in bytes
+                Ok(()) => Value::Namespace(
+                    texl_core::engine::convert_tag_positions(&ns, char_to_byte_offset).unwrap_or(ns),
+                ),
+                Err(_) => Value::Nothing,
+            }
+        })
     } else if is_awaitable(obj) {
         let awaitable = obj.clone().unbind();
         Value::Promise(runtime::promise_of(async move {
@@ -405,6 +433,11 @@ pub fn py_to_swan(obj: &Bound<'_, PyAny>) -> Value {
 fn py_function(py: Python<'_>, func: Py<PyAny>) -> BuiltinFn {
     let host_data = func.clone_ref(py);
     BuiltinFn::new("python", move |arg| {
+        // A Python function that calls back into Swan uses the interpreter's stack
+        let _levels = match swan_core::evaluator::descend(HOST_CALL_LEVELS) {
+            Ok(levels) => levels,
+            Err(too_deep) => return too_deep,
+        };
         Python::attach(|py| {
             let args: Vec<Py<PyAny>> = match &arg {
                 Value::Nothing => vec![],

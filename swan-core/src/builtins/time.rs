@@ -60,7 +60,7 @@ fn time_now(_arg: Value) -> Value {
 /// with `second` possibly fractional.
 fn time_to_date(t: Value) -> Value {
     match t {
-        Value::Numb(t) => {
+        Value::Numb(t) if in_range(t) => {
             let dt = datetime_from_epoch(t);
             let mut ns = Namespace::new();
             ns.insert("year", Value::Numb(dt.year as f64));
@@ -79,12 +79,20 @@ fn time_to_date(t: Value) -> Value {
 fn time_from_date(date: Value) -> Value {
     match date {
         Value::Namespace(ns) => {
-            let y = numb_field(&ns, "year", 0.0) as i64;
-            let m = numb_field(&ns, "month", 1.0) as i64;
-            let d = numb_field(&ns, "day", 1.0) as i64;
-            let h = numb_field(&ns, "hour", 0.0) as i64;
-            let min = numb_field(&ns, "minute", 0.0) as i64;
+            let fields = [
+                numb_field(&ns, "year", 0.0),
+                numb_field(&ns, "month", 1.0),
+                numb_field(&ns, "day", 1.0),
+                numb_field(&ns, "hour", 0.0),
+                numb_field(&ns, "minute", 0.0),
+            ];
             let s = numb_field(&ns, "second", 0.0);
+            // Fields beyond their calendar range roll over (day 32 is the 1st
+            // of the next month), but not beyond what can be computed
+            if fields.iter().any(|f| !f.is_finite() || f.abs() > MAX_FIELD) || !in_range(s) {
+                return Value::undef_unary("time.from_date", Value::Namespace(ns));
+            }
+            let [y, m, d, h, min] = fields.map(|f| f as i64);
             Value::Numb(epoch_from_parts(y, m, d, h, min, s))
         }
         other => Value::undef_unary("time.from_date", other),
@@ -94,8 +102,10 @@ fn time_from_date(date: Value) -> Value {
 /// Formats the given timestamp as `YYYY-MM-DDTHH:MM:SS.mmmZ` (UTC, millisecond precision).
 fn time_to_string(val: Value) -> Value {
     match val {
-        Value::Numb(t) => {
-            let dt = datetime_from_epoch(t);
+        Value::Numb(t) if in_range(t) => {
+            // Rounded to the milliseconds shown, before the fields are split:
+            // 59.9996 seconds is the next minute, not `59:60.000`
+            let dt = datetime_from_epoch((t * 1000.0).round() / 1000.0);
             Value::Text(format!(
                 "{:04}-{:02}-{:02}T{:02}:{:02}:{:06.3}Z",
                 dt.year, dt.month, dt.day, dt.hour, dt.minute, dt.second
@@ -121,7 +131,7 @@ fn time_from_string(val: Value) -> Value {
 /// `time.week_day(t)`: 0 = Sunday … 6 = Saturday.
 fn time_week_day(val: Value) -> Value {
     match val {
-        Value::Numb(t) => {
+        Value::Numb(t) if in_range(t) => {
             let days = (t.floor() as i64).div_euclid(86400);
             // 1970-01-01 (day 0) was a Thursday, i.e. weekday 4
             let wd = (days + 4).rem_euclid(7);
@@ -134,7 +144,7 @@ fn time_week_day(val: Value) -> Value {
 /// `time.week_number(t)`: ISO-8601 week number (weeks start Monday; week 1 contains the year's first Thursday).
 fn time_week_number(val: Value) -> Value {
     match val {
-        Value::Numb(t) => {
+        Value::Numb(t) if in_range(t) => {
             let days = (t.floor() as i64).div_euclid(86400);
             // weekday with Monday = 0 (day 0 was a Thursday, so +3)
             let wday_mon0 = (days + 3).rem_euclid(7);
@@ -160,6 +170,19 @@ fn time_week_number(val: Value) -> Value {
 // ----------------------------------------------------------------------------
 
 /// A broken-down UTC date and time.
+/// The largest date field `time.from_date` computes with: far beyond any
+/// calendar, and small enough for the arithmetic not to overflow.
+const MAX_FIELD: f64 = 1e9;
+
+/// The largest timestamp the functions of this module work with, in seconds:
+/// about 30 million years from the epoch, either way.
+const MAX_TIMESTAMP: f64 = 1e15;
+
+/// Whether `t` is a timestamp, or a number of seconds, that can be computed with.
+fn in_range(t: f64) -> bool {
+    t.is_finite() && t.abs() <= MAX_TIMESTAMP
+}
+
 struct DateTime {
     year: i64, month: u32, day: u32,
     hour: i64, minute: i64, second: f64, // `second` includes the fractional part
@@ -233,6 +256,9 @@ fn civil_from_days(days: i64) -> (i64, u32, u32) {
 /// `doy` : day of year (0-indexed, from March 1st)
 /// `doe` : day of era
 fn days_from_civil(y: i64, m: i64, d: i64) -> i64 {
+    // A month outside 1..=12 rolls over into the years around
+    let y = y + (m - 1).div_euclid(12);
+    let m = (m - 1).rem_euclid(12) + 1;
     let y = if m <= 2 { y - 1 } else { y };
     let era = (if y >= 0 { y } else { y - 399 }) / 400;
     let yoe = y - era * 400;
@@ -267,8 +293,8 @@ fn parse_iso_string(s: &str) -> Option<f64> {
     let m: i64 = date_parts[1].parse().ok()?;
     let d: i64 = date_parts[2].parse().ok()?;
 
-    // Validate month and day ranges
-    if !(1..=12).contains(&m) || !(1..=31).contains(&d) {
+    // Validate year, month and day ranges
+    if y.abs() as f64 > MAX_FIELD || !(1..=12).contains(&m) || !(1..=31).contains(&d) {
         return None;
     }
 
@@ -286,6 +312,10 @@ fn parse_iso_string(s: &str) -> Option<f64> {
         } else {
             0.0
         };
+        // 24:00 and a leap second are valid ISO-8601
+        if !(0..=24).contains(&h) || !(0..=59).contains(&min) || !(0.0..61.0).contains(&sec) {
+            return None;
+        }
         (h, min, sec)
     } else {
         (0, 0, 0.0)
@@ -395,6 +425,43 @@ mod tests {
     }
 
     /// `time.week_day`: returns day of week.
+    #[test]
+    fn test_dates_out_of_range() {
+        // Fields too large to compute with, or not numbers at all, are undefined
+        for src in [
+            "time.from_date{year: 1000000000000000000}",
+            "time.from_date{year: 2026, month: 1000000000000000000}",
+            "time.from_date{year: 2026, day: 1000000000000000000}",
+            "time.from_date{year: 2026, hour: 1000000000000000000}",
+            "time.from_date{year: 0/0}",
+            "time.from_date{year: 2026, second: 1/0}",
+            "time.to_date(0/0)",
+            "time.to_date(1/0)",
+            "time.to_string(0/0)",
+            "time.week_day(1/0)",
+            "time.week_number(0/0)",
+            r#"time.from_string("999999999999999999-01-01")"#,
+            r#"time.from_string("2026-05-28T25:00:00")"#,
+            r#"time.from_string("2026-05-28T20:61:00")"#,
+            r#"time.from_string("2026-05-28T20:00:61")"#,
+        ] {
+            assert!(matches!(run(src), Value::Undefined(_)), "{src}");
+        }
+
+        // Fields beyond their calendar range roll over, months included
+        let at = |src: &str| run(&format!("time.to_string(time.from_date{src})"));
+        assert_eq!(at("{year: 2026, month: 13, day: 1}"), Value::Text("2027-01-01T00:00:00.000Z".into()));
+        assert_eq!(at("{year: 2026, month: 27, day: 1}"), Value::Text("2028-03-01T00:00:00.000Z".into()));
+        assert_eq!(at("{year: 2026, month: 0, day: 1}"), Value::Text("2025-12-01T00:00:00.000Z".into()));
+        assert_eq!(at("{year: 2026, month: 0 - 14, day: 1}"), Value::Text("2024-10-01T00:00:00.000Z".into()));
+        assert_eq!(at("{year: 2026, month: 1, day: 32}"), Value::Text("2026-02-01T00:00:00.000Z".into()));
+        assert_eq!(at("{year: 2026, month: 1, day: 1, hour: 25}"), Value::Text("2026-01-02T01:00:00.000Z".into()));
+
+        // Milliseconds are rounded before the fields are split
+        assert_eq!(run("time.to_string(59.9996)"), Value::Text("1970-01-01T00:01:00.000Z".into()));
+        assert_eq!(run("time.to_string(0 - 0.0004)"), Value::Text("1970-01-01T00:00:00.000Z".into()));
+    }
+
     #[test]
     fn test_week_day() {
         // Number (Sunday = 0 ... Saturday = 6)

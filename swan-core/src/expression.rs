@@ -19,6 +19,15 @@
 //! - code compiled by the built-in `parse` runs as an expression of its own,
 //!   with no origin.
 //!
+//! The *entry expression* is a second slot: the expression at which the
+//! evaluation in progress entered Swan, whatever it has called since. A host
+//! sets it with [`with_entry`] around a top-level evaluation, and a function
+//! chained to a promise with `~>` runs with the expression of its `~>` as
+//! the entry. It stays what it is through function calls and built-ins, so a
+//! built-in can ask [`entry`] on whose behalf it runs: Texl's `import` uses
+//! it to know which document is waiting for an import that a function of
+//! another document makes.
+//!
 //! Undefined values made by the evaluator (and by
 //! [`Value::undef_unary_at`](crate::value::Value::undef_unary_at),
 //! [`Value::undef_binary_at`](crate::value::Value::undef_binary_at)) take
@@ -111,6 +120,34 @@ thread_local! {
     static CURRENT: RefCell<Option<Rc<Expression>>> = const { RefCell::new(None) };
 }
 
+thread_local! {
+    static ENTRY: RefCell<Option<Rc<Expression>>> = const { RefCell::new(None) };
+}
+
+/// The expression at which the evaluation in progress entered Swan, if any
+/// was set with [`with_entry`]: the top-level expression a host evaluates,
+/// or the `~>` whose function is running. Unlike [`current`], it does not
+/// change when a function of another expression or a built-in is called.
+pub fn entry() -> Option<Rc<Expression>> {
+    ENTRY.with(|e| e.borrow().clone())
+}
+
+/// Runs `f` with `expression` as the entry expression (see [`entry`]), then
+/// restores the previous one (also if `f` panics). It does not set the
+/// current expression: use [`with_expression`] inside for that.
+pub fn with_entry<R>(expression: Option<Rc<Expression>>, f: impl FnOnce() -> R) -> R {
+    struct Restore(Option<Rc<Expression>>);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            let prev = self.0.take();
+            ENTRY.with(|e| *e.borrow_mut() = prev);
+        }
+    }
+    let prev = ENTRY.with(|e| std::mem::replace(&mut *e.borrow_mut(), expression));
+    let _restore = Restore(prev);
+    f()
+}
+
 /// The expression being evaluated, if any.
 pub fn current() -> Option<Rc<Expression>> {
     CURRENT.with(|c| c.borrow().clone())
@@ -152,6 +189,38 @@ mod tests {
             assert!(same(&current(), &a));
         });
         assert!(current().is_none());
+    }
+
+    #[test]
+    fn test_entry_is_kept_through_calls() {
+        use crate::builtins::root_scope;
+        use crate::evaluator::eval;
+        use crate::lexer::Lexer;
+        use crate::parser::Parser;
+        use crate::value::{BuiltinFn, Value};
+
+        // `who` tells the text of the entry expression it is called under
+        let scope = root_scope();
+        scope.set("who", Value::Builtin(BuiltinFn::new("who", |_| match entry() {
+            Some(e) => Value::Text(e.text.clone()),
+            None => Value::Nothing,
+        })));
+        let run = |src: &str| {
+            let expr = Some(Rc::new(Expression::from(src)));
+            let ast = Parser::new(Lexer::new(src)).parse();
+            with_entry(expr.clone(), || with_expression(expr, || eval(&ast, &scope)))
+        };
+
+        assert_eq!(run("who ()"), Value::Text("who ()".into()));
+        // A function defined by another expression: the entry is the caller's
+        run("f = () -> who ()");
+        assert_eq!(run("f ()"), Value::Text("f ()".into()));
+        // A function chained to a promise runs under the expression of its `~>`
+        run("p = promise.create (), q = p ~> f");
+        assert!(entry().is_none());
+        run("promise.resolve p 1");
+        let Value::Promise(q) = scope.get("q") else { panic!() };
+        assert_eq!(q.0.borrow().value, Some(Value::Text("p = promise.create (), q = p ~> f".into())));
     }
 
     #[test]

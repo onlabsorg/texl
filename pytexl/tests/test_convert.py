@@ -90,6 +90,28 @@ class PythonToSwanTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(await self.swan_type(10**400), "Nothing|")
 
 
+class CyclicValueTest(unittest.IsolatedAsyncioTestCase):
+    async def test_a_value_that_contains_itself_is_undefined(self):
+        ring = [1]
+        ring.append(ring)
+        loop = {"name": "loop"}
+        loop["self"] = loop
+        nested = (1, [2, {"ring": ring}])
+        context = pytexl.Engine().create_context({"ring": ring, "loop": loop, "nested": nested})
+        # The item that closes the cycle is the error; the rest is converted
+        ring_value = context.get("ring")
+        self.assertEqual(ring_value[0], 1)
+        self.assertEqual(ring_value[1].type, "HostError")
+        self.assertIn("contains itself", ring_value[1].error)
+        self.assertEqual(context.get("loop")["name"], "loop")
+        self.assertEqual(context.get("loop")["self"].type, "HostError")
+        self.assertEqual(context.get("nested")[1][1]["ring"][1].type, "HostError")
+        # The same value twice is not a cycle, and conversion works afterwards
+        shared = [1, 2]
+        context.set("twice", {"a": shared, "b": shared})
+        self.assertEqual(context.get("twice"), {"a": [1, 2], "b": [1, 2]})
+
+
 class SwanToPythonTest(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
         self.context = pytexl.Engine().create_context()
@@ -238,8 +260,12 @@ class UndefinedTest(unittest.IsolatedAsyncioTestCase):
         assignment = await self.undefined('(parse "1 = 2") {}')
         self.assertEqual((assignment.type, assignment.op), ("BinaryOperation", "assignment"))
         self.assertEqual(assignment.lhv.inspect(), {"type": "Name", "description": "expected a name", "pos": 0})
-        token = (await self.undefined("1 + )")).cause
+        # A syntax error is the value of the whole tag, and nothing of the tag runs
+        rendering = await self.context.render("<% v = (1 + ) %>")
+        token = rendering.tags[0].value
         self.assertEqual((token.type, token.token, token.description), ("Token", ")", "unexpected `)`"))
+        self.assertIsNone(token.cause)
+        self.assertIsNone(self.context.get("v"))
 
     async def test_exception_of_a_host_function(self):
         def fail(x):

@@ -8,7 +8,6 @@
 
 use std::rc::Rc;
 use crate::value::{Scope, Value};
-use super::pairing_operation;
 
 // ----------------------------------------------------------------------------
 //  ASSIGNMENT OPERATION
@@ -26,38 +25,29 @@ use super::pairing_operation;
 ///   of the last bound name, so `(a, b) = (1, 2, 3)` gives `a = 1`, `b = (2, 3)`.
 ///   If there are no names at all, the surplus values are discarded.
 pub fn eval(scope: &Scope, names: &Value, values: &Value) {
-    let mut names_iter = names.items();
     let mut values_iter = values.items();
 
     // The most recently bound name together with the value it currently holds.
     let mut last: Option<(Rc<str>, Value)> = None;
 
-    loop {
-        match (names_iter.next(), values_iter.next()) {
+    for name in names.items() {
+        // A non-name item among the names. Callers validate names beforehand,
+        // so this is not expected; ignore it (its value is consumed).
+        let value = values_iter.next().unwrap_or(Value::Nothing);
+        if let Value::Name(name) = name {
+            scope.set(name.as_ref(), value.clone());
+            last = Some((name, value));
+        }
+    }
 
-            // A name, with or without a matching value.
-            (Some(Value::Name(name)), value) => {
-                let value = value.unwrap_or(Value::Nothing);
-                scope.set(name.as_ref(), value.clone());
-                last = Some((name, value));
-            }
-
-            // Surplus value: append it to the value of the last bound name.
-            (None, Some(value)) => {
-                if let Some((name, prev)) = last.take() {
-                    let paired = pairing_operation::eval(prev, value);
-                    scope.set(name.as_ref(), paired.clone());
-                    last = Some((name, paired));
-                }
-                // No name to attach to: the value is discarded.
-            }
-
-            // Both sequences are exhausted.
-            (None, None) => break,
-
-            // A non-name item among the names. Callers validate names beforehand,
-            // so this is not expected; ignore it (its value is consumed).
-            (Some(_), _) => {}
+    // Surplus values: all of them are paired onto the value of the last bound
+    // name, at once (one by one would copy the growing tuple for each value).
+    // With no name to attach to, they are discarded.
+    if let Some((name, value)) = last {
+        let mut surplus = values_iter.peekable();
+        if surplus.peek().is_some() {
+            let items: Vec<Value> = value.items().chain(surplus).collect();
+            scope.set(name.as_ref(), Value::tuple(items));
         }
     }
 }
